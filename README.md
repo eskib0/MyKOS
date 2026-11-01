@@ -9,7 +9,7 @@
 ```text
 MyKOS/
 ├── bin/
-│   ├── mykos                 # CLI unificado para Linux (run, start, stop, status, doctor, store, realtime, test)
+│   ├── mykos                 # CLI unificado para Linux (run, start, stop, status, doctor, rea, store, realtime, test)
 │   ├── mykos.ps1             # CLI unificado para Windows PowerShell
 │   └── mykos.cmd             # Lanzador para Windows CMD
 ├── install.sh                # Instalador automático para Linux (venv, enlaces en ~/.local/bin, systemd)
@@ -20,6 +20,7 @@ MyKOS/
 │   │   └── antigravity-home/ # Perfil aislado de solo texto (deny total de herramientas) para agy
 │   ├── app/                  # Trabajador Python y conectores de modelos/herramientas
 │   │   ├── server.py         # Ejecutor interno (/mykos-control/*), catálogo y bucle de modelos remotos
+│   │   ├── rea.py            # Motor integrado REA (Reverse Engineer Anything · 207 herramientas MCP)
 │   │   ├── strata.py         # Conector para el motor local CUDA Strata (Qwen3.8 125B / Qwen3.6 35B)
 │   │   ├── anthropic_api.py  # Conector directo Anthropic Messages API (Claude 3.7 / 3.5)
 │   │   ├── mistral.py        # Conector Mistral AI / Vibe (con enlace automático al keyring del sistema)
@@ -174,6 +175,18 @@ mykos realtime status       # Comprueba si hay credencial configurada para OpenA
 mykos realtime set-key      # Guarda de forma segura (0600) la API key para llamadas Realtime
 mykos realtime on           # Activa el modo de voz en la nube (OpenAI WebRTC)
 mykos realtime off          # Vuelve al modo de voz 100 % local (Whisper + Chatterbox/Kokoro)
+```
+
+### Ingeniería Inversa y Auditoría de Binarios con REA
+Puedes usar REA directamente desde el **Chat Web de MyKOS** diciendo:
+> *"MyKOS, usa REA y revisa `<nombre_del_programa_o_ruta>`"*
+
+O desde la terminal con el subcomando `mykos rea`:
+```bash
+mykos rea status                  # Verifica el motor REA (rea-agents) y sus 207 herramientas MCP
+mykos rea tools [filtro]          # Lista o busca entre las 207 herramientas de ingeniería inversa
+mykos rea inspect <programa|ruta> # Analiza un binario o programa por nombre (ej: ls, ollama) o ruta
+mykos rea call <tool> '<json>'    # Invoca cualquier herramienta MCP de REA directamente
 ```
 
 ### Lanzamiento de Aplicaciones de Escritorio
