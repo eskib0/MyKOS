@@ -375,8 +375,8 @@ cmd_doctor() {
     fi
   fi
 
-  if [[ -L "$HOME/.local/bin/mykos" ]] && [[ "$(readlink -f "$HOME/.local/bin/mykos")" == "$REAL_SCRIPT" ]]; then
-    ok_msg "Comando «mykos» enlazado correctamente en ~/.local/bin/mykos"
+  if [[ -x "$HOME/.local/bin/mykos" ]]; then
+    ok_msg "Comando «mykos» instalado correctamente en ~/.local/bin/mykos"
   else
     if [[ "$fix" -eq 1 ]]; then
       mkdir -p "$HOME/.local/bin"
