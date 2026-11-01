@@ -49,6 +49,7 @@ from subagents import SubagentError, list_jobs, prepare_spawn, spawn_approved
 from management import local_status
 from media import MediaError, list_media, media_status, prepare_text_to_speech, text_to_speech_approved
 from nodes import NodeError, list_nodes, pair_node_approved, prepare_pair_node, prepare_revoke_node, revoke_node_approved
+from rea import ReaError, rea_analyze_javascript, rea_call_tool, rea_inspect_binary, rea_list_tools, rea_status
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -1253,6 +1254,102 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "rea_status",
+            "description": "Consulta el estado del motor integrado REA (Reverse Engineer Anything), su versión y el número de herramientas MCP disponibles (207 herramientas de ingeniería inversa). Solo lectura.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rea_list_tools",
+            "description": "Busca o lista herramientas disponibles en el motor REA (decompilación, binarios ELF/PE/Mach-O, Android APK, Rust, Go, WASM, Electron/JS, SQLite, PCAP, firmware).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Filtro opcional por nombre o descripción (ej. decompile, android, swift, electron, rust, macho, elf).",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Máximo de herramientas a devolver (por defecto 35, máximo 100).",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rea_inspect_binary",
+            "description": "Abre e inspecciona un binario o artefacto local con REA (open_binary + inspect_artifact + binary_overview), devolviendo evidencia SHA-256, formato, arquitectura, secciones y funciones.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Ruta al archivo binario o artefacto local a analizar.",
+                    },
+                },
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rea_analyze_javascript",
+            "description": "Ejecuta análisis estático e ingeniería inversa de REA sobre una aplicación o bundle JavaScript, TypeScript, Web o Electron.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "input_path": {
+                        "type": "string",
+                        "description": "Ruta al archivo o directorio de la aplicación JS/Web/Electron.",
+                    },
+                    "detail": {
+                        "type": "string",
+                        "enum": ["summary", "standard", "full"],
+                        "description": "Nivel de detalle del análisis (por defecto summary).",
+                    },
+                },
+                "required": ["input_path"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rea_call_tool",
+            "description": "Invoca cualquiera de las 207 herramientas estáticas del motor REA (ej. list_procedures, procedure_pseudo_code, list_strings, inspect_android_package, inspect_go_binary, inspect_rust_binary).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Nombre exacto de la herramienta de REA a ejecutar.",
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "description": "Diccionario JSON con los parámetros de la herramienta de REA.",
+                    },
+                },
+                "required": ["tool_name"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -1564,6 +1661,31 @@ def tool_catalog() -> list[dict[str, str]]:
             "name": "revoke_node",
             "description": "Prepara revocar un nodo emparejado.",
             "scope": "Cambio local · requiere aprobación",
+        },
+        {
+            "name": "rea_status",
+            "description": "Consulta el estado del motor de ingeniería inversa REA (207 herramientas).",
+            "scope": "Solo lectura · motor REA local",
+        },
+        {
+            "name": "rea_list_tools",
+            "description": "Busca o lista herramientas del motor REA.",
+            "scope": "Solo lectura · motor REA local",
+        },
+        {
+            "name": "rea_inspect_binary",
+            "description": "Inspecciona un binario o artefacto local con REA (SHA-256, formato, funciones).",
+            "scope": "Solo lectura · análisis estático REA",
+        },
+        {
+            "name": "rea_analyze_javascript",
+            "description": "Analiza aplicaciones o bundles JS/TS/Electron con REA.",
+            "scope": "Solo lectura · análisis estático REA",
+        },
+        {
+            "name": "rea_call_tool",
+            "description": "Ejecuta una herramienta estática del catálogo MCP de REA.",
+            "scope": "Solo lectura · análisis estático REA",
         },
     ]
 
@@ -4629,8 +4751,47 @@ def execute_tool(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
             return list_media(arguments.get("limit", 100))
         if name == "list_nodes":
             return list_nodes()
+        if name == "rea_status":
+            return rea_status()
+        if name == "rea_list_tools":
+            return rea_list_tools(
+                str(arguments.get("query", "") or ""),
+                int(arguments.get("limit", 35) or 35),
+            )
+        if name == "rea_inspect_binary":
+            raw_target = str(arguments.get("path", "") or "").strip()
+            if not raw_target:
+                raise ToolError("Debes indicar «path».")
+            target_p = Path(raw_target).expanduser().resolve()
+            if _is_private_path(target_p):
+                raise ToolError("No se permite inspeccionar directorios privados o credenciales de MyKOS.")
+            return rea_inspect_binary(str(target_p))
+        if name == "rea_analyze_javascript":
+            raw_target = str(arguments.get("input_path", "") or "").strip()
+            if not raw_target:
+                raise ToolError("Debes indicar «input_path».")
+            target_p = Path(raw_target).expanduser().resolve()
+            if _is_private_path(target_p):
+                raise ToolError("No se permite analizar directorios privados o credenciales de MyKOS.")
+            return rea_analyze_javascript(str(target_p), str(arguments.get("detail", "summary") or "summary"))
+        if name == "rea_call_tool":
+            t_name = str(arguments.get("tool_name", "") or "").strip()
+            t_args = arguments.get("arguments")
+            if not isinstance(t_args, dict):
+                t_args = {}
+            for val in t_args.values():
+                if isinstance(val, str) and ("/" in val or "\\" in val):
+                    try:
+                        cand = Path(val).expanduser().resolve()
+                        if _is_private_path(cand):
+                            raise ToolError("No se permite usar REA sobre rutas de credenciales de MyKOS.")
+                    except OSError:
+                        pass
+            return rea_call_tool(t_name, t_args)
         return {"ok": False, "error": f"Herramienta desconocida: {name}"}
     except ToolError as error:
+        return {"ok": False, "error": str(error)}
+    except ReaError as error:
         return {"ok": False, "error": str(error)}
     except BrowserError as error:
         return {"ok": False, "error": str(error)}

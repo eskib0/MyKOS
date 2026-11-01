@@ -1,0 +1,278 @@
+"""
+Puente nativo con REA (Reverse Engineer Anything) para MyKOS.
+Conecta mediante protocolo MCP (JSON-RPC 2.0 sobre stdio) con `rea-agents`,
+exponiendo las 207 herramientas de ingeniería inversa estática, decompilación,
+análisis de binarios (ELF, PE, Mach-O, APK, WASM, Firmware) y aplicaciones JS/Electron.
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import threading
+from pathlib import Path
+from typing import Any
+
+REA_PACKAGE = os.environ.get("MYKOS_REA_PACKAGE", "rea-agents@6.7.0").strip()
+REA_TIMEOUT_SECONDS = int(os.environ.get("MYKOS_REA_TIMEOUT", "120"))
+
+# Herramientas de REA que ejecutan instrumentación dinámica o modifican dispositivos
+REA_DYNAMIC_TOOLS = {
+    "start_frida_session",
+    "load_frida_script",
+    "instrument_with_frida",
+    "start_gdb_session",
+    "gdb_console",
+    "start_rizin_debug_session",
+    "rizin_debug_command",
+    "execute_rizin_command",
+    "cutter_command",
+    "push_adb_file",
+    "install_adb_package",
+    "uninstall_adb_package",
+    "start_adb_app",
+    "start_adb_activity",
+    "stop_adb_app",
+    "capture_process_scenario",
+    "observe_native_calls",
+    "observe_native_ui",
+    "capture_native_ui_scenario",
+    "observe_javascript_runtime",
+    "observe_web_execution",
+    "capture_electron_scenario",
+    "capture_browser_scenario",
+}
+
+
+class ReaError(Exception):
+    """Error seguro producido al comunicarse con el motor REA."""
+
+
+def _resolve_npx_command() -> list[str]:
+    custom = os.environ.get("MYKOS_REA_COMMAND", "").strip()
+    if custom:
+        return custom.split()
+    npx_bin = "npx.cmd" if sys.platform == "win32" else "npx"
+    resolved = shutil.which(npx_bin) or shutil.which("npx")
+    if not resolved:
+        raise ReaError("No se encontró «npx» (Node.js) para iniciar el motor REA.")
+    return [resolved, "-y", REA_PACKAGE, "mcp"]
+
+
+class _ReaMcpSession:
+    """Sesión persistente JSON-RPC 2.0 sobre stdio con el servidor MCP de REA."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._proc: subprocess.Popen[str] | None = None
+        self._next_id = 1
+        self._server_info: dict[str, Any] = {}
+        self._tools_cache: list[dict[str, Any]] | None = None
+
+    def _ensure_started_unlocked(self) -> None:
+        if self._proc is not None and self._proc.poll() is None:
+            return
+        cmd = _resolve_npx_command()
+        try:
+            self._proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                bufsize=1,
+            )
+        except OSError as exc:
+            raise ReaError(f"No se pudo arrancar el servidor REA ({' '.join(cmd)}): {exc}") from exc
+
+        init_res = self._rpc_unlocked(
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "mykos-gateway", "version": "1.0.0"},
+            },
+        )
+        self._server_info = init_res.get("serverInfo", {}) if isinstance(init_res, dict) else {}
+        self._notify_unlocked("notifications/initialized", {})
+
+    def _notify_unlocked(self, method: str, params: dict[str, Any]) -> None:
+        if not self._proc or not self._proc.stdin:
+            raise ReaError("Sesión REA no disponible.")
+        msg = json.dumps({"jsonrpc": "2.0", "method": method, "params": params}, ensure_ascii=False)
+        self._proc.stdin.write(msg + "\n")
+        self._proc.stdin.flush()
+
+    def _rpc_unlocked(self, method: str, params: dict[str, Any]) -> Any:
+        if not self._proc or not self._proc.stdin or not self._proc.stdout:
+            raise ReaError("Sesión REA no iniciada.")
+        req_id = self._next_id
+        self._next_id += 1
+        payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
+        try:
+            self._proc.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            self._proc.stdin.flush()
+            while True:
+                line = self._proc.stdout.readline()
+                if not line:
+                    stderr_tail = ""
+                    if self._proc.stderr:
+                        try:
+                            stderr_tail = self._proc.stderr.read()[:400]
+                        except Exception:
+                            pass
+                    self._proc = None
+                    raise ReaError(f"El proceso REA cerró la conexión inesperadamente. {stderr_tail}".strip())
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    resp = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if resp.get("id") == req_id:
+                    if "error" in resp:
+                        err = resp["error"]
+                        msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                        raise ReaError(f"Error de REA en {method}: {msg}")
+                    return resp.get("result")
+        except BrokenPipeError as exc:
+            self._proc = None
+            raise ReaError("Tubería rota comunicando con REA.") from exc
+
+    def list_tools(self) -> list[dict[str, Any]]:
+        with self._lock:
+            self._ensure_started_unlocked()
+            if self._tools_cache is None:
+                res = self._rpc_unlocked("tools/list", {})
+                tools = res.get("tools", []) if isinstance(res, dict) else []
+                self._tools_cache = tools if isinstance(tools, list) else []
+            return self._tools_cache
+
+    def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        with self._lock:
+            self._ensure_started_unlocked()
+            res = self._rpc_unlocked("tools/call", {"name": name, "arguments": arguments or {}})
+            if not isinstance(res, dict):
+                return {"ok": True, "tool": name, "result": res}
+            is_error = bool(res.get("isError", False))
+            content = res.get("content", [])
+            parsed_items: list[Any] = []
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        txt = str(item.get("text", ""))
+                        try:
+                            parsed_items.append(json.loads(txt))
+                        except json.JSONDecodeError:
+                            parsed_items.append(txt)
+                    else:
+                        parsed_items.append(item)
+            output = parsed_items[0] if len(parsed_items) == 1 else parsed_items
+            return {
+                "ok": not is_error,
+                "tool": name,
+                "server": self._server_info,
+                "untrusted_target_content": True,
+                "result": output,
+            }
+
+    def status(self) -> dict[str, Any]:
+        with self._lock:
+            self._ensure_started_unlocked()
+            if self._tools_cache is None:
+                res = self._rpc_unlocked("tools/list", {})
+                tools = res.get("tools", []) if isinstance(res, dict) else []
+                self._tools_cache = tools if isinstance(tools, list) else []
+            return {
+                "ok": True,
+                "available": True,
+                "package": REA_PACKAGE,
+                "server": self._server_info,
+                "pid": self._proc.pid if self._proc else None,
+                "tools_count": len(self._tools_cache or []),
+            }
+
+
+_SESSION = _ReaMcpSession()
+
+
+def rea_status() -> dict[str, Any]:
+    """Devuelve el estado de conexión y versión del motor REA."""
+    try:
+        return _SESSION.status()
+    except ReaError as exc:
+        return {"ok": False, "available": False, "package": REA_PACKAGE, "error": str(exc)}
+
+
+def rea_list_tools(query: str = "", limit: int = 35) -> dict[str, Any]:
+    """Lista o busca herramientas en el catálogo de 207 herramientas de REA."""
+    tools = _SESSION.list_tools()
+    q = (query or "").strip().lower()
+    matched = []
+    for t in tools:
+        name = str(t.get("name", ""))
+        desc = str(t.get("description", ""))
+        if not q or q in name.lower() or q in desc.lower():
+            schema = t.get("inputSchema") or t.get("parameters") or {}
+            props = schema.get("properties", {}) if isinstance(schema, dict) else {}
+            req = schema.get("required", []) if isinstance(schema, dict) else []
+            matched.append({
+                "name": name,
+                "dynamic_requires_approval": name in REA_DYNAMIC_TOOLS,
+                "description": desc[:260] + ("…" if len(desc) > 260 else ""),
+                "required_params": req,
+                "optional_params": [k for k in props.keys() if k not in req],
+            })
+    capped = max(1, min(int(limit or 35), 100))
+    return {
+        "ok": True,
+        "total_rea_tools": len(tools),
+        "matched_count": len(matched),
+        "showing": len(matched[:capped]),
+        "tools": matched[:capped],
+    }
+
+
+def rea_inspect_binary(path: str) -> dict[str, Any]:
+    """Abre un binario o artefacto local en REA y devuelve su inspección criptográfica y vista general."""
+    clean_path = str(Path(path).expanduser().resolve())
+    if not Path(clean_path).exists():
+        raise ReaError(f"El archivo o ruta no existe: {clean_path}")
+    opened = _SESSION.call_tool("open_binary", {"path": clean_path})
+    artifact = _SESSION.call_tool("inspect_artifact", {"detail": "standard"})
+    overview = _SESSION.call_tool("binary_overview", {})
+    return {
+        "ok": True,
+        "target_path": clean_path,
+        "open_binary": opened.get("result"),
+        "artifact": artifact.get("result"),
+        "overview": overview.get("result"),
+    }
+
+
+def rea_analyze_javascript(input_path: str, detail: str = "summary") -> dict[str, Any]:
+    """Ejecuta ingeniería inversa estática de REA sobre una aplicación JavaScript, TypeScript, Web o Electron."""
+    clean_path = str(Path(input_path).expanduser().resolve())
+    if not Path(clean_path).exists():
+        raise ReaError(f"La ruta no existe: {clean_path}")
+    detail_mode = detail if detail in {"summary", "standard", "full"} else "summary"
+    return _SESSION.call_tool(
+        "analyze_javascript_application",
+        {"input_path": clean_path, "detail": detail_mode},
+    )
+
+
+def rea_call_tool(tool_name: str, arguments: dict[str, Any] | None = None, allow_dynamic: bool = False) -> dict[str, Any]:
+    """Invoca cualquiera de las 207 herramientas del servidor MCP de REA."""
+    name = (tool_name or "").strip()
+    if not name:
+        raise ReaError("Debes indicar el nombre de la herramienta de REA (tool_name).")
+    if name in REA_DYNAMIC_TOOLS and not allow_dynamic:
+        raise ReaError(
+            f"La herramienta «{name}» realiza instrumentación dinámica en vivo y requiere aprobación explícita."
+        )
+    return _SESSION.call_tool(name, arguments or {})

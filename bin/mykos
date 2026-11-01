@@ -733,6 +733,56 @@ cmd_test() {
   echo "✅ Todas las pruebas superadas."
 }
 
+cmd_rea() {
+  local sub="${1:-status}"
+  shift || true
+  print_logo "MyKOS · REA (Reverse Engineer Anything) Engine"
+  case "$sub" in
+    status)
+      PYTHONPATH="$GATEWAY_DIR/app" python3 - <<'PY'
+import json
+from rea import rea_status
+st = rea_status()
+if st.get("ok"):
+    srv = st.get("server", {})
+    print(f"🟢 Motor REA Activo: {srv.get('name', 'rea')} v{srv.get('version', '-')} ({st.get('package')})")
+    print(f"   • Herramientas MCP cargadas: {st.get('tools_count', 0)}")
+    print("   • Integrado en MyKOS Tools : rea_status, rea_list_tools, rea_inspect_binary, rea_analyze_javascript, rea_call_tool")
+else:
+    print(f"🔴 Motor REA No Disponible: {st.get('error')}")
+PY
+      ;;
+    tools)
+      local q="${1:-}"
+      PYTHONPATH="$GATEWAY_DIR/app" python3 - "$q" <<'PY'
+import sys
+from rea import rea_list_tools
+res = rea_list_tools(sys.argv[1], limit=50)
+print(f"Mostrando {res['showing']} de {res['matched_count']} herramientas (total REA: {res['total_rea_tools']}):")
+for t in res["tools"]:
+    flag = " [dinámica]" if t["dynamic_requires_approval"] else ""
+    print(f"  • {t['name']:<34}{flag} — {t['description'][:95]}")
+PY
+      ;;
+    inspect)
+      local target="${1:-}"
+      if [[ -z "$target" ]]; then
+        echo "Uso: mykos rea inspect <ruta-al-binario-o-artefacto>" >&2
+        exit 1
+      fi
+      PYTHONPATH="$GATEWAY_DIR/app" python3 - "$target" <<'PY'
+import json, sys
+from rea import rea_inspect_binary
+res = rea_inspect_binary(sys.argv[1])
+print(json.dumps(res, indent=2, ensure_ascii=False))
+PY
+      ;;
+    *)
+      echo "Uso: mykos rea [status | tools [filtro] | inspect <ruta>]"
+      ;;
+  esac
+}
+
 cmd_help() {
   print_logo "MyKOS CLI · Gestión integral del ecosistema MyKOS"
   cat <<EOF
@@ -750,6 +800,7 @@ Comandos del Gateway y Diagnóstico:
   logs [-f] [-n N]          Muestra el logo de MyKOS y los registros del Gateway y Backend (-f en vivo)
   store <subcomando>        Gestiona el almacén ACID (status | verify | repair | export --to <dir> | retire)
   realtime <subcomando>     Configura voz en la nube (status | set-key | on | off)
+  rea <subcomando>          Motor de ingeniería inversa REA (status | tools [filtro] | inspect <archivo>)
   test                      Ejecuta la batería completa de pruebas de seguridad, rutas, políticas y almacén
 
 Aplicaciones de Escritorio MyKOS:
@@ -800,6 +851,9 @@ case "$COMMAND" in
     ;;
   realtime)
     cmd_realtime "$@"
+    ;;
+  rea)
+    cmd_rea "$@"
     ;;
   monitor)
     exec "$MYKOS_ROOT/apps/monitor/mykos-monitor" "$@"

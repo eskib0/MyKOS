@@ -259,6 +259,14 @@ switch ($Command) {
     }
     { $_ -in @("logs", "log") } { Invoke-MykosLogs -Follow:($RestArgs -contains "-f" -or $RestArgs -contains "--follow") }
     "store" { & node $StoreCli @RestArgs }
+    "rea" {
+        Show-MykosLogo "MyKOS · REA (Reverse Engineer Anything) Engine"
+        $pyExe = Get-MykosPython
+        $env:PYTHONPATH = Join-Path $GatewayDir "app"
+        $sub = if ($RestArgs.Count -gt 0) { $RestArgs[0] } else { "status" }
+        $q = if ($RestArgs.Count -gt 1) { $RestArgs[1] } else { "" }
+        & $pyExe -c "import json, sys; from rea import rea_status, rea_list_tools, rea_inspect_binary; s=sys.argv[1]; q=sys.argv[2]; print(json.dumps(rea_status() if s=='status' else (rea_inspect_binary(q) if s=='inspect' else rea_list_tools(q)), indent=2, ensure_ascii=False))" $sub $q
+    }
     "analizador" {
         $pyExe = Get-MykosPython
         & $pyExe (Join-Path $MykosRoot "apps\analizador\main.py") @RestArgs
@@ -266,6 +274,6 @@ switch ($Command) {
     { $_ -in @("test", "tests", "check") } { Invoke-MykosTest }
     default {
         Show-MykosLogo "MyKOS CLI (Windows) · Gestión integral del ecosistema MyKOS"
-        Write-Host "Uso: mykos <run|start|stop|restart|status|doctor [--fix]|open|logs [-f]|store|analizador|test>"
+        Write-Host "Uso: mykos <run|start|stop|restart|status|doctor [--fix]|open|logs [-f]|store|rea|analizador|test>"
     }
 }

@@ -106,6 +106,7 @@ flowchart LR
 | **Síntesis de Voz Ligera (TTS CPU)** | **Kokoro 82M** + `espeak-ng` (voces `em_alex` y `ef_dora`) | [`kokoro_worker.py`](gateway/app/kokoro_worker.py) | Motor TTS ultrarrápido en CPU sin consumo de VRAM, ideal cuando la GPU está dedicada al 100 % a inferencia. |
 | **Llamadas en Tiempo Real** | **Motor Local por Turnos** / **OpenAI WebRTC Realtime** / **Gemini Live** | [`voice-engine.js`](gateway/app/gateway-plugin/mykos-ui/voice-engine.js), [`realtime.js`](gateway/app/gateway-plugin/mykos-ui/realtime.js) | Streaming frase a frase (NDJSON) en modo local, o conexión bidireccional de baja latencia con soporte de interrupción y herramientas supervisadas. |
 | **Memoria Semántica** | Vectores + Búsqueda léxica/semántica | [`embedding_memory.py`](gateway/app/embedding_memory.py) | Indexación y recuperación de recuerdos persistentes de largo plazo independientes de cada conversación. |
+| **Ingeniería Inversa (REA)** | **REA (`rea-agents` MCP · 207 herramientas)** | [`rea.py`](gateway/app/rea.py), [`tools.py`](gateway/app/tools.py) | Sesión persistente MCP JSON-RPC con las 207 herramientas de **Reverse Engineer Anything** (`rea_status`, `rea_list_tools`, `rea_inspect_binary`, `rea_analyze_javascript`, `rea_call_tool`) para decompilación nativa/gestionada, análisis de ELF/PE/Mach-O/APK/WASM/Firmware y bundles JS/Electron. |
 
 ---
 
