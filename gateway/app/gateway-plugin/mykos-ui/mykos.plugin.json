@@ -1,0 +1,129 @@
+{
+  "id": "mykos-ui",
+  "name": "MyKOS UI",
+  "description": "Interfaz MyKOS servida por MyKOS Gateway, con backend supervisado y plano de control de modelos y herramientas.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "staticDir": {
+        "type": "string",
+        "description": "Ruta absoluta de la carpeta static/ de MyKOS. Si falta, se usa <carpeta del plugin>/../../static."
+      },
+      "projectDir": {
+        "type": "string",
+        "description": "Carpeta del proyecto MyKOS (donde está server.py). Si falta, es la carpeta padre de staticDir."
+      },
+      "gatewayPort": {
+        "type": "integer",
+        "description": "Puerto público del Gateway. Si falta, se usa MYKOS_GATEWAY_PORT y, después, gateway.port."
+      },
+      "routes": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Tabla de rutas públicas /api/* (routes.js).",
+        "properties": {
+          "strict": { "type": "boolean", "description": "true (por defecto): lo que no está en la tabla de rutas se rechaza en el Gateway (404/405) y no llega al trabajador. false: solo para pruebas con un backend falso." }
+        }
+      },
+      "policy": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Política del Gateway para los servicios auxiliares (policy.js): forma exacta de la petición, límites de carga y firma de la decisión.",
+        "properties": {
+          "strict": { "type": "boolean", "description": "true (por defecto): el Gateway valida y limita estas rutas antes de reenviarlas y firma la decisión que el trabajador exige. false: solo para pruebas con un backend falso." }
+        }
+      },
+      "chatLoop": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Bucle de chat con herramientas del modelo local en el Gateway (chat-loop.js).",
+        "properties": {
+          "enabled": { "type": "boolean", "description": "false (por defecto): el bucle lo ejecuta server.py como hasta ahora. true: lo ejecuta el Gateway y Python solo ejecuta las herramientas y acciones que este le pide. Exige reiniciar MyKOS Gateway." }
+        }
+      },
+      "voice": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Motor de respuesta de la llamada de voz.",
+        "properties": {
+          "model": { "type": "string", "description": "Modelo remoto para responder en la llamada. Por defecto openai-codex-oauth/gpt-5.6-luna." }
+        }
+      },
+      "realtime": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Voz OpenAI Realtime independiente de MyKOS. gpt-live-1-codex usa el OAuth aislado de MyKOS y Cove; gpt-live-1 usa una clave Platform propia.",
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Activa la sesión WebRTC propia de MyKOS. Por defecto false." },
+          "mode": { "type": "string", "enum": ["local", "cloud", "gemini"], "description": "Motor de llamada seleccionado. «cloud» usa OpenAI Realtime; «gemini» usa Gemini Live." },
+          "apiBase": { "type": "string", "description": "Base de la API de OpenAI. Por defecto https://api.openai.com." },
+          "model": { "type": "string", "description": "Modelo de OpenAI Realtime. Por defecto gpt-live-1-codex." },
+          "voice": { "type": "string", "description": "Voz de OpenAI Realtime. Por defecto cove." },
+          "credentialFile": { "type": "string", "description": "Ruta privada de la clave propia de MyKOS. No registrar ni versionar." },
+          "oauthFile": { "type": "string", "description": "Ruta privada del OAuth Codex propio de MyKOS para gpt-live-1-codex. No registrar ni versionar." },
+          "safetyIdentifier": { "type": "string", "description": "Identificador opaco de seguridad para la sesión Realtime." },
+          "timeoutMs": { "type": "integer", "description": "Tiempo máximo de creación de sesión Realtime." }
+        }
+      },
+      "geminiLive": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Voz Gemini Live con token efímero. La API key se queda en el backend de MyKOS.",
+        "properties": {
+          "model": { "type": "string", "description": "Modelo Gemini Live. Por defecto gemini-3.8-live." },
+          "voice": { "type": "string", "description": "Voz preconfigurada de Gemini Live. Por defecto Puck." }
+        }
+      },
+      "allowedOrigins": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Origins adicionales aceptados en /api/* además del propio Gateway (normalmente ninguno)."
+      },
+      "store": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Almacén de datos de MyKOS (conversaciones, memoria, permisos, auditoría y aprobaciones) propiedad del Gateway. Apagado por defecto.",
+        "properties": {
+          "enabled": { "type": "boolean", "description": "true: el Gateway guarda los datos y el backend los pide por HTTP interno. Por defecto false (el backend usa los ficheros de data/)." },
+          "dir": { "type": "string", "description": "Carpeta del almacén. Por defecto <estado del Gateway>/mykos." },
+          "legacyDataDir": { "type": "string", "description": "Carpeta data/ antigua de la que se importa una sola vez. Por defecto <projectDir>/data." },
+          "autoImport": { "type": "boolean", "description": "Importar los ficheros antiguos al arrancar si aún no están en el almacén. Por defecto true." },
+          "backupsKeep": { "type": "integer", "description": "Copias de revisiones anteriores por documento. Por defecto 40." },
+          "snapshotDays": { "type": "integer", "description": "Jornadas de instantáneas diarias que se conservan. Por defecto 14." }
+        }
+      },
+      "backend": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Backend Python de MyKOS al que se reenvía /api/*.",
+        "properties": {
+          "url": { "type": "string", "description": "URL interna del backend, p. ej. http://127.0.0.1:3211" },
+          "spawn": { "type": "boolean", "description": "true (por defecto): el plugin arranca y supervisa el backend. false: solo reenvía a uno ya en marcha." },
+          "python": { "type": "string", "description": "Ejecutable de Python. Por defecto MYKOS_BACKEND_PYTHON o «python3»." },
+          "script": { "type": "string", "description": "Ruta de server.py. Por defecto <projectDir>/server.py." },
+          "logFile": { "type": "string", "description": "Registro del backend. Por defecto <projectDir>/data/mykos-backend.log." },
+          "env": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "Variables de entorno adicionales para el backend."
+          },
+          "supervision": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Ajustes de la supervisión (normalmente no hace falta tocarlos; las pruebas los acortan).",
+            "properties": {
+              "delaysMs": { "type": "array", "items": { "type": "number" }, "description": "Esperas entre reintentos tras una caída. Por defecto 1, 2, 4, 8, 15 y 30 s." },
+              "maxQuickFailures": { "type": "integer", "description": "Caídas seguidas antes de darse por vencido. Por defecto 6." },
+              "stableRunMs": { "type": "integer", "description": "Tiempo funcionando a partir del cual se olvidan las caídas previas. Por defecto 60000." },
+              "readyTimeoutMs": { "type": "integer", "description": "Tiempo máximo hasta que el backend responde a /api/health. Por defecto 90000." }
+            }
+          }
+        }
+      }
+    }
+  }
+}

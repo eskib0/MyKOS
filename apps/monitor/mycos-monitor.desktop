@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=MyKOS Monitor
+Name[es]=MyKOS Monitor
+Comment=Panel de mandos del sistema en tiempo real
+Comment[es]=Panel de mandos del sistema en tiempo real
+Exec=mykos-monitor
+TryExec=mykos-monitor
+Icon=mykos-monitor
+Terminal=false
+Categories=System;Monitor;
+Keywords=monitor;cpu;gpu;ram;disk;network;mykos;
+StartupNotify=true
+StartupWMClass=es.mykos.monitor

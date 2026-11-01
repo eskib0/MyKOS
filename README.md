@@ -1,0 +1,174 @@
+# MyKOS Ecosystem
+
+> **MyKOS**: Plataforma personal de inteligencia artificial, pasarela multimodelo gobernada por políticas, motor de voz bidireccional y suite de aplicaciones nativas para Linux.
+
+---
+
+## 🏛️ Estructura del Repositorio
+
+```text
+MyKOS/
+├── bin/
+│   └── mykos                 # CLI unificado de MyKOS (start, stop, status, store, realtime, apps, test)
+├── install.sh                # Instalador automático para Linux (venv, enlaces en ~/.local/bin, systemd)
+│
+├── gateway/                  # MyKOS Gateway: Pasarela multimodelo, autoridad de permisos y Web UI
+│   ├── runtime/              # Servidor HTTP y supervisor nativo en Node.js (mykos-gateway.mjs)
+│   │   └── antigravity-home/ # Perfil aislado de solo texto (deny total de herramientas) para agy
+│   ├── app/                  # Trabajador Python y conectores de modelos/herramientas
+│   │   ├── server.py         # Ejecutor interno (/mykos-control/*), catálogo y bucle de modelos remotos
+│   │   ├── strata.py         # Conector para el motor local CUDA Strata (Qwen3.8 125B / Qwen3.6 35B)
+│   │   ├── anthropic_api.py  # Conector directo Anthropic Messages API (Claude 3.7 / 3.5)
+│   │   ├── mistral.py        # Conector Mistral AI / Vibe (con enlace automático al keyring del sistema)
+│   │   ├── gemini.py         # Conector Google AI Studio (Gemini) y tokens efímeros Gemini Live
+│   │   ├── nvidia.py         # Conector NVIDIA NIM y cifrado autenticado mykos-sealed-v1
+│   │   ├── kimi.py           # Conector Kimi API (Moonshot)
+│   │   ├── oauth.py          # Flujos OAuth propios (OpenAI Codex, Claude Code, OpenRouter PKCE)
+│   │   ├── antigravity_cli.py# Adaptador aislado para Antigravity CLI (agy)
+│   │   ├── media.py          # Transcripción Whisper persistente y síntesis de voz local
+│   │   ├── chatterbox_worker.py # Trabajador TTS GPU/CPU Chatterbox Multilingual
+│   │   ├── kokoro_worker.py  # Trabajador TTS CPU Kokoro 82M (espeak-ng)
+│   │   ├── whisper_worker.py # Trabajador STT persistente con OpenAI Whisper
+│   │   ├── tools.py          # Catálogo de herramientas del sistema, navegador y memoria
+│   │   ├── static/           # Interfaz web reactiva (index.html, app.js, styles.css)
+│   │   └── gateway-plugin/
+│   │       ├── mykos-ui/     # Núcleo del Gateway (index.js, routes.js, policy.js, chat-loop.js, store.js)
+│   │       ├── store-cli.mjs # Utilidad CLI de verificación, exportación y auditoría del almacén
+│   │       └── tests/        # Batería de pruebas automatizadas de rutas, políticas, almacén y voz
+│   └── optional/
+│       └── codex/            # Extensión opcional de cliente Codex
+│
+├── apps/                     # Suite de aplicaciones de escritorio nativas de MyKOS
+│   ├── monitor/              # MyKOS Monitor (GTK4 + Cairo): telemetría en tiempo real de CPU, GPU, RAM, disco y red
+│   └── analizador/           # Analizador MyKOS (PySide6): mapa visual de uso de disco y buscador de duplicados
+│
+├── assets/                   # Recursos gráficos, intro en vídeo y tema de arranque Plymouth (mycos-logo)
+└── docs/                     # Informes técnicos de arquitectura e ingeniería inversa (REA)
+```
+
+---
+
+## ⚙️ Cómo Funciona la Arquitectura de MyKOS
+
+MyKOS separa estrictamente **quién decide y guarda los datos** (el **Gateway en Node.js**) de **quién ejecuta las herramientas o habla con proveedores externos** (el **Trabajador en Python**):
+
+```mermaid
+flowchart LR
+    Browser["Navegador Web / UI\nhttp://127.0.0.1:3210"] <--> Gateway["MyKOS Gateway (Node.js)\n• Tabla de 71 rutas (routes.js)\n• 33 políticas HMAC (policy.js)\n• Bucle de chat local (chat-loop.js)\n• Autoridad de permisos y aprobaciones"]
+    Gateway <--> Store["Almacén ACID (store.js)\n~/.mykos/gateway-state/mykos\n• Revisiones + Copias + Diario SHA-256"]
+    Gateway -- "HTTP interno autenticado\n/mykos-control/* + Firma HMAC" --> Worker["Trabajador Python (server.py)\n127.0.0.1:3211 (solo local)"]
+    Gateway <--> LocalEngines["Motores Locales GPU/CPU\n• Strata (:18080)\n• llama.cpp (:8091)\n• Ollama (:11434)"]
+    Worker <--> CloudProviders["Proveedores Remotos\n• OpenAI Codex / Realtime\n• Claude OAuth / Anthropic API\n• Mistral Vibe / Gemini / NVIDIA / Kimi / OpenRouter"]
+    Worker <--> LocalVoice["Motores Multimedia Locales\n• Whisper (STT)\n• Chatterbox (TTS GPU/CPU)\n• Kokoro 82M (TTS CPU)"]
+```
+
+1. **Frontera Única y Política Firmada:** El navegador solo se comunica con el Gateway (`127.0.0.1:3210`). Toda petición pasa primero por [`routes.js`](gateway/app/gateway-plugin/mykos-ui/routes.js) (71 rutas clasificadas por dominio y nivel de riesgo: `read`, `write`, `sensitive`) y por [`policy.js`](gateway/app/gateway-plugin/mykos-ui/policy.js) (que valida esquemas JSON, aplica límites de concurrencia/ritmo por minuto y adjunta la cabecera firmada `X-MyKOS-Gateway-Decision`).
+2. **Bucle de Chat Propiedad del Gateway (`chat-loop.js`):** Para los modelos locales (Strata, llama.cpp y Ollama), el propio Gateway ejecuta el bucle de herramientas, inyecta la hora local de Madrid en el último turno del usuario (preservando la caché de prompt del sistema), verifica cada acción con la **Guardia de Integridad Anti-Alucinaciones** y calcula la telemetría universal (`tokens/s`, `TTFT`, tokens de entrada/salida y duración).
+3. **Tres Modos de Permiso en Tiempo Real:**
+   - **Solo lectura (`solo_lectura`):** Bloquea cualquier herramienta sensible sin preguntar.
+   - **Supervisado (`supervisado`, por defecto):** Las herramientas de lectura se ejecutan al instante y las sensibles generan una solicitud de aprobación en la interfaz (con opción a conceder permiso una vez, por sesión o permanente).
+   - **Acceso total (`acceso_total`):** Concede y audita automáticamente permisos permanentes para herramientas elegibles; las acciones críticas de un solo uso (`once`) siguen requiriendo confirmación humana.
+4. **Almacén Transaccional (`store.js`):** Las conversaciones, recuerdos, vectores de memoria, permisos, aprobaciones, recordatorios, subagentes y nodos se guardan mediante escrituras atómicas con control de revisión, copias de seguridad rotativas por documento, instantáneas diarias y diario `journal.jsonl`.
+
+---
+
+## 🧠 Motores que Usa MyKOS y Para Qué Sirve Cada Uno
+
+### 1. Motores de Inferencia Local (GPU CUDA / CPU)
+
+| Motor | Modelos Destacados | Puerto / Interfaz | Para qué se usa en MyKOS |
+| :--- | :--- | :--- | :--- |
+| **Strata** ([`strata.py`](gateway/app/strata.py)) | `strata/qwen3.8-flash-next-iq2_xs-32k` (125B MoE), `strata/qwen3.6-35b-a3b` (Visión + MTP) | `http://127.0.0.1:18080` (`/v1/chat/completions`) | Motor local principal de alto rendimiento con CUDA. Antes de consultarlo, el Gateway descarga automáticamente los modelos de Ollama en VRAM (`unloadOllama()`) para evitar conflictos de memoria. Soporta herramientas nativas, razonamiento y benchmark. |
+| **llama.cpp CUDA** ([`index.js`](gateway/app/gateway-plugin/mykos-ui/index.js)) | `mykos-cuda` | `http://127.0.0.1:8091` | Servidor `llama-server` gestionado bajo demanda por el Gateway (`ModelController`). Se inicia al seleccionarlo y se detiene automáticamente al cambiar a Ollama para liberar la GPU. |
+| **Ollama** | Cualquier modelo local instalado (`qwen3`, `llama3`, `gemma3`, etc.) | `http://127.0.0.1:11434` (`/api/chat`) | Gestión de modelos locales multiuso, descarga/borrado desde el panel de MyKOS con barra de progreso y generación automática del **Diario de Sesión** (`diario-mykos.md`). |
+
+### 2. Motores y Proveedores en la Nube / OAuth
+
+| Proveedor | Módulo | Método de Autenticación | Para qué se usa en MyKOS |
+| :--- | :--- | :--- | :--- |
+| **Mistral AI / Vibe** | [`mistral.py`](gateway/app/mistral.py) | Enlace automático al keyring de Vibe (`ai.mistral.vibe`) o API Key cifrada | Chat y uso de herramientas con modelos Mistral (`mistral-medium`, `codestral`, etc.) reutilizando la sesión autenticada de Vibe en el sistema. |
+| **Anthropic Direct API** | [`anthropic_api.py`](gateway/app/anthropic_api.py) | API Key (`sk-ant-...`) cifrada con `mykos-sealed-v1` | Acceso directo a `claude-3-7-sonnet`, `claude-3-5-sonnet` y `claude-3-5-haiku` con visión, razonamiento y herramientas sin depender del CLI. |
+| **Claude Code OAuth** | [`server.py`](gateway/app/server.py) | Suscripción `claude.ai` vía CLI oficial | Uso de `claude-sonnet-oauth` con ventana de 131K tokens y protocolo JSON estructurado gobernado por MyKOS (con las herramientas nativas del CLI deshabilitadas). |
+| **OpenAI Codex OAuth** | [`oauth.py`](gateway/app/oauth.py) | Sesión OAuth aislada de MyKOS (`~/.mykos/gateway-state/mykos/credentials/openai-codex`) | Modelos `openai-codex-oauth/gpt-5.6-luna` (258K contexto), delegación de razonamiento para llamadas de voz y soporte WebRTC Realtime. |
+| **Google Gemini API** | [`gemini.py`](gateway/app/gemini.py) / [`gemini_live.py`](gateway/app/gemini_live.py) | API Key (`AIza...`) cifrada + Tokens efímeros de un solo uso | Modelos Gemini en chat multimodal y llamadas de voz **Gemini Live** por WebSocket bidireccional sin exponer jamás la API key al navegador. |
+| **NVIDIA NIM / Kimi / OpenRouter** | [`nvidia.py`](gateway/app/nvidia.py), [`kimi.py`](gateway/app/kimi.py), [`oauth.py`](gateway/app/oauth.py) | API Key cifrada (`nvapi-...`, Kimi) / OAuth PKCE (OpenRouter) | Catálogo extendido de modelos remotos con el protocolo unificado de herramientas e integridad de MyKOS. |
+| **Antigravity CLI (`agy`)** | [`antigravity_cli.py`](gateway/app/antigravity_cli.py) | Sesión Google propia de `agy` en perfil aislado (`runtime/antigravity-home`) | Consultas de solo texto a modelos Gemini Argon / Claude Opus / GPT-OSS mediante `agy --mode plan --sandbox`, con bloqueo estricto (`deny`) de todas las herramientas del CLI. |
+
+### 3. Motores de Voz, Audio y Memoria
+
+| Componente | Motor / Tecnología | Ubicación | Función |
+| :--- | :--- | :--- | :--- |
+| **Transcripción de Voz (STT)** | **OpenAI Whisper** (`large-v3-turbo` con autodetección de caché local) | [`whisper_worker.py`](gateway/app/whisper_worker.py) | Proceso persistente en segundo plano que transcribe el micrófono en local sin enviar audio a servicios externos. |
+| **Síntesis de Voz Natural (TTS GPU/CPU)** | **Chatterbox Multilingual** (voces `alvaro` y `elvira`) | [`chatterbox_worker.py`](gateway/app/chatterbox_worker.py) | Síntesis de voz en español de alta naturalidad sobre CUDA; si la VRAM está ocupada por un LLM grande, vacía caché y conmuta automáticamente a CPU. |
+| **Síntesis de Voz Ligera (TTS CPU)** | **Kokoro 82M** + `espeak-ng` (voces `em_alex` y `ef_dora`) | [`kokoro_worker.py`](gateway/app/kokoro_worker.py) | Motor TTS ultrarrápido en CPU sin consumo de VRAM, ideal cuando la GPU está dedicada al 100 % a inferencia. |
+| **Llamadas en Tiempo Real** | **Motor Local por Turnos** / **OpenAI WebRTC Realtime** / **Gemini Live** | [`voice-engine.js`](gateway/app/gateway-plugin/mykos-ui/voice-engine.js), [`realtime.js`](gateway/app/gateway-plugin/mykos-ui/realtime.js) | Streaming frase a frase (NDJSON) en modo local, o conexión bidireccional de baja latencia con soporte de interrupción y herramientas supervisadas. |
+| **Memoria Semántica** | Vectores + Búsqueda léxica/semántica | [`embedding_memory.py`](gateway/app/embedding_memory.py) | Indexación y recuperación de recuerdos persistentes de largo plazo independientes de cada conversación. |
+
+---
+
+## 🛠️ Instalación Rápida
+
+Ejecuta el instalador incluido en la raíz del proyecto:
+
+```bash
+cd ~/MyKOS
+./install.sh
+```
+
+¿Qué hace `./install.sh`?
+1. Verifica que tengas **Node.js (>= 20)** y **Python 3 (>= 3.10)**.
+2. Crea el entorno virtual en `~/.mykos/venv` e instala las dependencias de [`gateway/app/requirements.txt`](gateway/app/requirements.txt) (usa `./install.sh --no-venv` si prefieres no tocar el entorno virtual).
+3. Enlaza en `~/.local/bin/` el comando maestro **`mykos`** y los lanzadores de escritorio (`mykos-monitor`, `analizador-mykos`).
+4. Instala el icono y acceso directo de escritorio de **MyKOS Monitor**.
+5. *(Opcional)* Con `./install.sh --systemd`, crea y habilita el servicio de usuario `mykos-gateway.service` para que arranque automáticamente con tu sesión.
+
+---
+
+## 💻 Guía de Comandos `mykos`
+
+Una vez ejecutado `./install.sh`, puedes controlar todo el ecosistema con el comando `mykos`:
+
+### Gestión del Servidor y Diagnóstico (`doctor`)
+```bash
+mykos run                   # Arranca MyKOS con el logo y logs en vivo; al cerrar esa terminal se detiene todo
+mykos start                 # Arranca MyKOS Gateway en segundo plano (http://127.0.0.1:3210)
+mykos start --fg            # Arranca en primer plano con el banner de MyKOS y logs en vivo
+mykos start --port 19001    # Arranca en un puerto específico
+mykos status                # Muestra el estado del Gateway, Backend Python, Almacén, Políticas y Voz
+mykos doctor                # Diagnóstico integral: entorno, rutas de config, permisos 0600/0700, almacén ACID y procesos
+mykos doctor --fix          # Repara automáticamente permisos, rutas desactualizadas, temporales corruptos y procesos huérfanos
+mykos doctor --deep         # Ejecuta el diagnóstico completo más las 6 baterías de pruebas de seguridad
+mykos open                  # Abre la interfaz web de MyKOS en el navegador
+mykos logs                  # Muestra el logo de MyKOS y las últimas líneas del log del Gateway y Backend
+mykos logs -f               # Muestra el logo de MyKOS y sigue los logs en tiempo real
+mykos restart               # Reinicia limpiamente MyKOS Gateway y su backend
+mykos stop                  # Detiene MyKOS Gateway y todos los subprocesos supervisados
+mykos test                  # Ejecuta toda la batería de tests (rutas, políticas, almacén, voz y seguridad)
+```
+
+### Gestión del Almacén de Datos y Voz en la Nube
+```bash
+mykos store status          # Muestra revisiones, recuentos, copias e instantáneas del almacén ACID
+mykos store verify          # Verifica la integridad de todos los documentos del almacén
+mykos store repair          # Limpia temporales y restaura automáticamente documentos dañados desde backups
+mykos store export --to ./backup  # Exporta conversaciones, memoria y permisos a ficheros JSON estándar
+mykos realtime status       # Comprueba si hay credencial configurada para OpenAI Realtime
+mykos realtime set-key      # Guarda de forma segura (0600) la API key para llamadas Realtime
+mykos realtime on           # Activa el modo de voz en la nube (OpenAI WebRTC)
+mykos realtime off          # Vuelve al modo de voz 100 % local (Whisper + Chatterbox/Kokoro)
+```
+
+### Lanzamiento de Aplicaciones de Escritorio
+```bash
+mykos monitor               # Abre MyKOS Monitor (dashboard del sistema en tiempo real)
+mykos analizador            # Abre Analizador MyKOS (mapa de disco y limpieza de duplicados)
+```
+
+---
+
+## 🔒 Privacidad y Seguridad
+
+- **Cero secretos en el repositorio:** Todas las credenciales se cifran localmente con `mykos-sealed-v1` (HMAC-SHA256 + clave maestra local con permisos `0600`) en `~/.mykos/gateway-state/mykos/credentials/`.
+- **Aislamiento de red:** El Gateway y el trabajador Python escuchan exclusivamente en `127.0.0.1` y verifican `Host`, `Origin` y tokens internos en tiempo constante (`timingSafeEqual` / `hmac.compare_digest`).
+- **Terminal web desactivada por defecto:** El endpoint `/terminal` permanece bloqueado salvo que se habilite explícitamente con `MYKOS_ENABLE_WEB_TERMINAL=1`.
+- **Raíces autorizadas acotadas:** Las herramientas de ficheros solo pueden operar dentro de las carpetas declaradas en [`gateway/app/config/allowed_roots.json`](gateway/app/config/allowed_roots.json), bloqueando por código cualquier intento de registrar `/` como raíz.

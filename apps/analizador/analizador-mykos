@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Lanzador local de Analizador MyKOS.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+if [[ -x "${MYKOS_PYTHON:-}" ]]; then
+  PYTHON_BIN="$MYKOS_PYTHON"
+elif [[ -x "$HOME/.mykos/venv/bin/python" ]]; then
+  PYTHON_BIN="$HOME/.mykos/venv/bin/python"
+else
+  PYTHON_BIN="python3"
+fi
+exec "$PYTHON_BIN" "$SCRIPT_DIR/main.py" "$@"

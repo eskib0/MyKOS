@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Previsualización: pantalla de llamada de MyKOS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="../../static/styles.css">
+  <style>
+    .preview-bar { position: fixed; left: 12px; bottom: 12px; z-index: 99; display: flex; gap: 6px; flex-wrap: wrap; padding: 8px; border: 1px solid #4a606e; border-radius: 10px; background: rgba(20, 30, 38, .92); }
+    .preview-bar button { border: 1px solid #657c8b; border-radius: 6px; padding: 5px 9px; color: #e0e8ed; background: transparent; font-size: 12px; }
+    .preview-bar button.on { border-color: #5ab6d8; background: rgba(90, 182, 216, .2); }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <main id="chat-panel" class="chat-panel voice-call-active">
+      <header class="chat-header"><div><div class="eyebrow">Chat</div><h1 style="margin:0;font-size:20px">MyKOS</h1></div></header>
+      <section id="voice-call-stage" class="voice-call-stage">
+        <div class="voice-call-main" aria-live="polite">
+          <div class="voice-call-meta">
+            <span class="eyebrow">Llamada con MyKOS</span>
+            <span class="voice-call-timer" id="voice-call-timer" role="timer">00:00</span>
+            <button id="voice-transcript-toggle" class="voice-transcript-toggle" type="button" aria-pressed="true">Transcripción</button>
+          </div>
+          <canvas id="voice-call-canvas" class="voice-call-canvas" width="340" height="340" aria-hidden="true"></canvas>
+          <h2 id="voice-call-status">Conectando…</h2>
+          <p id="voice-call-detail">Preparando el micrófono.</p>
+          <p class="voice-call-hint">Habla con normalidad. MyKOS enviará tu turno al detectar que has terminado. Si vuelve a hablar mientras responde, le interrumpes.</p>
+          <button id="voice-stage-hangup-button" class="voice-stage-hangup-button" type="button" aria-label="Colgar la llamada">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.71.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.7l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.73-1.68-1.36-2.66-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
+            <span>Colgar</span>
+          </button>
+        </div>
+        <aside id="voice-call-transcript" class="voice-call-transcript" aria-label="Transcripción de la llamada">
+          <div class="voice-transcript-head">Transcripción en vivo</div>
+          <div id="voice-transcript-list" class="voice-transcript-list" role="log" aria-live="polite"></div>
+        </aside>
+      </section>
+    </main>
+  </div>
+  <div class="preview-bar" id="bar"></div>
+  <script src="../../static/call-visual.js"></script>
+  <script src="../../static/call-transcript.js"></script>
+  <script>
+    // Audio simulado: mismos métodos que un AnalyserNode real.
+    const now = () => performance.now() / 1000;
+    let micAmp = 0, voiceAmp = 0;
+    function fakeAnalyser(getAmp) {
+      return {
+        fftSize: 1024, frequencyBinCount: 512,
+        getByteTimeDomainData(a) { const amp = getAmp(); for (let i = 0; i < a.length; i++) a[i] = 128 + Math.round((Math.sin(i * 0.31 + now() * 40) + Math.sin(i * 0.11)) * 0.5 * 127 * amp); },
+        getByteFrequencyData(a) { const amp = getAmp(); for (let i = 0; i < a.length; i++) { const shape = Math.exp(-i / 90) * (0.55 + 0.45 * Math.sin(i * 0.7 + now() * 9)); a[i] = Math.max(0, Math.min(255, 255 * amp * 5 * shape * (0.6 + 0.4 * Math.random()))); } },
+      };
+    }
+    const micAn = fakeAnalyser(() => micAmp);
+    const voiceAn = fakeAnalyser(() => voiceAmp);
+
+    const params = new URLSearchParams(location.hash.slice(1));
+    let mode = params.get("mode") || "derived";
+    let base = "listening";
+    const stage = document.getElementById("voice-call-stage");
+    const status = document.getElementById("voice-call-status");
+    const detail = document.getElementById("voice-call-detail");
+    const TEXT = { listening: ["En llamada", "El micrófono sigue abierto."], hearing: ["Te escucho", "Responderé en cuanto guardes silencio."], speaking: ["MyKOS está hablando", "Puedes interrumpirle hablando."], thinking: ["Pensando…", "Preparando la respuesta."], connecting: ["Conectando…", "Preparando el micrófono."] };
+    function setText(m) { status.textContent = TEXT[m][0]; detail.textContent = TEXT[m][1]; }
+
+    const visual = MyKOSCallVisual.mount(document.getElementById("voice-call-canvas"), {
+      getMode: () => base,
+      getMicAnalyser: () => micAn,
+      getVoiceAnalyser: () => (mode === "derived" ? voiceAn : null),
+      deriveMode: () => mode === "derived",
+      onMode: (m) => { stage.dataset.mode = m; if (TEXT[m]) setText(m); },
+    });
+    const transcript = MyKOSCallTranscript.mount(document.getElementById("voice-transcript-list"), { emptyText: "La transcripción aparecerá aquí mientras hablas." });
+    const toggle = document.getElementById("voice-transcript-toggle");
+    toggle.onclick = () => { const hide = !stage.classList.contains("transcript-hidden"); stage.classList.toggle("transcript-hidden", hide); toggle.setAttribute("aria-pressed", String(!hide)); };
+    if (params.get("transcript") === "off") toggle.click();
+
+    const started = Date.now();
+    setInterval(() => { const s = Math.floor((Date.now() - started) / 1000); document.getElementById("voice-call-timer").textContent = String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); }, 500);
+
+    // Frases del guion de la prueba; se emiten palabra a palabra como haría el proveedor.
+    const SCRIPT = [
+      ["user", "Oye MyKOS, ¿cómo va la extracción de esta semana?"],
+      ["assistant", "Vas bien: la extracción de treinta gramos está completada y la de veinte gramos sigue activa. ¿Quieres que te prepare la tabla comparativa?"],
+      ["user", "Sí, y dime cuánto rindió cada una."],
+      ["assistant", "Claro. Te la preparo ahora mismo y te comento los rendimientos uno por uno."],
+    ];
+    function emit(role, sentence, atWord) { const words = sentence.split(" "); for (let i = 0; i < Math.min(atWord, words.length); i++) transcript.appendDelta(role, (i ? " " : "") + words[i]); }
+    if (params.get("lines") === "1") { // vista estática con varias burbujas y una en curso
+      for (const [role, text] of SCRIPT.slice(0, 3)) transcript.addLine(role, text);
+      emit("assistant", SCRIPT[3][1], 6);
+    }
+
+    function apply() {
+      micAmp = 0; voiceAmp = 0;
+      if (mode === "derived") { base = "listening"; }
+      else { base = mode; stage.dataset.mode = mode; setText(mode); if (mode === "hearing") micAmp = 0.1; }
+      [...document.querySelectorAll("#bar button")].forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
+    }
+    for (const m of ["derived", "connecting", "listening", "hearing", "thinking", "speaking"]) {
+      const b = document.createElement("button"); b.textContent = m; b.dataset.m = m; b.onclick = () => { mode = m; location.hash = "mode=" + m; apply(); }; document.getElementById("bar").appendChild(b);
+    }
+    // Guion del modo «derived» (llamada Realtime): silencio, tú hablas, MyKOS responde.
+    let spoken = { u: 0, a: 0 };
+    setInterval(() => {
+      if (mode !== "derived") { if (mode === "speaking") voiceAmp = 0.12 + 0.06 * Math.sin(now() * 8); if (mode === "hearing") micAmp = 0.1 + 0.07 * Math.sin(now() * 7); return; }
+      const t = now() % 14;
+      micAmp = t > 2 && t < 5 ? 0.11 + 0.06 * Math.sin(now() * 9) : 0.004;
+      voiceAmp = t > 6 && t < 11 ? 0.13 + 0.07 * Math.sin(now() * 7) : 0;
+      const turn = Math.floor(now() / 14) % 2;
+      const userSentence = SCRIPT[turn * 2][1].split(" "), botSentence = SCRIPT[turn * 2 + 1][1].split(" ");
+      if (t > 2 && t < 5) { const n = Math.floor(((t - 2) / 3) * userSentence.length) + 1; while (spoken.u < Math.min(n, userSentence.length)) { transcript.appendDelta("user", (spoken.u ? " " : "") + userSentence[spoken.u]); spoken.u++; } }
+      if (t > 6 && t < 11) { const n = Math.floor(((t - 6) / 4.5) * botSentence.length) + 1; while (spoken.a < Math.min(n, botSentence.length)) { transcript.appendDelta("assistant", (spoken.a ? " " : "") + botSentence[spoken.a]); spoken.a++; } }
+      if (t >= 11.2) { spoken = { u: 0, a: 0 }; }
+    }, 50);
+    apply();
+    visual.start();
+  </script>
+</body>
+</html>

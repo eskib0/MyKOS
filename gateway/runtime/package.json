@@ -1,0 +1,18 @@
+{
+  "name": "mykos-gateway-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Servidor y supervisor ligero nativo para MyKOS Gateway",
+  "type": "module",
+  "main": "mykos-gateway.mjs",
+  "bin": {
+    "mykos-gateway": "./mykos-gateway.mjs"
+  },
+  "scripts": {
+    "start": "node mykos-gateway.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}

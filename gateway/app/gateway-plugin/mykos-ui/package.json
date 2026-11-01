@@ -1,0 +1,11 @@
+{
+  "name": "mykos-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "description": "MyKOS UI y backend servidos y supervisados por MyKOS Gateway",
+  "mykos": {
+    "extensions": ["./index.js"]
+  }
+}

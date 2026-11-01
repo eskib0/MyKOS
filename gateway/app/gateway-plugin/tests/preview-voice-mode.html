@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Previsualización: modo de llamada</title>
+<link rel="stylesheet" href="../../static/styles.css">
+<style>body{padding:24px;max-width:340px}.demo{margin-bottom:28px}.demo h3{color:#becbd3;font-size:11px;text-transform:uppercase;margin:0 0 8px}</style>
+</head>
+<body>
+  <div class="demo">
+    <h3>Modo local activo, nube disponible</h3>
+    <section class="panel-section voice-mode-manager">
+      <div class="section-heading"><span>Modo de llamada</span><button class="text-button" type="button">Cerrar</button></div>
+      <div>
+        <div class="panel-help">Elige si la llamada de voz de MyKOS usa el motor local de este equipo o la nube (OpenAI Realtime). El cambio se aplica al momento, sin reiniciar.</div>
+        <div class="muted">Llamando con el motor local.</div>
+        <div class="voice-mode-options">
+          <button class="voice-mode-option" type="button" aria-pressed="true"><strong>Llamada local</strong><span>Whisper, modelo y voz en este equipo. Sin coste ni límite de cuota.</span></button>
+          <button class="voice-mode-option" type="button" aria-pressed="false"><strong>Llamada en la nube</strong><span>OpenAI Realtime, voz natural de extremo a extremo. Usa la cuota de tu plan de ChatGPT.</span></button>
+        </div>
+        <div class="panel-help">La nube está lista: tiene credencial propia de MyKOS.</div>
+      </div>
+    </section>
+  </div>
+  <div class="demo">
+    <h3>Modo nube activo</h3>
+    <section class="panel-section voice-mode-manager">
+      <div class="section-heading"><span>Modo de llamada</span><button class="text-button" type="button">Cerrar</button></div>
+      <div>
+        <div class="panel-help">Elige si la llamada de voz de MyKOS usa el motor local de este equipo o la nube (OpenAI Realtime). El cambio se aplica al momento, sin reiniciar.</div>
+        <div class="muted">Llamando por la nube (gpt-live-1-codex, voz cove).</div>
+        <div class="voice-mode-options">
+          <button class="voice-mode-option" type="button" aria-pressed="false"><strong>Llamada local</strong><span>Whisper, modelo y voz en este equipo. Sin coste ni límite de cuota.</span></button>
+          <button class="voice-mode-option" type="button" aria-pressed="true"><strong>Llamada en la nube</strong><span>OpenAI Realtime, voz natural de extremo a extremo. Usa la cuota de tu plan de ChatGPT.</span></button>
+        </div>
+        <div class="panel-help">La nube está lista: tiene credencial propia de MyKOS.</div>
+      </div>
+    </section>
+  </div>
+  <div class="demo">
+    <h3>Local activo, nube sin credencial</h3>
+    <section class="panel-section voice-mode-manager">
+      <div class="section-heading"><span>Modo de llamada</span><button class="text-button" type="button">Cerrar</button></div>
+      <div>
+        <div class="panel-help">Elige si la llamada de voz de MyKOS usa el motor local de este equipo o la nube (OpenAI Realtime). El cambio se aplica al momento, sin reiniciar.</div>
+        <div class="muted">Llamando con el motor local.</div>
+        <div class="voice-mode-options">
+          <button class="voice-mode-option" type="button" aria-pressed="true"><strong>Llamada local</strong><span>Whisper, modelo y voz en este equipo. Sin coste ni límite de cuota.</span></button>
+          <button class="voice-mode-option" type="button" aria-pressed="false"><strong>Llamada en la nube</strong><span>OpenAI Realtime, voz natural de extremo a extremo. Usa la cuota de tu plan de ChatGPT.</span></button>
+        </div>
+        <div class="panel-help">La nube no está disponible: falta la credencial propia de MyKOS (mykos realtime set-key).</div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

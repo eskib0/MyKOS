@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "deny": [
+      "read_file(*)",
+      "write_file(*)",
+      "command(*)",
+      "read_url(*)",
+      "execute_url(*)",
+      "mcp(*)"
+    ]
+  }
+}

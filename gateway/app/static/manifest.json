@@ -1,0 +1,20 @@
+{
+  "name": "MyKOS · MyKOS",
+  "short_name": "MyKOS",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#0055ff",
+  "background_color": "#1e1e1e",
+  "icons": [
+    {
+      "src": "/static/logo-mykos.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "/static/logo-mykos.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg"
+    }
+  ]
+}

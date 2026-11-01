@@ -1,0 +1,1012 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0055ff">
+  <link rel="manifest" href="/static/manifest.json">
+  <title>MyKOS · MyKOS</title>
+  <link rel="icon" type="image/jpeg" href="/static/logo-mykos.jpg?v=20260924-1">
+  <link rel="stylesheet" href="/static/styles.css?v=20261101-overlay-sidebar-1">
+</head>
+<body>
+  <div class="app-shell">
+    <aside id="sidebar" class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">
+          <img class="brand-logo" src="/static/logo-mykos.jpg?v=20260924-1" alt="Logo de MyKOS">
+        </div>
+        <div class="brand-text">
+          <strong>MyKOS</strong>
+          <span>asistente local</span>
+        </div>
+        <button id="sidebar-close" class="sidebar-close" type="button" aria-label="Cerrar panel lateral" title="Cerrar panel lateral">✕</button>
+      </div>
+
+      <button id="new-chat" class="new-chat" type="button">+ Nueva conversación</button>
+
+      <nav class="app-nav" aria-label="Secciones de MyKOS">
+        <button class="app-nav-item active" type="button" data-page="chat" aria-current="page">Chat</button>
+        <button class="app-nav-item" type="button" data-page="models">Modelos</button>
+        <button class="app-nav-item" type="button" data-page="permissions" title="Gestionar permisos del PC">Permisos</button>
+      </nav>
+
+      <section class="history-section">
+        <div class="section-heading">
+          <span>Conversaciones</span>
+          <span id="conversation-count" class="section-count">0</span>
+        </div>
+        <div id="conversation-list" class="conversation-list" aria-label="Historial de conversaciones"></div>
+      </section>
+
+      <section class="panel-section">
+        <label for="model-select">Modelo</label>
+        <select id="model-select" disabled>
+          <option>Cargando modelos…</option>
+        </select>
+        <div id="model-meta" class="muted">Comprobando Ollama…</div>
+        <div id="privacy-note" class="privacy-note"></div>
+        <div id="tools-meta" class="tools-meta"></div>
+        <div id="memory-meta" class="memory-meta"></div>
+      </section>
+
+      <section class="panel-section oauth-manager openai-oauth-card">
+        <div class="section-heading">
+          <span>OpenAI OAuth</span>
+          <button id="oauth-refresh" class="text-button" type="button">Actualizar</button>
+        </div>
+        <div id="oauth-status" class="panel-help">Comprobando sesión OAuth de OpenAI…</div>
+        <div class="auth-actions">
+          <button id="oauth-openai" class="ollama-action-button" type="button">Iniciar sesión</button>
+          <button id="oauth-openai-logout" class="text-button" type="button" hidden>Desconectar</button>
+        </div>
+      </section>
+
+      <section class="panel-section oauth-manager claude-oauth-card">
+        <div class="section-heading">
+          <span>Anthropic · Claude</span>
+          <button id="oauth-claude-refresh" class="text-button" type="button">Actualizar</button>
+        </div>
+        <div id="oauth-claude-status" class="panel-help">Comprobando conexión con Anthropic…</div>
+        <div class="auth-actions">
+          <button id="anthropic-api-connect" class="ollama-action-button" type="button">Conectar API Key</button>
+          <button id="oauth-claude" class="text-button" type="button">OAuth (Claude Code)</button>
+          <button id="oauth-claude-logout" class="text-button" type="button" hidden>Desconectar</button>
+          <a class="oauth-login-link" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">Obtener clave (Anthropic)</a>
+        </div>
+        <div id="anthropic-api-key-row" class="provider-key-row" hidden>
+          <label for="anthropic-api-key">Clave personal de Anthropic (sk-ant-…)</label>
+          <input id="anthropic-api-key" type="password" autocomplete="off" placeholder="sk-ant-…">
+          <button id="anthropic-api-save" class="ollama-action-button" type="button">Validar y guardar</button>
+        </div>
+        <div id="anthropic-api-models" class="panel-help"></div>
+      </section>
+
+      <section class="panel-section oauth-manager openrouter-oauth-card">
+        <div class="section-heading">
+          <span>OpenRouter OAuth</span>
+          <button id="oauth-openrouter-refresh" class="text-button" type="button">Actualizar</button>
+        </div>
+        <div id="oauth-openrouter-status" class="panel-help">Comprobando conexión y catálogo de OpenRouter…</div>
+        <div class="auth-actions">
+          <button id="oauth-openrouter" class="ollama-action-button" type="button">Iniciar sesión</button>
+          <button id="oauth-openrouter-logout" class="text-button" type="button" hidden>Desconectar</button>
+        </div>
+        <div id="oauth-openrouter-models" class="panel-help"></div>
+      </section>
+
+      <section class="panel-section provider-manager nvidia-api-card">
+        <div class="section-heading">
+          <span>NVIDIA NIM · API</span>
+          <button id="nvidia-api-refresh" class="text-button" type="button">Actualizar</button>
+        </div>
+        <div id="nvidia-api-status" class="panel-help">Comprobando credencial NVIDIA y catálogo.</div>
+        <div class="auth-actions">
+          <button id="nvidia-api-connect" class="ollama-action-button" type="button">Conectar NVIDIA</button>
+          <button id="nvidia-api-logout" class="text-button" type="button" hidden>Desconectar</button>
+          <a class="oauth-login-link" href="https://build.nvidia.com/explore/discover" target="_blank" rel="noopener noreferrer">Abrir catálogo</a>
+        </div>
+        <div id="nvidia-api-key-row" class="provider-key-row" hidden>
+          <label for="nvidia-api-key">Clave personal de NVIDIA</label>
+          <input id="nvidia-api-key" type="password" autocomplete="off" placeholder="nvapi-…">
+          <button id="nvidia-api-save" class="ollama-action-button" type="button">Validar y guardar</button>
+        </div>
+        <div id="nvidia-api-models" class="panel-help"></div>
+      </section>
+
+      <section class="panel-section provider-manager kimi-api-card">
+        <div class="section-heading">
+          <span>Kimi · API</span>
+          <button id="kimi-api-refresh" class="text-button" type="button">Actualizar</button>
+        </div>
+        <div id="kimi-api-status" class="panel-help">Comprobando credencial Kimi y catálogo.</div>
+        <div class="auth-actions">
+          <button id="kimi-api-connect" class="ollama-action-button" type="button">Conectar Kimi</button>
+          <button id="kimi-api-logout" class="text-button" type="button" hidden>Desconectar</button>
+          <a class="oauth-login-link" href="https://platform.kimi.ai/" target="_blank" rel="noopener noreferrer">Abrir plataforma</a>
+        </div>
+        <div id="kimi-api-key-row" class="provider-key-row" hidden>
+          <label for="kimi-api-key">Clave personal de Kimi</label>
+          <input id="kimi-api-key" type="password" autocomplete="off" placeholder="sk-…">
+          <button id="kimi-api-save" class="ollama-action-button" type="button">Validar y guardar</button>
+        </div>
+        <div id="kimi-api-models" class="panel-help"></div>
+      </section>
+
+      <section class="panel-section provider-manager gemini-api-card">
+        <div class="section-heading">
+          <span>Gemini · API</span>
+          <button id="gemini-api-refresh" class="text-button" type="button">Actualizar</button>
+        </div>
+        <div id="gemini-api-status" class="panel-help">Comprobando credencial Gemini y catálogo.</div>
+        <div class="auth-actions">
+          <button id="gemini-api-connect" class="ollama-action-button" type="button">Conectar Gemini</button>
+          <button id="gemini-api-logout" class="text-button" type="button" hidden>Desconectar</button>
+          <a class="oauth-login-link" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Obtener clave (AI Studio)</a>
+        </div>
+        <div id="gemini-api-key-row" class="provider-key-row" hidden>
+          <label for="gemini-api-key">API Key de Google AI Studio</label>
+          <input id="gemini-api-key" type="password" autocomplete="off" placeholder="AIzaSy…">
+          <button id="gemini-api-save" class="ollama-action-button" type="button">Validar y guardar</button>
+        </div>
+        <div id="gemini-api-models" class="panel-help"></div>
+      </section>
+
+      <section class="panel-section provider-manager mistral-api-card">
+        <div class="section-heading">
+          <span>Mistral AI · API / Vibe</span>
+          <button id="mistral-api-refresh" class="text-button" type="button">Actualizar</button>
+        </div>
+        <div id="mistral-api-status" class="panel-help">Comprobando credencial Mistral y catálogo.</div>
+        <div class="auth-actions">
+          <button id="mistral-api-connect" class="ollama-action-button" type="button">Conectar Mistral</button>
+          <button id="mistral-api-vibe" class="text-button" type="button">Vincular sesión Vibe</button>
+          <button id="mistral-api-logout" class="text-button" type="button" hidden>Desconectar</button>
+          <a class="oauth-login-link" href="https://console.mistral.ai/api-keys/" target="_blank" rel="noopener noreferrer">Obtener clave (Mistral)</a>
+        </div>
+        <div id="mistral-api-key-row" class="provider-key-row" hidden>
+          <label for="mistral-api-key">Clave personal de Mistral</label>
+          <input id="mistral-api-key" type="password" autocomplete="off" placeholder="mstrl_…">
+          <button id="mistral-api-save" class="ollama-action-button" type="button">Validar y guardar</button>
+        </div>
+        <div id="mistral-api-models" class="panel-help"></div>
+      </section>
+
+      <section class="panel-section provider-manager antigravity-cli-card">
+        <div class="section-heading">
+          <span>Antigravity CLI · Google</span>
+          <button id="antigravity-cli-refresh" class="text-button" type="button">Actualizar</button>
+        </div>
+        <div id="antigravity-cli-status" class="panel-help">Comprobando sesión de Antigravity CLI.</div>
+        <div class="auth-actions">
+          <button id="antigravity-cli-toggle" class="ollama-action-button" type="button">Activar Antigravity</button>
+        </div>
+        <div id="antigravity-cli-models" class="panel-help"></div>
+      </section>
+
+      <section class="panel-section model-tuning">
+        <div class="section-heading">
+          <span>Ajuste del modelo</span>
+          <button id="model-tuning-toggle" class="text-button" type="button" aria-expanded="false">Abrir</button>
+        </div>
+        <div id="model-tuning" hidden>
+          <label for="model-effort">Nivel de esfuerzo</label>
+          <select id="model-effort">
+            <option value="off">Sin razonamiento · más rápido</option>
+            <option value="low">Bajo</option>
+            <option value="medium">Medio</option>
+            <option value="high">Alto · más profundo</option>
+          </select>
+          <label for="model-speed">Rapidez</label>
+          <select id="model-speed">
+            <option value="fast">Rápida · respuestas más cortas</option>
+            <option value="balanced">Equilibrada</option>
+            <option value="quality">Calidad · más contexto y longitud</option>
+            <option value="full">Full Session · 131K · máximo contexto</option>
+          </select>
+          <label for="model-creativity">Creatividad</label>
+          <select id="model-creativity">
+            <option value="precise">Precisa</option>
+            <option value="balanced">Equilibrada</option>
+            <option value="creative">Creativa</option>
+          </select>
+          <div id="model-tuning-meta" class="panel-help"></div>
+        </div>
+      </section>
+
+      <section class="panel-section benchmark-manager">
+        <div class="section-heading">
+          <span>Rendimiento</span>
+          <button id="benchmark-toggle" class="text-button" type="button" aria-expanded="false">Abrir</button>
+        </div>
+        <div id="benchmark-manager" hidden>
+          <div class="panel-help">Mide latencia y tokens por segundo con una respuesta corta. Solo usa modelos locales y ejecuta las pruebas una a una.</div>
+          <div class="benchmark-actions">
+            <button id="benchmark-current" class="ollama-action-button" type="button">Medir actual</button>
+            <button id="benchmark-all" class="ollama-action-button" type="button">Comparar instalados</button>
+          </div>
+          <label class="benchmark-full-option">
+            <input id="benchmark-include-full" type="checkbox">
+            Incluir Full Session · 131K
+          </label>
+          <div id="benchmark-status" class="muted">Todavía no hay mediciones.</div>
+          <div id="benchmark-list" class="benchmark-list"></div>
+        </div>
+      </section>
+
+      <section class="panel-section permissions-manager">
+        <div class="section-heading">
+          <span>Permisos del PC</span>
+          <button id="permissions-toggle" class="text-button" type="button" aria-expanded="false">Abrir</button>
+        </div>
+        <div id="permissions-manager" hidden>
+          <div class="panel-help">Todo está bloqueado por defecto. Aquí puedes revisar permisos concedidos, limitar su alcance y revocarlos.</div>
+          <div id="permissions-status" class="muted">Cargando permisos…</div>
+          <div id="permissions-list" class="permissions-list"></div>
+          <div class="permissions-subheading">Registro de acciones</div>
+          <div id="audit-list" class="audit-list"></div>
+        </div>
+      </section>
+
+      <section class="panel-section voice-mode-manager">
+        <div class="section-heading">
+          <span>Modo de llamada</span>
+          <button id="voice-mode-toggle" class="text-button" type="button" aria-expanded="false">Abrir</button>
+        </div>
+        <div id="voice-mode-content" hidden>
+          <div class="panel-help">Elige el motor de la llamada de voz. El cambio se aplica al momento, sin reiniciar.</div>
+          <div id="voice-mode-status" class="muted">Cargando…</div>
+          <div class="voice-mode-options">
+            <button id="voice-mode-local" class="voice-mode-option" type="button" data-mode="local" aria-pressed="false">
+              <strong>Llamada local</strong>
+              <span>Whisper, modelo y voz en este equipo. Sin coste ni límite de cuota.</span>
+            </button>
+            <button id="voice-mode-cloud" class="voice-mode-option" type="button" data-mode="cloud" aria-pressed="false">
+              <strong>Llamada en la nube (OpenAI)</strong>
+              <span>OpenAI Realtime, voz natural de extremo a extremo. Usa la cuota de tu cuenta OpenAI.</span>
+            </button>
+            <button id="voice-mode-gemini" class="voice-mode-option" type="button" data-mode="gemini" aria-pressed="false">
+              <strong>Llamada en la nube (Gemini)</strong>
+              <span>Gemini Live, conversación de voz natural con la cuota de Gemini.</span>
+            </button>
+          </div>
+          <div id="voice-mode-detail" class="panel-help"></div>
+        </div>
+      </section>
+
+      <section class="panel-section ollama-manager">
+        <div class="section-heading">
+          <span>Gestión de Ollama</span>
+          <button id="ollama-toggle" class="text-button" type="button" aria-expanded="false">Abrir</button>
+        </div>
+        <div id="ollama-manager" hidden>
+          <div id="ollama-job-list" class="ollama-job-list" aria-live="polite"></div>
+          <div class="ollama-subheading">Instalados</div>
+          <div id="ollama-installed-list" class="ollama-installed-list"></div>
+          <form id="ollama-catalog-form" class="ollama-search-form">
+            <input id="ollama-catalog-query" type="search" placeholder="Buscar en el catálogo…" autocomplete="off">
+            <button type="submit">Buscar</button>
+          </form>
+          <div id="ollama-catalog-status" class="muted"></div>
+          <div id="ollama-catalog-list" class="ollama-catalog-list"></div>
+        </div>
+      </section>
+
+      <section class="panel-section library-manager">
+        <div class="section-heading">
+          <span>Biblioteca</span>
+          <button id="library-toggle" class="text-button" type="button" aria-expanded="false">Abrir</button>
+        </div>
+        <div id="library-manager" hidden>
+          <select id="library-root" aria-label="Raíz de la biblioteca"></select>
+          <div class="library-path-row">
+            <input id="library-path" type="text" value="." placeholder="Ruta relativa" autocomplete="off">
+            <button id="library-open-path" class="ollama-action-button" type="button">Abrir</button>
+          </div>
+          <form id="library-search-form" class="ollama-search-form">
+            <input id="library-search-query" type="search" placeholder="Buscar contenido…" autocomplete="off">
+            <button type="submit">Buscar</button>
+          </form>
+          <div id="library-status" class="muted"></div>
+          <div id="library-list" class="library-list"></div>
+          <div id="library-preview" class="library-preview" hidden></div>
+        </div>
+      </section>
+
+      <div class="sidebar-bottom">
+        <div id="connection" class="connection pending">
+          <span class="status-dot"></span>
+          <span>Comprobando conexión</span>
+        </div>
+        <p>Los chats se guardan en este equipo. El modelo seleccionado puede ser local o remoto.</p>
+      </div>
+
+      <div class="sidebar-footer">
+        <button id="settings-nav-btn" class="settings-nav-btn" type="button" data-page="settings" title="Configuración de MyKOS">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>Configuración</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="chat-panel">
+      <header class="chat-header">
+        <div class="chat-header-left">
+          <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="Mostrar u ocultar panel MyKOS" aria-controls="sidebar" aria-expanded="true" title="Panel MyKOS">panel MyKOS</button>
+        </div>
+        <div class="session-actions" aria-label="Acciones de sesión">
+          <label for="permission-mode-select" class="permission-mode-label" title="Controla qué puede hacer MyKOS sin tu intervención: solo leer, pedir tu aprobación cada vez, o acceso total con permiso permanente.">
+            Permisos:
+            <select id="permission-mode-select">
+              <option value="solo_lectura">Solo lectura</option>
+              <option value="supervisado" selected>Supervisado</option>
+              <option value="acceso_total">Acceso total</option>
+            </select>
+          </label>
+          <button id="delete-session" class="text-button danger-text-button" type="button" title="Borrar la conversación activa">Borrar chat</button>
+          <button id="export-session" class="text-button" type="button" title="Exportar sesión como Markdown">Exportar .md</button>
+          <button id="compact-context" class="text-button" type="button" title="Compactar el contexto sin borrar el historial">Compactar contexto</button>
+          <button id="help-commands" class="text-button" type="button" title="Mostrar comandos y herramientas disponibles">Ayuda</button>
+          <div id="context-meter" class="context-meter" aria-live="polite" title="Estimación local del contexto que se enviará al modelo.">
+            <div class="context-meter-heading">
+              <span>Contexto</span>
+              <strong id="context-meter-label">—</strong>
+            </div>
+            <div class="context-meter-track" aria-hidden="true"><span id="context-meter-bar"></span></div>
+            <div id="context-meter-detail" class="context-meter-detail">Preparando medidor…</div>
+          </div>
+        </div>
+        <div class="chat-header-right">
+          <button id="right-sidebar-toggle" class="right-sidebar-toggle-btn" type="button" title="Terminal Bash">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="4 17 10 11 4 5"></polyline>
+              <line x1="12" y1="19" x2="20" y2="19"></line>
+            </svg>
+            <span>Terminal</span>
+          </button>
+        </div>
+      </header>
+
+      <section id="help-panel" class="help-panel" hidden>
+        <div class="help-panel-heading">
+          <div>
+            <div class="eyebrow">Ayuda de MyKOS</div>
+            <h2>Comandos y capacidades</h2>
+          </div>
+          <button id="help-close" class="text-button" type="button">Cerrar</button>
+        </div>
+        <p>Puedes pedir estas acciones con lenguaje natural. También puedes escribir <code>/help</code> o <code>/ayuda</code>. Las operaciones sensibles seguirán pidiendo aprobación.</p>
+        <div id="help-list" class="help-list"></div>
+      </section>
+
+      <section id="messages" class="messages" aria-live="polite"></section>
+
+      <section id="approvals-panel" class="approvals-panel" aria-live="polite" hidden></section>
+
+      <section id="voice-call-stage" class="voice-call-stage" hidden>
+        <div class="voice-call-main" aria-live="polite">
+        <div class="voice-call-meta">
+          <span class="eyebrow">Llamada con MyKOS</span>
+          <span class="voice-call-timer" id="voice-call-timer" role="timer" aria-label="Duración de la llamada">00:00</span>
+          
+          <button id="voice-minimize-button" class="voice-transcript-toggle" type="button" title="Minimizar la llamada y volver al chat">Minimizar</button>
+        </div>
+        <canvas id="voice-call-canvas" class="voice-call-canvas" width="340" height="340" aria-hidden="true"></canvas>
+        <h2 id="voice-call-status">Conectando…</h2>
+        <p id="voice-call-detail">Preparando el micrófono.</p>
+        <p class="voice-call-hint">Habla con normalidad. MyKOS enviará tu turno al detectar que has terminado. Si vuelve a hablar mientras responde, le interrumpes.</p>
+        <button id="voice-stage-hangup-button" class="voice-stage-hangup-button" type="button" aria-label="Colgar la llamada">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.71.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.7l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.73-1.68-1.36-2.66-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
+          <span>Colgar</span>
+        </button>
+        </div>
+        
+      </section>
+
+      <div id="voice-call-compact-bar" role="status" aria-label="Llamada en curso">
+        <span class="voice-compact-dot" id="voice-compact-dot"></span>
+        <span class="voice-compact-label">En llamada&#8202;<span id="voice-compact-timer">00:00</span></span>
+        <button class="voice-compact-expand" type="button" id="voice-compact-expand-button" title="Volver a la pantalla de llamada">Expandir</button>
+        <button class="voice-compact-hangup" type="button" id="voice-compact-hangup-button" title="Colgar la llamada">Colgar</button>
+      </div>
+
+      <form id="composer" class="composer">
+        <div id="dropzone" class="dropzone">
+          <span>Suelta aquí un PDF o una imagen</span>
+          <label class="attach-button" for="file-input">Adjuntar<input id="file-input" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff" multiple hidden></label>
+        </div>
+        <div id="attachment-list" class="attachment-list" aria-live="polite"></div>
+        <textarea id="message-input" rows="1" placeholder="Escribe un mensaje…" autocomplete="off"></textarea>
+        <div class="composer-footer">
+          <div class="composer-status">
+            <div class="header-status">
+              <div id="header-model" class="header-model">—</div>
+              <div id="activity-status" class="activity-status idle" aria-live="polite">
+                <span class="activity-dot" aria-hidden="true"></span>
+                <span id="activity-label">Listo</span>
+                <span id="activity-elapsed"></span>
+              </div>
+              <div id="activity-detail" class="activity-detail">Esperando una petición.</div>
+            </div>
+          </div>
+          <span class="composer-hint">Enter para enviar · Ctrl/Shift + Enter para salto de línea</span>
+          <button id="voice-input-button" class="voice-input-button" type="button" aria-pressed="false" title="Iniciar llamada local de MyKOS">
+            <svg class="voice-input-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14.5a3.5 3.5 0 0 0 3.5-3.5V6a3.5 3.5 0 0 0-7 0v5a3.5 3.5 0 0 0 3.5 3.5Zm-6-3.5a6 6 0 0 0 12 0h-1.5a4.5 4.5 0 0 1-9 0H6Zm5.25 6.42V21h1.5v-3.58A6.01 6.01 0 0 0 18 12h-1.5a4.5 4.5 0 0 0-9 0H6a6.01 6.01 0 0 0 5.25 5.42Z"/></svg><span id="voice-input-label">Llamar</span>
+          </button>
+          <button id="voice-hangup-button" class="voice-hangup-button" type="button" hidden title="Colgar la llamada">Colgar</button>
+          <button id="send-button" type="submit">Enviar</button>
+        </div>
+      </form>
+
+      <section id="models-page" class="app-page" hidden>
+        <header class="page-header">
+          <div>
+            <div class="eyebrow">Configuración</div>
+            <h2>Modelos</h2>
+            <p>Selecciona, conecta y prueba los modelos disponibles para MyKOS.</p>
+          </div>
+          <button id="models-back" class="text-button" type="button">Volver al chat</button>
+        </header>
+        <div id="models-page-content" class="models-page-content">
+        </div>
+      </section>
+
+      <section id="permissions-page" class="app-page" hidden>
+        <header class="page-header">
+          <div>
+            <div class="eyebrow">Seguridad local</div>
+            <h2>Permisos del PC</h2>
+            <p>Revisa, limita y revoca los permisos concedidos a MyKOS.</p>
+          </div>
+          <button id="permissions-back" class="text-button" type="button">Volver al chat</button>
+        </header>
+        <div id="permissions-page-content" class="permissions-page-content"></div>
+      </section>
+
+      <section id="automations-page" class="app-page" hidden>
+        <header class="page-header">
+          <div>
+            <div class="eyebrow">Automatización local</div>
+            <h2>Recordatorios</h2>
+            <p>Recordatorios propios de MyKOS. Añadir o borrar pide una aprobación de un clic (sin pasar por el chat).</p>
+          </div>
+          <button id="automations-back" class="text-button" type="button">Volver al chat</button>
+        </header>
+        <div class="automations-page-content">
+          <section class="automation-panel">
+            <div class="section-heading"><span>Nuevo recordatorio</span></div>
+            <form id="automation-create-form" class="automation-create-form">
+              <input id="automation-title" type="text" placeholder="Título" maxlength="180" required>
+              <textarea id="automation-message" placeholder="Mensaje (opcional)" maxlength="4000" rows="2"></textarea>
+              <div class="automation-create-row">
+                <label for="automation-run-at">Cuándo
+                  <input id="automation-run-at" type="datetime-local" required>
+                </label>
+                <label for="automation-repeat">Repetir (min, 0 = una vez)
+                  <input id="automation-repeat" type="number" min="0" max="10080" value="0">
+                </label>
+                <button id="automation-create-submit" class="text-button" type="submit">Añadir recordatorio</button>
+              </div>
+              <p id="automation-create-status" class="automation-create-status" hidden></p>
+            </form>
+          </section>
+          <section class="automation-panel">
+            <div class="section-heading"><span>Programados</span><span id="automations-count" class="section-count">0</span></div>
+            <div id="automations-list" class="automations-list"></div>
+          </section>
+          <section class="automation-panel">
+            <div class="section-heading">
+              <span>Eventos activados</span>
+              <button id="automation-events-clear" class="text-button danger-text-button" type="button">Vaciar historial</button>
+            </div>
+            <div id="automation-events-list" class="automation-events-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="settings-page" class="app-page" hidden>
+        <header class="page-header">
+          <div>
+            <div class="eyebrow">Ajustes y Diagnóstico</div>
+            <h2>Configuración de MyKOS</h2>
+            <p>Personaliza la apariencia, diagnostica el estado del sistema, gestiona motores multimedia y dispositivos.</p>
+          </div>
+          <button id="settings-back" class="text-button" type="button">Volver al chat</button>
+        </header>
+
+        <nav class="settings-subnav" aria-label="Secciones de configuración">
+          <button class="settings-tab-btn active" type="button" data-settings-tab="appearance">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+            <span>Apariencia y Estilo</span>
+          </button>
+          <button class="settings-tab-btn" type="button" data-settings-tab="voice">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+              <line x1="12" y1="19" x2="12" y2="23"></line>
+              <line x1="8" y1="23" x2="16" y2="23"></line>
+            </svg>
+            <span>Voz y Micrófono</span>
+          </button>
+          <button class="settings-tab-btn" type="button" data-settings-tab="management">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+            <span>Gestión Local</span>
+          </button>
+          <button class="settings-tab-btn" type="button" data-settings-tab="media">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            </svg>
+            <span>Multimedia</span>
+          </button>
+          <button class="settings-tab-btn" type="button" data-settings-tab="nodes">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
+              <rect x="9" y="9" width="6" height="6"></rect>
+              <line x1="9" y1="1" x2="9" y2="4"></line>
+              <line x1="15" y1="1" x2="15" y2="4"></line>
+              <line x1="9" y1="20" x2="9" y2="23"></line>
+              <line x1="15" y1="20" x2="15" y2="23"></line>
+              <line x1="20" y1="9" x2="23" y2="9"></line>
+              <line x1="20" y1="14" x2="23" y2="14"></line>
+              <line x1="1" y1="9" x2="4" y2="9"></line>
+              <line x1="1" y1="14" x2="4" y2="14"></line>
+            </svg>
+            <span>Dispositivos</span>
+          </button>
+        </nav>
+
+        <div class="settings-page-content">
+          <!-- Pestaña 1: Apariencia y Estilo -->
+          <div id="settings-tab-appearance" class="settings-tab-panel active">
+            <section class="panel-section settings-theme-section">
+              <div class="section-heading">
+                <span>Tema visual y apariencia</span>
+              </div>
+              <p class="settings-hint">Selecciona el estilo que prefieras para la interfaz:</p>
+              <div class="theme-options-grid">
+                <button class="theme-option-card active" type="button" data-theme="default">
+                  <div class="theme-swatch theme-swatch-default">
+                    <span class="swatch-c1"></span><span class="swatch-c2"></span><span class="swatch-c3"></span>
+                  </div>
+                  <div class="theme-info">
+                    <strong>Oscuro (Actual)</strong>
+                    <span>Tono petróleo sobrio y equilibrado</span>
+                  </div>
+                  <span class="theme-check">✓</span>
+                </button>
+
+                <button class="theme-option-card" type="button" data-theme="light">
+                  <div class="theme-swatch theme-swatch-light">
+                    <span class="swatch-c1"></span><span class="swatch-c2"></span><span class="swatch-c3"></span>
+                  </div>
+                  <div class="theme-info">
+                    <strong>Claro</strong>
+                    <span>Limpio y luminoso para el día</span>
+                  </div>
+                  <span class="theme-check">✓</span>
+                </button>
+
+                <button class="theme-option-card" type="button" data-theme="mykos">
+                  <div class="theme-swatch theme-swatch-mykos">
+                    <span class="swatch-c1"></span><span class="swatch-c2"></span><span class="swatch-c3"></span>
+                  </div>
+                  <div class="theme-info">
+                    <strong>Estilo MyKOS</strong>
+                    <span>Azul cobalto oficial con acento cian</span>
+                  </div>
+                  <span class="theme-check">✓</span>
+                </button>
+              </div>
+            </section>
+
+            <!-- Configuración de Dimensiones: Ancho del chat y Altura de la viñeta -->
+            <section class="panel-section">
+              <div class="section-heading">
+                <span>Dimensiones y Espaciado del Chat</span>
+              </div>
+              <p class="settings-hint">Ajusta el ancho de los mensajes y la altura de la caja de escritura:</p>
+
+              <div class="voice-settings-grid" style="margin-top: 12px;">
+                <!-- Ajuste 1: Ancho del chat y viñeta -->
+                <div class="voice-setting-card">
+                  <div class="voice-setting-header">
+                    <div class="voice-setting-icon">
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="15 3 21 3 21 9"></polyline>
+                        <polyline points="9 21 3 21 3 15"></polyline>
+                        <line x1="21" y1="3" x2="14" y2="10"></line>
+                        <line x1="3" y1="21" x2="10" y2="14"></line>
+                      </svg>
+                    </div>
+                    <div>
+                      <strong>Ancho del chat y viñeta</strong>
+                      <span>Anchura máxima del contenedor de mensajes y de la barra de escritura.</span>
+                    </div>
+                  </div>
+                  <div class="voice-control-group">
+                    <div class="voice-segmented-control" data-setting="chat-width">
+                      <button type="button" class="voice-option-btn chat-width-btn" data-val="760">
+                        <strong>Estrecho</strong>
+                        <span>760 px</span>
+                      </button>
+                      <button type="button" class="voice-option-btn chat-width-btn active" data-val="940">
+                        <strong>Equilibrado</strong>
+                        <span>940 px</span>
+                      </button>
+                      <button type="button" class="voice-option-btn chat-width-btn" data-val="1120">
+                        <strong>Amplio</strong>
+                        <span>1120 px</span>
+                      </button>
+                      <button type="button" class="voice-option-btn chat-width-btn" data-val="1300">
+                        <strong>Completo</strong>
+                        <span>1300 px</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Ajuste 2: Altura de la viñeta de escritura -->
+                <div class="voice-setting-card">
+                  <div class="voice-setting-header">
+                    <div class="voice-setting-icon">
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="17 11 12 6 7 11"></polyline>
+                        <polyline points="17 18 12 13 7 18"></polyline>
+                      </svg>
+                    </div>
+                    <div>
+                      <strong>Altura de la viñeta de escritura</strong>
+                      <span>Espacio vertical visible para escribir mensajes y redactar con comodidad.</span>
+                    </div>
+                  </div>
+                  <div class="voice-control-group">
+                    <div class="voice-segmented-control" data-setting="composer-height">
+                      <button type="button" class="voice-option-btn composer-height-btn" data-val="48">
+                        <strong>Baja</strong>
+                        <span>~2 líneas</span>
+                      </button>
+                      <button type="button" class="voice-option-btn composer-height-btn active" data-val="80">
+                        <strong>Media</strong>
+                        <span>~3-4 líneas</span>
+                      </button>
+                      <button type="button" class="voice-option-btn composer-height-btn" data-val="120">
+                        <strong>Alta</strong>
+                        <span>~6 líneas</span>
+                      </button>
+                      <button type="button" class="voice-option-btn composer-height-btn" data-val="165">
+                        <strong>Extra</strong>
+                        <span>~8+ líneas</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel-section">
+              <div class="section-heading">
+                <span>Voz y Síntesis Local</span>
+              </div>
+              <p class="settings-hint">Motor de voz y locución del asistente:</p>
+              <div class="settings-info-row">
+                <div>
+                  <strong>Motor de síntesis</strong>
+                  <span>Chatterbox Multilingual local (GPU)</span>
+                </div>
+                <div class="settings-badge-ok">Activo</div>
+              </div>
+              <div class="settings-info-row" style="margin-top: 8px;">
+                <div>
+                  <strong>Reconocimiento de voz</strong>
+                  <span>Whisper local persistente</span>
+                </div>
+                <div class="settings-badge-ok">Activo</div>
+              </div>
+            </section>
+
+            <section class="panel-section">
+              <div class="section-heading">
+                <span>Almacén de datos y Privacidad</span>
+              </div>
+              <p class="settings-hint">Tus datos nunca salen de este equipo:</p>
+              <div class="settings-info-row">
+                <div>
+                  <strong>Ubicación del estado</strong>
+                  <span>~/.mykos/gateway-state/mykos</span>
+                </div>
+                <div class="settings-badge-ok">Local</div>
+              </div>
+            </section>
+          </div>
+
+          <!-- Pestaña 2: Ajustes de Voz y Micrófono (Configurables) -->
+          <div id="settings-tab-voice" class="settings-tab-panel">
+            <div class="settings-tab-header">
+              <p class="settings-hint">Ajusta el ritmo de conversación, la sensibilidad del micro y la velocidad de locución.</p>
+            </div>
+
+            <div class="voice-settings-grid">
+              <!-- Ajuste 1: Pausa antes de responder (VAD silence) -->
+              <div class="voice-setting-card">
+                <div class="voice-setting-header">
+                  <div class="voice-setting-icon">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                  </div>
+                  <div>
+                    <strong>Pausa antes de responder</strong>
+                    <span>Tiempo de silencio tras hablar antes de que MyKOS empiece a contestar.</span>
+                  </div>
+                </div>
+                <div class="voice-control-group">
+                  <div class="voice-segmented-control" data-setting="silence">
+                    <button type="button" class="voice-option-btn voice-silence-btn" data-val="600">
+                      <strong>Rápido</strong>
+                      <span>600 ms</span>
+                    </button>
+                    <button type="button" class="voice-option-btn voice-silence-btn active" data-val="900">
+                      <strong>Equilibrado</strong>
+                      <span>900 ms</span>
+                    </button>
+                    <button type="button" class="voice-option-btn voice-silence-btn" data-val="1400">
+                      <strong>Pausado</strong>
+                      <span>1,4 s</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Ajuste 2: Sensibilidad del micrófono -->
+              <div class="voice-setting-card">
+                <div class="voice-setting-header">
+                  <div class="voice-setting-icon">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+                    </svg>
+                  </div>
+                  <div>
+                    <strong>Sensibilidad del micrófono</strong>
+                    <span>Calibra la detección de voz para filtrar ventiladores y ruidos de fondo.</span>
+                  </div>
+                </div>
+                <div class="voice-control-group">
+                  <div class="voice-segmented-control" data-setting="sensitivity">
+                    <button type="button" class="voice-option-btn voice-sensitivity-btn" data-val="high">
+                      <strong>Alta</strong>
+                      <span>Susurros</span>
+                    </button>
+                    <button type="button" class="voice-option-btn voice-sensitivity-btn active" data-val="medium">
+                      <strong>Media</strong>
+                      <span>Equilibrada</span>
+                    </button>
+                    <button type="button" class="voice-option-btn voice-sensitivity-btn" data-val="low">
+                      <strong>Baja</strong>
+                      <span>Filtra ruidos</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Ajuste 3: Interrupción por voz (Barge-in) -->
+              <div class="voice-setting-card">
+                <div class="voice-setting-header">
+                  <div class="voice-setting-icon">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="6" y="4" width="4" height="16"></rect>
+                      <rect x="14" y="4" width="4" height="16"></rect>
+                    </svg>
+                  </div>
+                  <div>
+                    <strong>Interrupción por voz (Barge-in)</strong>
+                    <span>MyKOS se calla automáticamente cuando detecta que comienzas a hablar.</span>
+                  </div>
+                </div>
+                <div class="voice-control-group voice-toggle-group">
+                  <label class="toggle-switch">
+                    <input id="voice-barge-in-toggle" type="checkbox" checked />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span id="voice-barge-in-status" class="toggle-label-text">Activado</span>
+                </div>
+              </div>
+
+              <!-- Ajuste 4: Velocidad de locución de la voz -->
+              <div class="voice-setting-card">
+                <div class="voice-setting-header">
+                  <div class="voice-setting-icon">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                    </svg>
+                  </div>
+                  <div>
+                    <strong>Velocidad de locución de la voz</strong>
+                    <span>Ritmo al que el sintetizador local reproduce las respuestas.</span>
+                  </div>
+                </div>
+                <div class="voice-control-group">
+                  <div class="voice-segmented-control" data-setting="speed">
+                    <button type="button" class="voice-option-btn voice-speed-btn" data-val="0.9">
+                      <strong>0.9x</strong>
+                      <span>Pausada</span>
+                    </button>
+                    <button type="button" class="voice-option-btn voice-speed-btn active" data-val="1.0">
+                      <strong>1.0x</strong>
+                      <span>Normal</span>
+                    </button>
+                    <button type="button" class="voice-option-btn voice-speed-btn" data-val="1.15">
+                      <strong>1.15x</strong>
+                      <span>Ágil</span>
+                    </button>
+                    <button type="button" class="voice-option-btn voice-speed-btn" data-val="1.25">
+                      <strong>1.25x</strong>
+                      <span>Rápida</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Estado de los motores locales al pie -->
+            <section class="panel-section" style="margin-top: 10px;">
+              <div class="section-heading">
+                <span>Motores Locales en Ejecución</span>
+              </div>
+              <div class="settings-info-row">
+                <div>
+                  <strong>Síntesis de voz</strong>
+                  <span>Chatterbox Multilingual en GPU NVIDIA</span>
+                </div>
+                <div class="settings-badge-ok">Activo</div>
+              </div>
+              <div class="settings-info-row" style="margin-top: 8px;">
+                <div>
+                  <strong>Reconocimiento de voz</strong>
+                  <span>Whisper local persistente</span>
+                </div>
+                <div class="settings-badge-ok">Activo</div>
+              </div>
+            </section>
+          </div>
+
+          <!-- Pestaña 2: Gestión Local -->
+          <div id="management-page" class="settings-tab-panel">
+            <div class="settings-tab-header">
+              <p class="settings-hint">Diagnóstico y estado de los componentes locales del Gateway.</p>
+              <button id="management-refresh" class="text-button" type="button">Actualizar</button>
+            </div>
+            <div class="management-page-content">
+              <section class="management-panel">
+                <div class="section-heading"><span>Estado</span><span id="management-checked" class="section-count">—</span></div>
+                <div id="management-checks" class="management-checks"></div>
+              </section>
+              <section class="management-panel">
+                <div class="section-heading"><span>Componentes locales</span></div>
+                <div id="management-details" class="management-details"></div>
+              </section>
+            </div>
+          </div>
+
+          <!-- Pestaña 3: Multimedia -->
+          <div id="media-page" class="settings-tab-panel">
+            <div class="settings-tab-header">
+              <p class="settings-hint">Estado de los motores instalados y archivos generados por MyKOS.</p>
+              <button id="media-refresh" class="text-button" type="button">Actualizar</button>
+            </div>
+            <div class="media-page-content">
+              <section class="media-panel">
+                <div class="section-heading"><span>Motores detectados</span><span id="media-checked" class="section-count">—</span></div>
+                <div id="media-engines" class="media-engines"></div>
+              </section>
+              <section class="media-panel">
+                <div class="section-heading"><span>Archivos locales</span><span id="media-count" class="section-count">0</span></div>
+                <div id="media-files" class="media-files"></div>
+              </section>
+            </div>
+          </div>
+
+          <!-- Pestaña 4: Dispositivos -->
+          <div id="nodes-page" class="settings-tab-panel">
+            <div class="settings-tab-header">
+              <p class="settings-hint">Estado del PC y nodos propios emparejados en red local.</p>
+              <button id="nodes-refresh" class="text-button" type="button">Actualizar</button>
+            </div>
+            <div class="nodes-page-content">
+              <section class="nodes-panel">
+                <div class="section-heading"><span>Nodos registrados</span><span id="nodes-count" class="section-count">0</span></div>
+                <div id="nodes-list" class="nodes-list"></div>
+              </section>
+              <section class="nodes-panel nodes-help-panel">
+                <div class="section-heading"><span>Emparejamiento</span></div>
+                <p>Para añadir un móvil u otro equipo, pide en el chat: «empareja un nodo llamado…». MyKOS solicitará aprobación y entregará un token de un solo uso.</p>
+                <p>Los nodos solo pueden enviar estado mediante <code>/api/nodes/heartbeat</code>. No hay control remoto ni exposición de red activada por defecto.</p>
+              </section>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Panel lateral derecho retráctil y extensible: Terminal Bash -->
+    <aside id="right-sidebar" class="right-sidebar" aria-label="Terminal Bash">
+      <div class="right-sidebar-header">
+        <div class="right-sidebar-title">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 17 10 11 4 5"></polyline>
+            <line x1="12" y1="19" x2="20" y2="19"></line>
+          </svg>
+          <span>Terminal Bash</span>
+          <span class="terminal-badge">MyKOS Linux</span>
+        </div>
+        <div class="right-sidebar-actions">
+          <button id="terminal-clear-btn" class="terminal-action-btn" type="button" title="Limpiar pantalla">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            <span>Limpiar</span>
+          </button>
+          <button id="right-sidebar-close" class="right-sidebar-close" type="button" title="Cerrar panel">✕</button>
+        </div>
+      </div>
+
+      <div class="right-sidebar-body terminal-body">
+        <div class="terminal-quick-chips">
+          <button type="button" class="term-chip" data-cmd="ollama ps">ollama ps</button>
+          <button type="button" class="term-chip" data-cmd="nvidia-smi">nvidia-smi</button>
+          <button type="button" class="term-chip" data-cmd="git status">git status</button>
+          <button type="button" class="term-chip" data-cmd="ls -la">ls -la</button>
+          <button type="button" class="term-chip" data-cmd="df -h">df -h</button>
+          <button type="button" class="term-chip" data-cmd="free -h">free -h</button>
+        </div>
+
+        <div id="terminal-screen" class="terminal-screen">
+          <div class="terminal-welcome">
+            <span class="term-welcome-title">MyKOS Linux Terminal</span><br>
+            Consola interactiva conectada a <code>/bin/bash</code>.<br>
+            Usa los accesos directos o escribe comandos abajo.
+          </div>
+        </div>
+
+        <form id="terminal-form" class="terminal-form">
+          <span id="terminal-cwd-badge" class="terminal-cwd-badge">~ $</span>
+          <input id="terminal-input" class="terminal-input" type="text" autocomplete="off" spellcheck="false" placeholder="Comando Bash (ej: pwd, ls, htop)..." />
+          <button id="terminal-submit-btn" class="terminal-submit-btn" type="submit" title="Ejecutar (Enter)">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </form>
+      </div>
+    </aside>
+  </div>
+  <script src="/static/call-visual.js?v=20260927-1"></script>
+  <script src="/static/call-transcript.js?v=20260927-1"></script>
+  <script src="/static/app.js?v=20261101-voice-chat-2"></script>
+</body>
+</html>
+
+
+

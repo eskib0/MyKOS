@@ -1,0 +1,8 @@
+{
+  "roots": [
+    {
+      "name": "workspace",
+      "path": "~/.mykos/workspace"
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+env/
+venv/
+*.bak
+*.bak*
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# MyKOS State, Credentials & Data (NEVER COMMIT)
+state/
+.mykos/
+**/data/*
+!gateway/app/data/.gitkeep
+**/credentials/
+*.master_key
+*.db
+*.sqlite
+*.sqlite3
+*.jsonl
+*.log
+run/
+logs/
+home/
+workspace/
+!workspace/.gitkeep
+gateway/runtime/antigravity-home/*
+!gateway/runtime/antigravity-home/.gemini
+gateway/runtime/antigravity-home/.gemini/*
+!gateway/runtime/antigravity-home/.gemini/antigravity-cli
+gateway/runtime/antigravity-home/.gemini/antigravity-cli/*
+!gateway/runtime/antigravity-home/.gemini/antigravity-cli/settings.json
+gateway/optional/codex/bin
+gateway/optional/codex/package-lock.json
+apps/biblioteca/
+apps/horario/
+
+# Temporary & Environment
+.env
+.env.*
+*.tmp
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

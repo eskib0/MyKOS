@@ -1,0 +1,821 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# MyKOS CLI — Herramienta unificada de línea de comandos para el ecosistema MyKOS
+# ==============================================================================
+set -euo pipefail
+
+REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+BIN_DIR="$(cd "$(dirname "$REAL_SCRIPT")" && pwd)"
+MYKOS_ROOT="$(cd "$BIN_DIR/.." && pwd)"
+GATEWAY_DIR="$MYKOS_ROOT/gateway"
+RUNTIME_MJS="$GATEWAY_DIR/runtime/mykos-gateway.mjs"
+STORE_CLI="$GATEWAY_DIR/app/gateway-plugin/store-cli.mjs"
+
+STATE_DIR="${MYKOS_GATEWAY_STATE_DIR:-$HOME/.mykos/gateway-state}"
+WORKSPACE_DIR="${MYKOS_GATEWAY_WORKSPACE_DIR:-$HOME/.mykos/workspace}"
+PID_FILE="$STATE_DIR/mykos-gateway.pid"
+GATEWAY_LOG="$STATE_DIR/mykos-gateway.log"
+BACKEND_LOG="$GATEWAY_DIR/app/data/mykos-backend.log"
+CONFIG_FILE="${MYKOS_GATEWAY_CONFIG:-$STATE_DIR/mykos-gateway.json}"
+DEFAULT_PORT="${MYKOS_GATEWAY_PORT:-3210}"
+
+mkdir -p "$STATE_DIR"
+chmod 700 "$STATE_DIR" 2>/dev/null || true
+
+# Colores ANSI (solo si stdout es terminal o se fuerza)
+if [[ -t 1 ]] || [[ "${MYKOS_FORCE_COLOR:-0}" == "1" ]]; then
+  C_RESET="\033[0m"
+  C_BOLD="\033[1m"
+  C_DIM="\033[2m"
+  C_CYAN="\033[38;5;51m"
+  C_BLUE="\033[38;5;39m"
+  C_INDIGO="\033[38;5;63m"
+  C_GREEN="\033[38;5;84m"
+  C_YELLOW="\033[38;5;220m"
+  C_RED="\033[38;5;203m"
+else
+  C_RESET=""
+  C_BOLD=""
+  C_DIM=""
+  C_CYAN=""
+  C_BLUE=""
+  C_INDIGO=""
+  C_GREEN=""
+  C_YELLOW=""
+  C_RED=""
+fi
+
+print_logo() {
+  local subtitle="${1:-AI Gateway · Local & Cloud Intelligence · Voice Engine}"
+  echo -e "${C_CYAN}${C_BOLD}"
+  echo -e "  ███╗   ███╗██╗   ██╗██╗  ██╗ ██████╗ ███████╗"
+  echo -e "${C_BLUE}${C_BOLD}  ████╗ ████║╚██╗ ██╔╝██║ ██╔╝██╔═══██╗██╔════╝"
+  echo -e "  ██╔████╔██║ ╚████╔╝ █████╔╝ ██║   ██║███████╗"
+  echo -e "${C_INDIGO}${C_BOLD}  ██║╚██╔╝██║  ╚██╔╝  ██╔═██╗ ██║   ██║╚════██║"
+  echo -e "  ██║ ╚═╝ ██║   ██║   ██║  ██╗╚██████╔╝███████║"
+  echo -e "  ╚═╝     ╚═╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝${C_RESET}"
+  echo -e "  ${C_DIM}${subtitle}${C_RESET}"
+  echo ""
+}
+
+resolve_port() {
+  if [[ -n "${MYKOS_GATEWAY_PORT:-}" ]]; then
+    echo "$MYKOS_GATEWAY_PORT"
+    return
+  fi
+  if [[ -f "$CONFIG_FILE" ]]; then
+    local cfg_port
+    cfg_port="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("gateway",{}).get("port",3210))' "$CONFIG_FILE" 2>/dev/null || echo "")"
+    if [[ -n "$cfg_port" ]]; then
+      echo "$cfg_port"
+      return
+    fi
+  fi
+  echo "$DEFAULT_PORT"
+}
+
+is_running() {
+  if [[ -f "$PID_FILE" ]]; then
+    local pid
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  pgrep -f "mykos-gateway\.mjs" >/dev/null 2>&1
+}
+
+get_pid() {
+  if [[ -f "$PID_FILE" ]]; then
+    local pid
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "$pid"
+      return
+    fi
+  fi
+  pgrep -f "mykos-gateway\.mjs" | head -n 1 || true
+}
+
+cmd_start() {
+  local fg=0
+  local port
+  port="$(resolve_port)"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --fg|--foreground) fg=1; shift ;;
+      --port|-p) port="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  if is_running; then
+    local pid
+    pid="$(get_pid)"
+    echo "MyKOS Gateway ya está en marcha (PID $pid) en http://127.0.0.1:$port"
+    return 0
+  fi
+
+  if [[ -x "$HOME/.mykos/venv/bin/python" ]] && [[ -z "${MYKOS_BACKEND_PYTHON:-}" ]]; then
+    export MYKOS_BACKEND_PYTHON="$HOME/.mykos/venv/bin/python"
+  fi
+
+  if [[ "$fg" -eq 1 ]]; then
+    print_logo "MyKOS Gateway · Modo Primer Plano (http://127.0.0.1:$port)"
+    exec node "$RUNTIME_MJS" gateway --port "$port"
+  fi
+
+  echo "Arrancando MyKOS Gateway en segundo plano (puerto $port)..."
+  setsid node "$RUNTIME_MJS" gateway --port "$port" </dev/null >>"$GATEWAY_LOG" 2>&1 &
+  local gw_pid=$!
+  echo "$gw_pid" > "$PID_FILE"
+
+  for _ in {1..30}; do
+    if curl -fsS "http://127.0.0.1:$port/mykos-health" >/dev/null 2>&1; then
+      echo "✅ MyKOS Gateway listo (PID $gw_pid) -> http://127.0.0.1:$port"
+      return 0
+    fi
+    sleep 0.3
+  done
+
+  echo "⚠️  MyKOS Gateway arrancó (PID $gw_pid), esperando a que el backend termine de cargar..."
+  echo "   Interfaz: http://127.0.0.1:$port | Logs: mykos logs -f"
+}
+
+cmd_stop() {
+  if ! is_running; then
+    rm -f "$PID_FILE"
+    echo "MyKOS Gateway ya está detenido."
+    return 0
+  fi
+  local pids
+  pids="$(pgrep -f "mykos-gateway\.mjs" || true)"
+  if [[ -f "$PID_FILE" ]]; then
+    pids="$(cat "$PID_FILE") $pids"
+  fi
+  echo "Deteniendo MyKOS Gateway..."
+  for p in $pids; do
+    kill -TERM "$p" 2>/dev/null || true
+  done
+  for _ in {1..25}; do
+    if ! pgrep -f "mykos-gateway\.mjs" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.2
+  done
+  rm -f "$PID_FILE"
+  echo "✅ MyKOS Gateway detenido."
+}
+
+cmd_run() {
+  local port
+  port="$(resolve_port)"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port|-p) port="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  print_logo "MyKOS Live Run · http://127.0.0.1:$port · Cerrar terminal o Ctrl+C detiene todo"
+
+  if is_running; then
+    echo -e "${C_YELLOW}↻ Reiniciando instancia previa en segundo plano para tomar el control en esta terminal...${C_RESET}"
+    cmd_stop >/dev/null 2>&1 || true
+  fi
+
+  if [[ -x "$HOME/.mykos/venv/bin/python" ]] && [[ -z "${MYKOS_BACKEND_PYTHON:-}" ]]; then
+    export MYKOS_BACKEND_PYTHON="$HOME/.mykos/venv/bin/python"
+  fi
+
+  mkdir -p "$(dirname "$GATEWAY_LOG")" "$(dirname "$BACKEND_LOG")"
+  touch "$GATEWAY_LOG" "$BACKEND_LOG"
+
+  local gw_pid=""
+  local tail_pid=""
+  local cleaned=0
+
+  cleanup_run() {
+    set +e
+    if [[ "$cleaned" -eq 1 ]]; then
+      return
+    fi
+    cleaned=1
+    trap - EXIT INT TERM HUP QUIT
+    echo ""
+    echo -e "${C_YELLOW}⏹ Cerrando MyKOS Gateway y deteniendo todos los servicios asociados...${C_RESET}"
+    [[ -n "$tail_pid" ]] && kill -TERM "$tail_pid" 2>/dev/null || true
+    if [[ -n "$gw_pid" ]]; then
+      kill -TERM "$gw_pid" 2>/dev/null || true
+    fi
+    for p in $(pgrep -f "mykos-gateway\.mjs" 2>/dev/null); do
+      kill -TERM "$p" 2>/dev/null || true
+    done
+    for _ in {1..20}; do
+      if ! pgrep -f "mykos-gateway\.mjs" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.1
+    done
+    for op in $(pgrep -f "mykos-gateway\.mjs|$GATEWAY_DIR/app/server\.py" 2>/dev/null); do
+      kill -TERM "$op" 2>/dev/null || true
+    done
+    sleep 0.2
+    for op in $(pgrep -f "mykos-gateway\.mjs|$GATEWAY_DIR/app/server\.py" 2>/dev/null); do
+      kill -KILL "$op" 2>/dev/null || true
+    done
+    rm -f "$PID_FILE"
+    echo -e "${C_GREEN}✅ MyKOS detenido por completo.${C_RESET}"
+  }
+
+  trap 'cleanup_run; exit 0' INT TERM HUP QUIT
+  trap cleanup_run EXIT
+
+  echo -e "${C_CYAN}${C_BOLD}🌐 Interfaz Web: http://127.0.0.1:$port/${C_RESET}"
+  echo -e "${C_DIM}   Para detenerlo: pulsa Ctrl+C o cierra esta terminal${C_RESET}"
+  echo ""
+
+  tail -n 0 -f "$GATEWAY_LOG" "$BACKEND_LOG" &
+  tail_pid=$!
+
+  local parent_pid="$PPID"
+  node "$RUNTIME_MJS" gateway --port "$port" >>"$GATEWAY_LOG" 2>&1 &
+  gw_pid=$!
+  echo "$gw_pid" > "$PID_FILE"
+
+  while kill -0 "$gw_pid" 2>/dev/null && kill -0 "$parent_pid" 2>/dev/null; do
+    sleep 0.3 || break
+  done
+  cleanup_run
+}
+
+cmd_status() {
+  local port
+  port="$(resolve_port)"
+  if ! is_running; then
+    echo "🔴 MyKOS Gateway: DETENIDO (puerto configurado: $port)"
+    return 1
+  fi
+  local pid
+  pid="$(get_pid)"
+  echo "🟢 MyKOS Gateway: ACTIVO (PID $pid) · http://127.0.0.1:$port"
+  local health
+  if health="$(curl -fsS "http://127.0.0.1:$port/mykos-health" 2>/dev/null)"; then
+    python3 - "$health" <<'PY'
+import json, sys
+d = json.loads(sys.argv[1])
+b = d.get("backend", {})
+s = d.get("store", {})
+r = d.get("realtime", {})
+ver = d.get("version", "-")
+b_state = "ACTIVO" if b.get("up") else b.get("phase", "abajo")
+b_pid = b.get("backendPid") or b.get("pid") or "-"
+b_url = b.get("url", "-")
+s_state = "ACTIVO" if s.get("active") else "INACTIVO"
+s_dir = s.get("dir", "-")
+n_routes = d.get("routes", {}).get("known", 0)
+n_policy = d.get("policy", {}).get("governed", 0)
+loop_owner = "Gateway (nativo)" if d.get("chatLoop", {}).get("enabled") else "Worker"
+r_state = "Habilitado" if r.get("enabled") else "Local por defecto"
+r_model = r.get("model", "-")
+print(f"   • Versión Gateway : {ver}")
+print(f"   • Backend Python  : {b_state} (PID {b_pid}, {b_url})")
+print(f"   • Almacén ACID    : {s_state} ({s_dir})")
+print(f"   • Rutas / Política: {n_routes} rutas / {n_policy} políticas firmadas")
+print(f"   • Bucle de Chat   : {loop_owner}")
+print(f"   • Realtime Voz    : {r_state} (modelo: {r_model})")
+PY
+  else
+    echo "   ⚠️  No se pudo leer /mykos-health en http://127.0.0.1:$port/mykos-health"
+  fi
+}
+
+cmd_logs() {
+  local follow=0
+  local lines=25
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -f|--follow) follow=1; shift ;;
+      -n|--lines) lines="${2:-25}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  if [[ "$follow" -eq 1 ]]; then
+    print_logo "MyKOS Live Telemetry & Logs · Pulsa Ctrl+C para salir"
+  else
+    print_logo "MyKOS Logs · Últimos registros del Gateway y Backend"
+  fi
+
+  mkdir -p "$(dirname "$GATEWAY_LOG")" "$(dirname "$BACKEND_LOG")"
+  echo -e "${C_CYAN}━━━ Gateway Log ($GATEWAY_LOG) ━━━${C_RESET}"
+  [[ -f "$GATEWAY_LOG" ]] && tail -n "$lines" "$GATEWAY_LOG" || echo "(sin registros aún)"
+  echo ""
+  echo -e "${C_BLUE}━━━ Backend Log ($BACKEND_LOG) ━━━${C_RESET}"
+  if [[ "$follow" -eq 1 ]]; then
+    touch "$GATEWAY_LOG" "$BACKEND_LOG"
+    tail -n "$lines" -f "$GATEWAY_LOG" "$BACKEND_LOG"
+  else
+    [[ -f "$BACKEND_LOG" ]] && tail -n "$lines" "$BACKEND_LOG" || echo "(sin registros aún)"
+  fi
+}
+
+cmd_doctor() {
+  local fix=0
+  local deep=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --fix|--repair) fix=1; shift ;;
+      --deep) deep=1; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  if [[ "$fix" -eq 1 ]]; then
+    print_logo "MyKOS Doctor · Diagnóstico y Reparación Automática (--fix)"
+  else
+    print_logo "MyKOS Doctor · Diagnóstico Integral del Sistema"
+  fi
+
+  local issues=0
+  local fixed=0
+  local warnings=0
+
+  ok_msg()   { echo -e "  ${C_GREEN}✔${C_RESET} $1"; }
+  warn_msg() { echo -e "  ${C_YELLOW}⚠${C_RESET} $1"; warnings=$((warnings + 1)); }
+  err_msg()  { echo -e "  ${C_RED}✖${C_RESET} $1"; issues=$((issues + 1)); }
+  fix_msg()  { echo -e "  ${C_CYAN}🔧 REPARADO:${C_RESET} $1"; fixed=$((fixed + 1)); }
+
+  # 1. Entorno de ejecución (Node.js, Python 3, Venv y Enlaces)
+  echo -e "${C_BOLD}1. Entorno de Ejecución y Comandos${C_RESET}"
+  if command -v node >/dev/null 2>&1; then
+    local node_v
+    node_v="$(node -v)"
+    ok_msg "Node.js detectado ($node_v)"
+  else
+    err_msg "Node.js no está instalado"
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    local py_v
+    py_v="$(python3 --version)"
+    ok_msg "Python detectado ($py_v)"
+  else
+    err_msg "Python 3 no está instalado"
+  fi
+
+  if [[ -x "$HOME/.mykos/venv/bin/python" ]]; then
+    ok_msg "Entorno virtual Python activo (~/.mykos/venv)"
+  else
+    if [[ "$fix" -eq 1 ]]; then
+      python3 -m venv "$HOME/.mykos/venv"
+      fix_msg "Creado entorno virtual en ~/.mykos/venv"
+    else
+      warn_msg "No existe ~/.mykos/venv (se usará python3 del sistema; usa «mykos doctor --fix» para crearlo)"
+    fi
+  fi
+
+  if [[ -L "$HOME/.local/bin/mykos" ]] && [[ "$(readlink -f "$HOME/.local/bin/mykos")" == "$REAL_SCRIPT" ]]; then
+    ok_msg "Comando «mykos» enlazado correctamente en ~/.local/bin/mykos"
+  else
+    if [[ "$fix" -eq 1 ]]; then
+      mkdir -p "$HOME/.local/bin"
+      ln -sf "$REAL_SCRIPT" "$HOME/.local/bin/mykos"
+      fix_msg "Enlace ~/.local/bin/mykos actualizado -> $REAL_SCRIPT"
+    else
+      err_msg "El enlace ~/.local/bin/mykos no apunta a $REAL_SCRIPT"
+    fi
+  fi
+
+  # 2. Configuración del Gateway y Rutas de Plugins
+  echo ""
+  echo -e "${C_BOLD}2. Configuración del Gateway ($CONFIG_FILE)${C_RESET}"
+  mkdir -p "$STATE_DIR" "$WORKSPACE_DIR"
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    if [[ "$fix" -eq 1 ]]; then
+      python3 - "$CONFIG_FILE" "$WORKSPACE_DIR" "$GATEWAY_DIR/app" <<'PY'
+import json, os, sys
+cfg_path, ws_dir, app_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+plugin_dir = os.path.join(app_dir, "gateway-plugin", "mykos-ui")
+cfg = {
+  "gateway": {"host": "127.0.0.1", "port": 3210},
+  "agents": {"defaults": {"workspace": ws_dir}},
+  "plugins": {
+    "load": {"paths": [plugin_dir]},
+    "entries": {
+      "mykos-ui": {
+        "enabled": True,
+        "config": {
+          "projectDir": app_dir,
+          "staticDir": os.path.join(app_dir, "static"),
+          "store": {"enabled": True},
+          "chatLoop": {"enabled": True},
+          "backend": {
+            "url": "http://127.0.0.1:3211",
+            "spawn": True,
+            "python": os.path.expanduser("~/.mykos/venv/bin/python") if os.path.exists(os.path.expanduser("~/.mykos/venv/bin/python")) else "python3",
+            "script": os.path.join(app_dir, "server.py"),
+          },
+        },
+      }
+    },
+  },
+}
+with open(cfg_path, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+os.chmod(cfg_path, 0o600)
+PY
+      fix_msg "Generado fichero de configuración $CONFIG_FILE con permisos 0600"
+    else
+      warn_msg "Aún no existe $CONFIG_FILE (se creará al iniciar o con «mykos doctor --fix»)"
+    fi
+  else
+    local cfg_check
+    cfg_check="$(python3 - "$CONFIG_FILE" "$GATEWAY_DIR/app" "$fix" <<'PY'
+import json, os, sys
+cfg_path, app_dir, do_fix = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+expected_plugin = os.path.join(app_dir, "gateway-plugin", "mykos-ui")
+expected_script = os.path.join(app_dir, "server.py")
+expected_static = os.path.join(app_dir, "static")
+try:
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+except Exception as e:
+    print(f"INVALID:{e}")
+    sys.exit(0)
+
+changed = False
+gw = cfg.setdefault("gateway", {"host": "127.0.0.1", "port": 3210})
+if gw.get("port") == 18790:
+    if do_fix:
+        gw["port"] = 3210
+        changed = True
+    else:
+        print("STALE_PATHS")
+        sys.exit(0)
+paths = cfg.setdefault("plugins", {}).setdefault("load", {}).setdefault("paths", [])
+if expected_plugin not in paths:
+    if do_fix:
+        cfg["plugins"]["load"]["paths"] = [expected_plugin]
+        changed = True
+    else:
+        print("STALE_PATHS")
+        sys.exit(0)
+
+entry = cfg.setdefault("plugins", {}).setdefault("entries", {}).setdefault("mykos-ui", {"enabled": True, "config": {}})
+ecfg = entry.setdefault("config", {})
+if ecfg.get("projectDir") != app_dir or ecfg.get("staticDir") != expected_static or ecfg.get("backend", {}).get("script") != expected_script:
+    if do_fix:
+        ecfg["projectDir"] = app_dir
+        ecfg["staticDir"] = expected_static
+        b = ecfg.setdefault("backend", {"url": "http://127.0.0.1:3211", "spawn": True})
+        b["script"] = expected_script
+        changed = True
+    else:
+        print("STALE_APP_DIR")
+        sys.exit(0)
+
+if not ecfg.get("store", {}).get("enabled", True):
+    if do_fix:
+        ecfg.setdefault("store", {})["enabled"] = True
+        changed = True
+    else:
+        print("STORE_DISABLED")
+        sys.exit(0)
+
+if changed:
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
+    os.chmod(cfg_path, 0o600)
+    print("FIXED")
+else:
+    print("OK")
+PY
+)"
+    case "$cfg_check" in
+      OK) ok_msg "Configuración JSON válida y rutas sincronizadas con $GATEWAY_DIR" ;;
+      FIXED) fix_msg "Rutas y opciones de $CONFIG_FILE sincronizadas con $GATEWAY_DIR" ;;
+      STALE_PATHS|STALE_APP_DIR) err_msg "Las rutas en $CONFIG_FILE apuntan a otra carpeta (ejecuta «mykos doctor --fix»)" ;;
+      STORE_DISABLED) warn_msg "El almacén ACID está desactivado en $CONFIG_FILE (ejecuta «mykos doctor --fix»)" ;;
+      INVALID*) err_msg "El fichero $CONFIG_FILE tiene JSON inválido ($cfg_check)" ;;
+    esac
+  fi
+
+  # 3. Seguridad, Permisos de Credenciales y Sandbox de Antigravity
+  echo ""
+  echo -e "${C_BOLD}3. Seguridad, Credenciales y Aislamiento${C_RESET}"
+  local state_perm
+  state_perm="$(stat -c '%a' "$STATE_DIR" 2>/dev/null || echo "755")"
+  if [[ "$state_perm" == "700" ]]; then
+    ok_msg "Permisos de $STATE_DIR blindados (0700)"
+  elif [[ "$fix" -eq 1 ]]; then
+    chmod 700 "$STATE_DIR"
+    fix_msg "Permisos de $STATE_DIR ajustados a 0700"
+  else
+    err_msg "Permisos de $STATE_DIR son $state_perm (deben ser 700; usa «mykos doctor --fix»)"
+  fi
+
+  local cred_dir="$STATE_DIR/mykos/credentials"
+  mkdir -p "$cred_dir"
+  chmod 700 "$cred_dir" 2>/dev/null || true
+  local bad_creds=0
+  while IFS= read -r -d '' f; do
+    local fperm
+    fperm="$(stat -c '%a' "$f" 2>/dev/null || echo "644")"
+    if [[ "$fperm" != "600" ]]; then
+      if [[ "$fix" -eq 1 ]]; then
+        chmod 600 "$f"
+        fix_msg "Permisos de credencial $(basename "$f") corregidos a 0600"
+      else
+        bad_creds=$((bad_creds + 1))
+      fi
+    fi
+  done < <(find "$cred_dir" "$GATEWAY_DIR/app/data" -maxdepth 2 -type f \( -name "*.json" -o -name "*.txt" -o -name ".secret_key" \) -print0 2>/dev/null || true)
+
+  if [[ "$bad_creds" -eq 0 ]]; then
+    ok_msg "Permisos de credenciales y llaves maestras verificados (0600)"
+  else
+    err_msg "Se encontraron $bad_creds ficheros de credenciales con permisos abiertos (usa «mykos doctor --fix»)"
+  fi
+
+  local agy_settings="$GATEWAY_DIR/runtime/antigravity-home/.gemini/antigravity-cli/settings.json"
+  if [[ -f "$agy_settings" ]] && grep -q '"deny"' "$agy_settings" 2>/dev/null && grep -q '"command(\*)"' "$agy_settings" 2>/dev/null; then
+    ok_msg "Sandbox de Antigravity CLI («agy») blindado en modo solo-texto (permissions.deny)"
+  elif [[ "$fix" -eq 1 ]]; then
+    mkdir -p "$(dirname "$agy_settings")"
+    cat > "$agy_settings" <<'JSON'
+{
+  "permissions": {
+    "deny": [
+      "read_file(*)",
+      "write_file(*)",
+      "command(*)",
+      "read_url(*)",
+      "execute_url(*)",
+      "mcp(*)"
+    ]
+  }
+}
+JSON
+    fix_msg "Restaurado fichero de aislamiento $agy_settings"
+  else
+    err_msg "Falta o se alteró la política de aislamiento de Antigravity CLI ($agy_settings)"
+  fi
+
+  # 4. Integridad del Almacén ACID
+  echo ""
+  echo -e "${C_BOLD}4. Almacén Transaccional ACID ($STATE_DIR/mykos)${C_RESET}"
+  if [[ "$fix" -eq 1 ]]; then
+    if node "$STORE_CLI" repair >/dev/null 2>&1; then
+      ok_msg "Almacén ACID verificado y saneado (0 documentos corruptos)"
+    else
+      err_msg "El almacén ACID reportó documentos irrecuperables"
+    fi
+  else
+    if node "$STORE_CLI" verify >/dev/null 2>&1; then
+      ok_msg "Los 8 documentos del almacén ACID superaron la verificación de integridad"
+    else
+      err_msg "Fallo de verificación en el almacén ACID (ejecuta «mykos doctor --fix» o «mykos store repair»)"
+    fi
+  fi
+
+  # 5. Procesos, Puertos y Salud de Servicios
+  echo ""
+  echo -e "${C_BOLD}5. Estado de Procesos, Puertos y Motores Locales${C_RESET}"
+  local port
+  port="$(resolve_port)"
+
+  if [[ -f "$PID_FILE" ]]; then
+    local saved_pid
+    saved_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$saved_pid" ]] && ! kill -0 "$saved_pid" 2>/dev/null; then
+      if [[ "$fix" -eq 1 ]]; then
+        rm -f "$PID_FILE"
+        fix_msg "Eliminado fichero PID huérfano ($PID_FILE -> PID $saved_pid)"
+      else
+        warn_msg "Existe un fichero PID huérfano ($PID_FILE apunta al PID inactivo $saved_pid)"
+      fi
+    fi
+  fi
+
+  # Detectar procesos server.py huérfanos cuando el Gateway está apagado
+  if ! is_running; then
+    local orphan_pids
+    orphan_pids="$(pgrep -f "$GATEWAY_DIR/app/server\.py" || true)"
+    if [[ -n "$orphan_pids" ]]; then
+      if [[ "$fix" -eq 1 ]]; then
+        for op in $orphan_pids; do kill -TERM "$op" 2>/dev/null || true; done
+        fix_msg "Terminados procesos backend Python huérfanos ($orphan_pids)"
+      else
+        warn_msg "Hay procesos server.py huérfanos sin Gateway activo (PIDs: $orphan_pids)"
+      fi
+    fi
+  fi
+
+  if is_running; then
+    if curl -fsS "http://127.0.0.1:$port/mykos-health" >/dev/null 2>&1; then
+      ok_msg "MyKOS Gateway y Backend respondiendo en http://127.0.0.1:$port/mykos-health"
+    else
+      if [[ "$fix" -eq 1 ]]; then
+        cmd_stop >/dev/null 2>&1 || true
+        cmd_start >/dev/null 2>&1 || true
+        fix_msg "MyKOS Gateway reiniciado automáticamente para recuperar /mykos-health"
+      else
+        err_msg "MyKOS Gateway está en ejecución pero /mykos-health no responde (usa «mykos doctor --fix»)"
+      fi
+    fi
+  else
+    if [[ "$fix" -eq 1 ]]; then
+      cmd_start
+      fix_msg "MyKOS Gateway iniciado automáticamente"
+    else
+      warn_msg "MyKOS Gateway está detenido actualmente (inícialo con «mykos start» o «mykos doctor --fix»)"
+    fi
+  fi
+
+  # Motores opcionales del sistema
+  if curl -fsS --max-time 1 "http://127.0.0.1:11434/api/tags" >/dev/null 2>&1; then
+    ok_msg "Motor local Ollama activo en 127.0.0.1:11434"
+  else
+    echo -e "  ${C_DIM}• Ollama no detectado en :11434 (opcional)${C_RESET}"
+  fi
+  if curl -fsS --max-time 1 "http://127.0.0.1:18080/health" >/dev/null 2>&1; then
+    ok_msg "Motor CUDA Strata activo en 127.0.0.1:18080"
+  else
+    echo -e "  ${C_DIM}• Strata server en reposo en :18080 (se gestiona bajo demanda)${C_RESET}"
+  fi
+
+  if [[ "$deep" -eq 1 ]]; then
+    echo ""
+    echo -e "${C_BOLD}6. Verificación Profunda (--deep: suites de pruebas)${C_RESET}"
+    cmd_test
+  fi
+
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  if [[ "$issues" -eq 0 ]]; then
+    echo -e "${C_GREEN}${C_BOLD}✅ Diagnóstico completado: 0 errores críticos${C_RESET} (${fixed} reparaciones aplicadas, ${warnings} avisos)."
+    return 0
+  else
+    echo -e "${C_RED}${C_BOLD}❌ Se detectaron $issues problemas${C_RESET} (${fixed} reparaciones aplicadas, ${warnings} avisos)."
+    echo -e "   Ejecuta ${C_BOLD}mykos doctor --fix${C_RESET} para repararlos automáticamente."
+    return 1
+  fi
+}
+
+cmd_realtime() {
+  local sub="${1:-status}"
+  shift || true
+  local cred_dir="$STATE_DIR/mykos/credentials"
+  local key_file="$cred_dir/openai-realtime-api-key.txt"
+  mkdir -p "$cred_dir"
+  chmod 700 "$cred_dir" 2>/dev/null || true
+
+  case "$sub" in
+    status)
+      if [[ -f "$key_file" ]] && [[ -s "$key_file" ]]; then
+        echo "Credencial OpenAI Realtime: configurada ($key_file)"
+      else
+        echo "Credencial OpenAI Realtime: no configurada (usa «mykos realtime set-key»)"
+      fi
+      ;;
+    set-key)
+      local key="${1:-}"
+      if [[ -z "$key" ]]; then
+        read -r -s -p "Introduce la API key de OpenAI para Realtime (sk-...): " key
+        echo ""
+      fi
+      if [[ -z "$key" ]]; then
+        echo "Error: clave vacía." >&2
+        exit 1
+      fi
+      umask 077
+      printf "%s\n" "$key" > "$key_file"
+      chmod 600 "$key_file"
+      echo "✅ Clave de OpenAI Realtime guardada en $key_file (permisos 0600)."
+      ;;
+    on|off)
+      local port
+      port="$(resolve_port)"
+      local mode="local"
+      [[ "$sub" == "on" ]] && mode="cloud"
+      if curl -fsS -X POST "http://127.0.0.1:$port/api/voice/mode" \
+        -H "Origin: http://127.0.0.1:$port" \
+        -H "Content-Type: application/json" \
+        -d "{\"mode\":\"$mode\"}" >/dev/null 2>&1; then
+        echo "✅ Modo de voz cambiado a «$mode»."
+      else
+        echo "Error: no se pudo cambiar el modo de voz (asegúrate de que MyKOS está en marcha y la credencial existe)." >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "Uso: mykos realtime [status|set-key|on|off]"
+      exit 1
+      ;;
+  esac
+}
+
+cmd_test() {
+  echo "▶ Ejecutando pruebas del Gateway de MyKOS..."
+  (
+    cd "$GATEWAY_DIR/app/gateway-plugin/tests"
+    for t in probe-routes.cjs probe-policy.cjs probe-store.cjs probe-realtime-controller.cjs probe-gemini-live-tools.cjs; do
+      echo "── $t ──"
+      node "$t" | tail -n 3
+    done
+    echo "── test_antigravity_safety.py ──"
+    python3 test_antigravity_safety.py
+  )
+  rm -rf "$GATEWAY_DIR/app/__pycache__" "$GATEWAY_DIR/app/gateway-plugin/tests/__pycache__"
+  echo "✅ Todas las pruebas superadas."
+}
+
+cmd_help() {
+  print_logo "MyKOS CLI · Gestión integral del ecosistema MyKOS"
+  cat <<EOF
+Uso:
+  mykos <comando> [opciones]
+
+Comandos del Gateway y Diagnóstico:
+  run [--port N]            Arranca MyKOS mostrando el logo y los logs en vivo; al cerrar la terminal se para todo
+  start [--port N] [--fg]   Arranca MyKOS Gateway en segundo plano (o en primer plano con --fg)
+  stop                      Detiene MyKOS Gateway y su backend supervisado
+  restart                   Reinicia MyKOS Gateway
+  status                    Muestra el estado de salud del Gateway, Backend, Almacén y Motores
+  doctor [--fix] [--deep]   Diagnostica configuración, permisos, almacén ACID y procesos (--fix repara todo)
+  open                      Abre la interfaz web de MyKOS en el navegador predeterminado
+  logs [-f] [-n N]          Muestra el logo de MyKOS y los registros del Gateway y Backend (-f en vivo)
+  store <subcomando>        Gestiona el almacén ACID (status | verify | repair | export --to <dir> | retire)
+  realtime <subcomando>     Configura voz en la nube (status | set-key | on | off)
+  test                      Ejecuta la batería completa de pruebas de seguridad, rutas, políticas y almacén
+
+Aplicaciones de Escritorio MyKOS:
+  monitor                   Abre MyKOS Monitor (panel en tiempo real de CPU, GPU, RAM, disco y red)
+  analizador                Abre Analizador MyKOS (inspección visual de disco y duplicados)
+EOF
+}
+
+COMMAND="${1:-status}"
+shift || true
+
+# Permitir «mykos gateway <subcomando>» (ej. mykos gateway status, mykos gateway doctor --fix)
+if [[ "$COMMAND" == "gateway" ]]; then
+  COMMAND="${1:-status}"
+  shift || true
+fi
+
+case "$COMMAND" in
+  run|live)
+    cmd_run "$@"
+    ;;
+  start|up|on)
+    cmd_start "$@"
+    ;;
+  stop|down|off)
+    cmd_stop
+    ;;
+  restart)
+    cmd_stop
+    cmd_start "$@"
+    ;;
+  status|health)
+    cmd_status
+    ;;
+  doctor|diag)
+    cmd_doctor "$@"
+    ;;
+  open|ui)
+    PORT="$(resolve_port)"
+    xdg-open "http://127.0.0.1:$PORT" >/dev/null 2>&1 &
+    echo "Abriendo http://127.0.0.1:$PORT ..."
+    ;;
+  logs|log)
+    cmd_logs "$@"
+    ;;
+  store)
+    exec node "$STORE_CLI" "$@"
+    ;;
+  realtime)
+    cmd_realtime "$@"
+    ;;
+  monitor)
+    exec "$MYKOS_ROOT/apps/monitor/mykos-monitor" "$@"
+    ;;
+  analizador)
+    exec "$MYKOS_ROOT/apps/analizador/analizador-mykos" "$@"
+    ;;
+  test|tests|check)
+    cmd_test
+    ;;
+  help|--help|-h)
+    cmd_help
+    ;;
+  *)
+    echo "Comando desconocido: «$COMMAND»" >&2
+    cmd_help
+    exit 1
+    ;;
+esac
