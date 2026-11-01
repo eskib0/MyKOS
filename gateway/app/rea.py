@@ -237,28 +237,61 @@ def rea_list_tools(query: str = "", limit: int = 35) -> dict[str, Any]:
     }
 
 
+def resolve_rea_target(target: str) -> str:
+    """Resuelve un nombre de programa (ej. «ollama», «vibe», «ls») o una ruta a su ruta absoluta real."""
+    raw = (target or "").strip()
+    if not raw:
+        raise ReaError("Debes indicar el nombre del programa o la ruta del archivo a revisar con REA.")
+    expanded = Path(raw).expanduser()
+    if expanded.exists():
+        return str(expanded.resolve())
+    search_path = os.environ.get("PATH", "")
+    extra_dirs = [
+        str(Path.home() / ".local" / "bin"),
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+    ]
+    full_path = os.pathsep.join(extra_dirs + ([search_path] if search_path else []))
+    found = shutil.which(raw, path=full_path)
+    if found:
+        return str(Path(found).resolve())
+    raise ReaError(f"No se encontró el programa o archivo «{raw}» en la ruta indicada ni en el PATH del sistema.")
+
+
 def rea_inspect_binary(path: str) -> dict[str, Any]:
-    """Abre un binario o artefacto local en REA y devuelve su inspección criptográfica y vista general."""
-    clean_path = str(Path(path).expanduser().resolve())
-    if not Path(clean_path).exists():
-        raise ReaError(f"El archivo o ruta no existe: {clean_path}")
+    """Abre un programa, binario o artefacto local en REA y devuelve su inspección criptográfica y cabeceras."""
+    clean_path = resolve_rea_target(path)
+    target_obj = Path(clean_path)
+    if target_obj.is_dir() or target_obj.suffix.lower() in {".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"}:
+        js_res = _SESSION.call_tool(
+            "analyze_javascript_application",
+            {"input_path": clean_path, "detail": "summary"},
+        )
+        return {
+            "ok": js_res.get("ok", True),
+            "target_path": clean_path,
+            "kind": "javascript_application",
+            "analysis": js_res.get("result"),
+        }
+
     opened = _SESSION.call_tool("open_binary", {"path": clean_path})
-    artifact = _SESSION.call_tool("inspect_artifact", {"detail": "standard"})
-    overview = _SESSION.call_tool("binary_overview", {})
+    artifact = _SESSION.call_tool("inspect_artifact", {"detail": "summary"})
+    headers = _SESSION.call_tool("inspect_with_objdump", {"path": clean_path, "operation": "file_headers"})
+    sections = _SESSION.call_tool("inspect_with_objdump", {"path": clean_path, "operation": "section_headers"})
     return {
         "ok": True,
         "target_path": clean_path,
         "open_binary": opened.get("result"),
         "artifact": artifact.get("result"),
-        "overview": overview.get("result"),
+        "file_headers": headers.get("result") if headers.get("ok") else None,
+        "section_headers": sections.get("result") if sections.get("ok") else None,
     }
 
 
 def rea_analyze_javascript(input_path: str, detail: str = "summary") -> dict[str, Any]:
     """Ejecuta ingeniería inversa estática de REA sobre una aplicación JavaScript, TypeScript, Web o Electron."""
-    clean_path = str(Path(input_path).expanduser().resolve())
-    if not Path(clean_path).exists():
-        raise ReaError(f"La ruta no existe: {clean_path}")
+    clean_path = resolve_rea_target(input_path)
     detail_mode = detail if detail in {"summary", "standard", "full"} else "summary"
     return _SESSION.call_tool(
         "analyze_javascript_application",

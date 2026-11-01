@@ -49,7 +49,7 @@ from subagents import SubagentError, list_jobs, prepare_spawn, spawn_approved
 from management import local_status
 from media import MediaError, list_media, media_status, prepare_text_to_speech, text_to_speech_approved
 from nodes import NodeError, list_nodes, pair_node_approved, prepare_pair_node, prepare_revoke_node, revoke_node_approved
-from rea import ReaError, rea_analyze_javascript, rea_call_tool, rea_inspect_binary, rea_list_tools, rea_status
+from rea import ReaError, rea_analyze_javascript, rea_call_tool, rea_inspect_binary, rea_list_tools, rea_status, resolve_rea_target
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -4761,8 +4761,8 @@ def execute_tool(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
         if name == "rea_inspect_binary":
             raw_target = str(arguments.get("path", "") or "").strip()
             if not raw_target:
-                raise ToolError("Debes indicar «path».")
-            target_p = Path(raw_target).expanduser().resolve()
+                raise ToolError("Debes indicar «path» (nombre del programa o ruta al binario).")
+            target_p = Path(resolve_rea_target(raw_target))
             if _is_private_path(target_p):
                 raise ToolError("No se permite inspeccionar directorios privados o credenciales de MyKOS.")
             return rea_inspect_binary(str(target_p))
@@ -4770,7 +4770,7 @@ def execute_tool(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
             raw_target = str(arguments.get("input_path", "") or "").strip()
             if not raw_target:
                 raise ToolError("Debes indicar «input_path».")
-            target_p = Path(raw_target).expanduser().resolve()
+            target_p = Path(resolve_rea_target(raw_target))
             if _is_private_path(target_p):
                 raise ToolError("No se permite analizar directorios privados o credenciales de MyKOS.")
             return rea_analyze_javascript(str(target_p), str(arguments.get("detail", "summary") or "summary"))
