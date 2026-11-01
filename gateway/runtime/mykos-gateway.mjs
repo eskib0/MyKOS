@@ -52,6 +52,11 @@ function loadOrCreateConfig(filePath) {
   if (fs.existsSync(filePath)) {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
   }
+  const venvPython = process.platform === "win32"
+    ? path.join(homeDir, ".mykos", "venv", "Scripts", "python.exe")
+    : path.join(homeDir, ".mykos", "venv", "bin", "python");
+  const defaultPython = process.env.MYKOS_BACKEND_PYTHON
+    || (fs.existsSync(venvPython) ? venvPython : (process.platform === "win32" ? "python" : "python3"));
   const initialConfig = {
     gateway: {
       host: "127.0.0.1",
@@ -81,7 +86,7 @@ function loadOrCreateConfig(filePath) {
             backend: {
               url: `http://127.0.0.1:${Number(process.env.MYKOS_BACKEND_PORT || 3211)}`,
               spawn: true,
-              python: process.env.MYKOS_BACKEND_PYTHON || "python3",
+              python: defaultPython,
               script: path.join(defaultAppDir, "server.py"),
             },
           },

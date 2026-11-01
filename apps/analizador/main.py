@@ -1569,7 +1569,12 @@ class MainWindow(QMainWindow):
 
     def open_path(self, path: str):
         try:
-            subprocess.Popen(["xdg-open", path])
+            if sys.platform == "win32":
+                os.startfile(path)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
         except OSError as e:
             QMessageBox.warning(self, "Error al abrir", str(e))
 

@@ -327,11 +327,12 @@ function resolveConfig(api) {
   const realtimeRaw = raw.realtime && typeof raw.realtime === "object" ? raw.realtime : {};
   const geminiLiveRaw = raw.geminiLive && typeof raw.geminiLive === "object" ? raw.geminiLive : {};
   const storedVoiceMode = String(realtimeRaw.mode || "").trim().toLowerCase();
+  const defaultLlamaBin = process.platform === "win32" ? "llama-server.exe" : "llama-server";
   const model = {
     llamaUrl: String(modelRaw.llamaUrl || process.env.MYKOS_LLAMA_CPP_URL || "http://127.0.0.1:8091").replace(/\/+$/, ""),
     strataUrl: String(modelRaw.strataUrl || process.env.MYKOS_STRATA_URL || process.env.STRATA_URL || "http://127.0.0.1:18080").replace(/\/+$/, ""),
     ollamaUrl: String(modelRaw.ollamaUrl || process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/+$/, ""),
-    llamaExe: String(modelRaw.llamaExe || process.env.MYKOS_LLAMA_CPP_EXE || path.join(os.homedir(), "llama.cpp", "build", "bin", "llama-server")),
+    llamaExe: String(modelRaw.llamaExe || process.env.MYKOS_LLAMA_CPP_EXE || path.join(os.homedir(), "llama.cpp", "build", "bin", defaultLlamaBin)),
     llamaModel: String(modelRaw.llamaModel || process.env.MYKOS_LLAMA_CPP_MODEL || path.join(os.homedir(), ".ollama", "models", "blobs", "sha256-d372de8e934898a59e6ccfabc3368474711384d8f1fd4d22d87a3f0a45400cdc")),
     llamaContext: Number(modelRaw.llamaContext || process.env.MYKOS_LLAMA_CPP_CONTEXT || 32768),
     llamaStartTimeoutMs: Number(modelRaw.llamaStartTimeoutMs || 120000),
@@ -1876,8 +1877,13 @@ export default {
           if (/^(MYKOS_.*TOKEN|.*_API_KEY|.*_SECRET)$/i.test(k)) continue;
           safeEnv[k] = v;
         }
-        const wrapped = `${rawCommand}\n__CMD_EXIT__=$?\necho "___CWD_DELIM___"\npwd\necho "___EXIT_DELIM___"\necho $__CMD_EXIT__`;
-        exec(wrapped, { cwd: clientCwd, shell: "/bin/bash", maxBuffer: 10 * 1024 * 1024, timeout: 60000, env: safeEnv }, (err, stdout = "", stderr = "") => {
+        const isWin = process.platform === "win32";
+        const shellExe = isWin ? "powershell.exe" : "/bin/bash";
+        const wrapped = isWin
+          ? `${rawCommand}\n$__CMD_EXIT__ = $LASTEXITCODE; if ($null -eq $__CMD_EXIT__) { $__CMD_EXIT__ = 0 }\nWrite-Output "___CWD_DELIM___"\n(Get-Location).Path\nWrite-Output "___EXIT_DELIM___"\nWrite-Output $__CMD_EXIT__`
+          : `${rawCommand}\n__CMD_EXIT__=$?\necho "___CWD_DELIM___"\npwd\necho "___EXIT_DELIM___"\necho $__CMD_EXIT__`;
+        exec(wrapped, { cwd: clientCwd, shell: shellExe, maxBuffer: 10 * 1024 * 1024, timeout: 60000, env: safeEnv }, (err, stdout = "", stderr = "") => {
+          stdout = stdout.replace(/\r\n/g, "\n");
           let outputPart = stdout;
           let newCwd = clientCwd;
           let exitCode = 0;

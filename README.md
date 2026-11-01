@@ -1,6 +1,6 @@
 # MyKOS Ecosystem
 
-> **MyKOS**: Plataforma personal de inteligencia artificial, pasarela multimodelo gobernada por políticas, motor de voz bidireccional y suite de aplicaciones nativas para Linux.
+> **MyKOS**: Plataforma personal de inteligencia artificial, pasarela multimodelo gobernada por políticas, motor de voz bidireccional y suite de aplicaciones para **Linux** y **Windows**.
 
 ---
 
@@ -9,8 +9,11 @@
 ```text
 MyKOS/
 ├── bin/
-│   └── mykos                 # CLI unificado de MyKOS (start, stop, status, store, realtime, apps, test)
+│   ├── mykos                 # CLI unificado para Linux (run, start, stop, status, doctor, store, realtime, test)
+│   ├── mykos.ps1             # CLI unificado para Windows PowerShell
+│   └── mykos.cmd             # Lanzador para Windows CMD
 ├── install.sh                # Instalador automático para Linux (venv, enlaces en ~/.local/bin, systemd)
+├── install.ps1               # Instalador automático para Windows (venv, PATH de usuario, acceso directo)
 │
 ├── gateway/                  # MyKOS Gateway: Pasarela multimodelo, autoridad de permisos y Web UI
 │   ├── runtime/              # Servidor HTTP y supervisor nativo en Node.js (mykos-gateway.mjs)
@@ -106,8 +109,9 @@ flowchart LR
 
 ---
 
-## 🛠️ Instalación Rápida
+## 🛠️ Instalación Rápida (Linux y Windows)
 
+### En Linux:
 Ejecuta el instalador incluido en la raíz del proyecto:
 
 ```bash
@@ -121,6 +125,19 @@ cd ~/MyKOS
 3. Enlaza en `~/.local/bin/` el comando maestro **`mykos`** y los lanzadores de escritorio (`mykos-monitor`, `analizador-mykos`).
 4. Instala el icono y acceso directo de escritorio de **MyKOS Monitor**.
 5. *(Opcional)* Con `./install.sh --systemd`, crea y habilita el servicio de usuario `mykos-gateway.service` para que arranque automáticamente con tu sesión.
+
+### En Windows (PowerShell):
+Abre PowerShell en la carpeta del proyecto y ejecuta:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+¿Qué hace `install.ps1`?
+1. Verifica **Node.js (>= 20)** y **Python 3 (>= 3.10)**.
+2. Crea el entorno virtual en `$HOME\.mykos\venv` e instala las dependencias de [`gateway/app/requirements.txt`](gateway/app/requirements.txt).
+3. Añade la carpeta `bin` (`mykos.cmd` / `mykos.ps1`) al `PATH` de tu usuario de Windows.
+4. Crea el acceso directo **MyKOS Live Run** en tu Escritorio.
 
 ---
 
