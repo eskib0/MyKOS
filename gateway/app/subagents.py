@@ -22,7 +22,28 @@ import gateway_store
 ROOT = Path(__file__).resolve().parent
 SUBAGENTS_FILE = ROOT / "data" / "subagents.json"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
-DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.6:latest").strip() or "qwen3.6:latest"
+
+
+def _detect_default_subagent_model() -> str:
+    env_m = os.environ.get("OLLAMA_MODEL", "").strip()
+    if env_m:
+        return env_m
+    try:
+        req = urllib.request.Request(f"{OLLAMA_URL}/api/tags", headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            models = [str(m.get("name") or "") for m in data.get("models", []) if isinstance(m, dict)]
+            for pref in ("qwen3.6:35b", "nemotron-3.5-bolt:latest", "qwen2.5:7b", "lfm2.5:24b"):
+                if pref in models:
+                    return pref
+            if models:
+                return models[0]
+    except Exception:
+        pass
+    return "qwen3.6:35b"
+
+
+DEFAULT_MODEL = _detect_default_subagent_model()
 MAX_PROMPT_CHARS = 12_000
 MAX_JOBS = 100
 MAX_ACTIVE = 3
@@ -93,6 +114,10 @@ def prepare_spawn(arguments: dict[str, Any]) -> dict[str, Any]:
     if len(title) > 160:
         raise SubagentError("El título del subagente es demasiado largo.")
     model = str(arguments.get("model", DEFAULT_MODEL)).strip() or DEFAULT_MODEL
+    if model in {"qwen3.6:latest", "qwen3.6"}:
+        model = "qwen3.6:35b"
+    elif model in {"nemotron:latest", "nemotron"}:
+        model = "nemotron-3.5-bolt:latest"
     if len(model) > 200 or any(char.isspace() for char in model):
         raise SubagentError("El nombre del modelo no es válido.")
     return {"kind": "spawn_subagent", "title": title, "prompt": prompt, "model": model}
