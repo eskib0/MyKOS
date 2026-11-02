@@ -296,7 +296,7 @@ def meta_ai_chat_completion(
     *,
     max_tokens: int = 4096,
     temperature: float = 0.3,
-) -> dict[str, Any]:
+) -> str:
   _ = (max_tokens, temperature)
   session = _load_meta_ai_session()
   if not session:
@@ -322,17 +322,6 @@ def meta_ai_chat_completion(
   if isinstance(new_session, dict) and new_session.get("accessToken"):
     _save_meta_ai_session(new_session)
   text = str(result.get("response") or "").strip()
-  return {
-      "id": f"meta-ai-{int(time.time() * 1000)}",
-      "model": model,
-      "choices": [
-          {
-              "index": 0,
-              "message": {
-                  "role": "assistant",
-                  "content": text,
-              },
-              "finish_reason": "stop",
-          }
-      ],
-  }
+  if not text:
+    raise RuntimeError("Meta AI devolvió una respuesta vacía.")
+  return text
