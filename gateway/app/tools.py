@@ -47,7 +47,15 @@ from automations import (
 )
 from subagents import SubagentError, list_jobs, prepare_spawn, spawn_approved
 from management import local_status
-from media import MediaError, list_media, media_status, prepare_text_to_speech, text_to_speech_approved
+from media import (
+    MediaError,
+    generate_image_approved,
+    list_media,
+    media_status,
+    prepare_generate_image,
+    prepare_text_to_speech,
+    text_to_speech_approved,
+)
 from nodes import NodeError, list_nodes, pair_node_approved, prepare_pair_node, prepare_revoke_node, revoke_node_approved
 from rea import ReaError, rea_analyze_javascript, rea_call_tool, rea_inspect_binary, rea_list_tools, rea_status, resolve_rea_target
 
@@ -162,6 +170,7 @@ SENSITIVE_TOOL_NAMES = {
     "git_remote_push",
     "git_branch",
     "text_to_speech",
+    "generate_image",
     "pair_node",
     "revoke_node",
 }
@@ -1203,6 +1212,26 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "generate_image",
+            "description": "Prepara la generación de una imagen digital en alta definición a partir de una descripción detallada en texto (prompt). Requiere aprobación explícita; guarda el resultado en el almacén multimedia local de MyKOS.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Descripción detallada de la imagen a generar (sujeto, entorno, iluminación, encuadre, estilo fotográfico o artístico)."},
+                    "aspect_ratio": {
+                        "type": "string",
+                        "enum": ["1:1", "16:9", "9:16", "4:3", "3:4"],
+                        "description": "Relación de aspecto deseada para la imagen (por defecto 1:1).",
+                    },
+                },
+                "required": ["prompt"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_nodes",
             "description": "Lista el nodo de escritorio local y los nodos propios emparejados con MyKOS. Solo lectura.",
             "parameters": {
@@ -1646,6 +1675,11 @@ def tool_catalog() -> list[dict[str, str]]:
             "name": "text_to_speech",
             "description": "Prepara síntesis de voz local en WAV.",
             "scope": "Escritura local · requiere aprobación",
+        },
+        {
+            "name": "generate_image",
+            "description": "Prepara la generación de una imagen digital en alta definición a partir de un prompt.",
+            "scope": "Generación multimedia · requiere aprobación",
         },
         {
             "name": "list_nodes",
@@ -4335,6 +4369,8 @@ def prepare_approval_action(name: str, arguments: dict[str, Any] | None) -> dict
             return {"ok": True, "action": prepare_spawn(arguments)}
         if name == "text_to_speech":
             return {"ok": True, "action": prepare_text_to_speech(arguments)}
+        if name == "generate_image":
+            return {"ok": True, "action": prepare_generate_image(arguments)}
         if name == "pair_node":
             return {"ok": True, "action": prepare_pair_node(arguments)}
         if name == "revoke_node":
@@ -4661,6 +4697,8 @@ def execute_approved_action(action: dict[str, Any]) -> dict[str, Any]:
             return spawn_approved(action)
         if kind == "text_to_speech":
             return text_to_speech_approved(action)
+        if kind == "generate_image":
+            return generate_image_approved(action)
         if kind == "pair_node":
             return pair_node_approved(action, endpoint="http://127.0.0.1:3210")
         if kind == "revoke_node":

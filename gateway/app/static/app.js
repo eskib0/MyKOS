@@ -1922,7 +1922,25 @@ function addBubble(role, content, isError = false, sources = [], createdAt = "",
   timestamp.className = "message-timestamp";
   timestamp.textContent = formatMessageTimestamp(createdAt) + (role === "assistant" && model ? " • " + model : "") + (role === "assistant" && meta ? " • " + meta : "");
   const text = document.createElement("div");
-  text.textContent = content;
+  text.className = "message-text";
+  const imgRegex = /!\[([^\]]*)\]\(((?:data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=]+)|(?:https?:\/\/[^\s)]+))\)/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = imgRegex.exec(content)) !== null) {
+    if (match.index > lastIndex) {
+      text.appendChild(document.createTextNode(content.slice(lastIndex, match.index)));
+    }
+    const img = document.createElement("img");
+    img.className = "chat-inline-image";
+    img.alt = match[1] || "Imagen generada";
+    img.src = match[2];
+    img.loading = "lazy";
+    text.appendChild(img);
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < content.length) {
+    text.appendChild(document.createTextNode(content.slice(lastIndex)));
+  }
   bubble.append(label, timestamp, text);
   if (role === "assistant") {
     if (telemetry && (telemetry.tokens_per_second > 0 || telemetry.tokens_out > 0)) {
@@ -3016,6 +3034,8 @@ function renderApprovals() {
       target.textContent = `Subagente: ${approval.title || "Subagente local"} · modelo ${approval.model || "por defecto"}`;
     } else if (approval.kind === "text_to_speech") {
       target.textContent = `Síntesis de voz: ${approval.voice || "voz por defecto"} · ${approval.filename || "audio.wav"}`;
+    } else if (approval.kind === "generate_image") {
+      target.textContent = `Generar imagen: ${approval.prompt || "sin descripción"} (${approval.aspect_ratio || "1:1"})`;
     } else if (approval.kind === "pair_node") {
       target.textContent = `Emparejar nodo: ${approval.name || "sin nombre"} (${approval.node_kind || "node"})`;
     } else if (approval.kind === "revoke_node") {

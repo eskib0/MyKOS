@@ -139,6 +139,7 @@ def allowed_modes(descriptor: dict[str, Any]) -> list[str]:
         "git_remote_pull",
         "git_remote_push",
         "text_to_speech",
+        "generate_image",
         "pair_node",
         "revoke_node",
     }:

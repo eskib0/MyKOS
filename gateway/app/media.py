@@ -14,6 +14,9 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import urllib.error
+import urllib.parse
+import urllib.request
 
 
 ROOT = Path(__file__).resolve().parent
@@ -487,4 +490,78 @@ def text_to_speech_approved(action: dict[str, Any]) -> dict[str, Any]:
         "format": "wav",
         "voice": rendered.get("voice", "em_alex"),
         "external_services": False,
+    }
+
+
+def prepare_generate_image(arguments: dict[str, Any]) -> dict[str, Any]:
+    prompt = str(arguments.get("prompt", "")).strip()
+    if not prompt:
+        raise MediaError("prompt debe contener una descripción de la imagen.")
+    if len(prompt) > 4000:
+        raise MediaError("El prompt no puede superar los 4000 caracteres.")
+    aspect_ratio = str(arguments.get("aspect_ratio", "1:1")).strip()
+    if aspect_ratio not in {"1:1", "16:9", "9:16", "4:3", "3:4"}:
+        aspect_ratio = "1:1"
+    width, height = {
+        "1:1": (1024, 1024),
+        "16:9": (1280, 720),
+        "9:16": (720, 1280),
+        "4:3": (1024, 768),
+        "3:4": (768, 1024),
+    }.get(aspect_ratio, (1024, 1024))
+    filename = f"gen-{uuid.uuid4().hex[:12]}.jpg"
+    return {
+        "kind": "generate_image",
+        "prompt": prompt,
+        "aspect_ratio": aspect_ratio,
+        "width": width,
+        "height": height,
+        "filename": filename,
+    }
+
+
+def generate_image_approved(action: dict[str, Any]) -> dict[str, Any]:
+    prompt = str(action.get("prompt", "")).strip()
+    if not prompt:
+        raise MediaError("Falta la descripción de la imagen.")
+    width = int(action.get("width") or 1024)
+    height = int(action.get("height") or 1024)
+    filename = str(action.get("filename") or f"gen-{uuid.uuid4().hex[:12]}.jpg").strip()
+    if not filename.startswith("gen-") or not filename.endswith(".jpg"):
+        filename = f"gen-{uuid.uuid4().hex[:12]}.jpg"
+    MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    output = MEDIA_DIR / filename
+    encoded_prompt = urllib.parse.quote(prompt)
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "MyKOS-Ecosystem/1.0 (Linux; x86_64)"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            image_bytes = resp.read()
+    except Exception as exc:
+        raise MediaError(f"Error al generar la imagen: {exc}") from exc
+
+    if not image_bytes or len(image_bytes) < 1000:
+        raise MediaError("El motor no devolvió una imagen válida.")
+
+    output.write_bytes(image_bytes)
+    b64_data = base64.b64encode(image_bytes).decode("ascii")
+    data_url = f"data:image/jpeg;base64,{b64_data}"
+    try:
+        relative_path = output.relative_to(ROOT).as_posix()
+    except ValueError:
+        relative_path = output.name
+
+    return {
+        "ok": True,
+        "path": relative_path,
+        "filename": output.name,
+        "bytes": output.stat().st_size,
+        "format": "jpg",
+        "prompt": prompt,
+        "data_url": data_url,
+        "markdown": f"![{prompt}]({data_url})",
+        "message": f"Imagen generada con éxito y guardada en {relative_path}.\n\n![{prompt}]({data_url})",
     }
