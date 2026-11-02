@@ -631,6 +631,7 @@ h1 { margin: 5px 0 0; font-size: 22px; font-weight: 600; }
 .message-row.user { justify-content: flex-end; }
 .message-bubble { max-width: min(calc(var(--chat-max-width, 940px) - 40px), 88%); padding: 14px 17px; border: 1px solid var(--line); border-radius: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-inline-image { max-width: 100%; max-height: 520px; border-radius: 10px; margin: 12px 0 6px; display: block; box-shadow: 0 4px 18px rgba(0, 0, 0, .4); border: 1px solid rgba(127, 151, 166, .35); object-fit: contain; }
+.chat-inline-video { max-width: 100%; max-height: 520px; border-radius: 10px; margin: 12px 0 6px; display: block; box-shadow: 0 4px 18px rgba(0, 0, 0, .4); border: 1px solid rgba(127, 151, 166, .35); object-fit: contain; background: #000; }
 .message-timestamp { margin: 2px 0 9px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
 .message-telemetry { display: inline-flex; align-items: center; gap: 6px; margin-top: 9px; padding: 3px 8px; border-radius: 6px; background: rgba(0, 198, 255, .08); border: 1px solid rgba(0, 198, 255, .2); color: var(--accent); font-size: 11px; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
 .message-row.assistant .message-bubble { background: var(--assistant); border-top-left-radius: 4px; }

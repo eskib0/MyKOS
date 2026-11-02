@@ -586,3 +586,153 @@ def generate_image_approved(action: dict[str, Any]) -> dict[str, Any]:
         "markdown": f"![{prompt}]({web_url})",
         "message": f"Imagen generada con éxito y disponible en {web_url}.\n\n![{prompt}]({web_url})",
     }
+
+
+def prepare_generate_video(arguments: dict[str, Any]) -> dict[str, Any]:
+    prompt = str(arguments.get("prompt", "")).strip()
+    image_url = str(arguments.get("image_url", "") or arguments.get("image_path", "")).strip()
+    if not prompt and not image_url:
+        raise MediaError("Debes indicar una descripción (prompt) o la URL de una imagen para generar el vídeo.")
+    if len(prompt) > 4000:
+        raise MediaError("El prompt no puede superar los 4000 caracteres.")
+
+    duration = int(arguments.get("duration_seconds") or 4)
+    if duration < 2:
+        duration = 2
+    elif duration > 10:
+        duration = 10
+
+    motion = str(arguments.get("motion", "cinematic")).strip().lower()
+    if motion not in {"cinematic", "zoom_in", "zoom_out", "pan_left", "pan_right"}:
+        motion = "cinematic"
+
+    aspect_ratio = str(arguments.get("aspect_ratio", "1:1")).strip()
+    if aspect_ratio not in {"1:1", "16:9", "9:16", "4:3", "3:4"}:
+        aspect_ratio = "1:1"
+
+    filename = f"gen-{uuid.uuid4().hex[:12]}.mp4"
+    return {
+        "kind": "generate_video",
+        "prompt": prompt or "Animación cinemática",
+        "image_url": image_url,
+        "duration_seconds": duration,
+        "motion": motion,
+        "aspect_ratio": aspect_ratio,
+        "filename": filename,
+    }
+
+
+def generate_video_approved(action: dict[str, Any]) -> dict[str, Any]:
+    prompt = str(action.get("prompt", "")).strip()
+    image_url = str(action.get("image_url", "")).strip()
+    duration = int(action.get("duration_seconds") or 4)
+    motion = str(action.get("motion", "cinematic")).strip().lower()
+    aspect_ratio = str(action.get("aspect_ratio", "1:1")).strip()
+    filename = str(action.get("filename") or f"gen-{uuid.uuid4().hex[:12]}.mp4").strip()
+    if not filename.startswith("gen-") or not filename.endswith(".mp4"):
+        filename = f"gen-{uuid.uuid4().hex[:12]}.mp4"
+
+    static_media_dir = ROOT / "static" / "media"
+    static_media_dir.mkdir(parents=True, exist_ok=True)
+    MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+
+    static_output = static_media_dir / filename
+    data_output = MEDIA_DIR / filename
+
+    source_img_path: Path | None = None
+    if image_url:
+        clean_name = Path(image_url).name
+        for candidate_dir in (static_media_dir, MEDIA_DIR):
+            cand = candidate_dir / clean_name
+            if cand.exists() and cand.is_file():
+                source_img_path = cand
+                break
+
+    if not source_img_path or not source_img_path.exists():
+        # Check if there is a recently generated image in static/media to animate if no prompt
+        if not prompt and static_media_dir.exists():
+            recent_imgs = sorted(static_media_dir.glob("gen-*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if recent_imgs:
+                source_img_path = recent_imgs[0]
+
+        if not source_img_path or not source_img_path.exists():
+            img_action = {
+                "prompt": prompt or "futuristic cinematic scene, neon lighting, 8k",
+                "aspect_ratio": aspect_ratio,
+                "model": "flux",
+            }
+            img_result = generate_image_approved(img_action)
+            img_name = img_result.get("filename")
+            if img_name:
+                cand = static_media_dir / img_name
+                if cand.exists():
+                    source_img_path = cand
+
+    if not source_img_path or not source_img_path.exists():
+        raise MediaError("No se pudo obtener o generar la imagen base para el vídeo.")
+
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        raise MediaError("ffmpeg no está instalado en el sistema para renderizar vídeo.")
+
+    width, height = {
+        "1:1": (768, 768),
+        "16:9": (1280, 720),
+        "9:16": (720, 1280),
+        "4:3": (960, 720),
+        "3:4": (720, 960),
+    }.get(aspect_ratio, (768, 768))
+
+    total_frames = duration * 30
+    if motion == "zoom_in":
+        vf = f"zoompan=z='min(zoom+0.0018,1.3)':d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={width}x{height}:fps=30"
+    elif motion == "zoom_out":
+        vf = f"zoompan=z='if(lte(zoom,1.0),1.3,max(1.001,zoom-0.0018))':d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={width}x{height}:fps=30"
+    elif motion == "pan_right":
+        vf = f"zoompan=z=1.2:d={total_frames}:x='min((on/{total_frames})*(iw-iw/zoom),iw-iw/zoom)':y='ih/2-(ih/zoom/2)':s={width}x{height}:fps=30"
+    elif motion == "pan_left":
+        vf = f"zoompan=z=1.2:d={total_frames}:x='max(0,(1-on/{total_frames})*(iw-iw/zoom))':y='ih/2-(ih/zoom/2)':s={width}x{height}:fps=30"
+    else:  # cinematic smooth zoom
+        vf = f"zoompan=z='min(zoom+0.0014,1.22)':d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={width}x{height}:fps=30"
+
+    cmd = [
+        ffmpeg_bin,
+        "-y",
+        "-loop", "1",
+        "-i", str(source_img_path),
+        "-vf", vf,
+        "-t", str(duration),
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        str(static_output),
+    ]
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=60, check=False)
+        if proc.returncode != 0:
+            err_msg = proc.stderr.decode("utf-8", errors="replace")[-500:]
+            raise MediaError(f"Error al codificar el vídeo con ffmpeg: {err_msg}")
+    except subprocess.TimeoutExpired as exc:
+        raise MediaError("El proceso de renderizado de vídeo superó el tiempo límite.") from exc
+
+    try:
+        shutil.copy2(static_output, data_output)
+    except Exception:
+        pass
+
+    web_url = f"/static/media/{filename}"
+    file_bytes = static_output.stat().st_size if static_output.exists() else 0
+    return {
+        "ok": True,
+        "filename": filename,
+        "path": f"static/media/{filename}",
+        "url": web_url,
+        "bytes": file_bytes,
+        "format": "mp4",
+        "duration_seconds": duration,
+        "prompt": prompt,
+        "markdown": f"![video]({web_url})",
+        "message": f"Vídeo generado con éxito y disponible en {web_url}.\n\n![video]({web_url})",
+    }

@@ -290,7 +290,7 @@ def _format_messages_for_meta_ai(messages: list[dict[str, Any]]) -> str:
       parts.append(
           f"[RESULTADO DE HERRAMIENTA EJECUTADA EN EL SERVIDOR MYKOS]\n{text}\n"
           "Instrucción para el asistente: la herramienta se ha ejecutado con éxito en el servidor de MyKOS. "
-          "Si el resultado contiene una imagen o markdown ![...](url), debes incluirla en tu respuesta "
+          "Si el resultado contiene una imagen o vídeo en formato markdown ![...](url), debes incluirla en tu respuesta "
           "exactamente en formato Markdown y presentarla al usuario sin requerir inicio de sesión ni mencionar widgets de Meta AI."
       )
     else:

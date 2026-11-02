@@ -1923,19 +1923,32 @@ function addBubble(role, content, isError = false, sources = [], createdAt = "",
   timestamp.textContent = formatMessageTimestamp(createdAt) + (role === "assistant" && model ? " • " + model : "") + (role === "assistant" && meta ? " • " + meta : "");
   const text = document.createElement("div");
   text.className = "message-text";
-  const imgRegex = /!\[([^\]]*)\]\(((?:data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=]+)|(?:https?:\/\/[^\s)]+)|(?:\/[a-zA-Z0-9_./-]+\.(?:png|jpe?g|webp|gif|svg)))\)/gi;
+  const mediaRegex = /!\[([^\]]*)\]\(((?:data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=]+)|(?:https?:\/\/[^\s)]+)|(?:\/[a-zA-Z0-9_./-]+\.(?:png|jpe?g|webp|gif|svg|mp4|webm)))\)/gi;
   let lastIndex = 0;
   let match;
-  while ((match = imgRegex.exec(content)) !== null) {
+  while ((match = mediaRegex.exec(content)) !== null) {
     if (match.index > lastIndex) {
       text.appendChild(document.createTextNode(content.slice(lastIndex, match.index)));
     }
-    const img = document.createElement("img");
-    img.className = "chat-inline-image";
-    img.alt = match[1] || "Imagen generada";
-    img.src = match[2];
-    img.loading = "lazy";
-    text.appendChild(img);
+    const src = match[2];
+    if (/\.(?:mp4|webm)$/i.test(src)) {
+      const vid = document.createElement("video");
+      vid.className = "chat-inline-video";
+      vid.src = src;
+      vid.controls = true;
+      vid.autoplay = true;
+      vid.loop = true;
+      vid.muted = true;
+      vid.playsInline = true;
+      text.appendChild(vid);
+    } else {
+      const img = document.createElement("img");
+      img.className = "chat-inline-image";
+      img.alt = match[1] || "Imagen generada";
+      img.src = src;
+      img.loading = "lazy";
+      text.appendChild(img);
+    }
     lastIndex = match.index + match[0].length;
   }
   if (lastIndex < content.length) {
@@ -3037,6 +3050,9 @@ function renderApprovals() {
     } else if (approval.kind === "generate_image") {
       const modelTag = approval.model ? ` · ${approval.model}` : " · flux";
       target.textContent = `Generar imagen (${approval.aspect_ratio || "1:1"}${modelTag}): ${approval.prompt || "sin descripción"}`;
+    } else if (approval.kind === "generate_video") {
+      const motionTag = approval.motion ? ` · ${approval.motion}` : " · cinemático";
+      target.textContent = `Generar vídeo (${approval.aspect_ratio || "1:1"}${motionTag}): ${approval.prompt || "sin descripción"}`;
     } else if (approval.kind === "pair_node") {
       target.textContent = `Emparejar nodo: ${approval.name || "sin nombre"} (${approval.node_kind || "node"})`;
     } else if (approval.kind === "revoke_node") {

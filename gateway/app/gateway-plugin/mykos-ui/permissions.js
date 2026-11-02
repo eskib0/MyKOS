@@ -102,7 +102,7 @@ export function allowedModes(descriptor) {
     "run_powershell", "delete_memory", "delete_ollama_model", "git_commit",
     "stop_process", "start_service", "stop_service", "create_reminder",
     "delete_reminder", "spawn_subagent", "git_branch", "git_remote_fetch",
-    "git_remote_pull", "git_remote_push", "text_to_speech", "generate_image", "pair_node", "revoke_node",
+    "git_remote_pull", "git_remote_push", "text_to_speech", "generate_image", "generate_video", "pair_node", "revoke_node",
   ]).has(operation)) return ["once"];
   return ["once", "permanent"];
 }
@@ -450,6 +450,7 @@ function publicApproval(record) {
     spawn_subagent: "Iniciar subagente local",
     text_to_speech: "Generar audio (TTS)",
     generate_image: "Generar imagen (Difusión)",
+    generate_video: "Generar vídeo (Cinemático / MP4)",
     pair_node: "Emparejar nodo",
     revoke_node: "Revocar nodo",
   };

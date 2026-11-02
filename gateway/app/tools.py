@@ -50,9 +50,11 @@ from management import local_status
 from media import (
     MediaError,
     generate_image_approved,
+    generate_video_approved,
     list_media,
     media_status,
     prepare_generate_image,
+    prepare_generate_video,
     prepare_text_to_speech,
     text_to_speech_approved,
 )
@@ -171,6 +173,7 @@ SENSITIVE_TOOL_NAMES = {
     "git_branch",
     "text_to_speech",
     "generate_image",
+    "generate_video",
     "pair_node",
     "revoke_node",
 }
@@ -1237,6 +1240,36 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "generate_video",
+            "description": "Prepara la generación de un vídeo cinemático digital en formato MP4 a partir de una descripción en texto (prompt) o de una imagen generada previamente. Requiere aprobación explícita; guarda el resultado en el almacén multimedia local de MyKOS.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Descripción de la escena o animación a generar en vídeo."},
+                    "image_url": {"type": "string", "description": "URL o ruta opcional de una imagen generada previamente para animarla (por ejemplo '/static/media/gen-xxxx.jpg')."},
+                    "motion": {
+                        "type": "string",
+                        "enum": ["cinematic", "zoom_in", "zoom_out", "pan_left", "pan_right"],
+                        "description": "Tipo de movimiento de cámara: 'cinematic' (zoom suave y deriva tridimensional, por defecto), 'zoom_in', 'zoom_out', 'pan_left' o 'pan_right'.",
+                    },
+                    "duration_seconds": {
+                        "type": "integer",
+                        "description": "Duración del clip de vídeo en segundos (de 2 a 10, por defecto 4).",
+                    },
+                    "aspect_ratio": {
+                        "type": "string",
+                        "enum": ["1:1", "16:9", "9:16", "4:3", "3:4"],
+                        "description": "Relación de aspecto del vídeo (por defecto 1:1).",
+                    },
+                },
+                "required": ["prompt"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_nodes",
             "description": "Lista el nodo de escritorio local y los nodos propios emparejados con MyKOS. Solo lectura.",
             "parameters": {
@@ -1684,6 +1717,11 @@ def tool_catalog() -> list[dict[str, str]]:
         {
             "name": "generate_image",
             "description": "Prepara la generación de una imagen digital en alta definición a partir de un prompt.",
+            "scope": "Generación multimedia · requiere aprobación",
+        },
+        {
+            "name": "generate_video",
+            "description": "Prepara la generación de un vídeo cinemático en MP4 a partir de un prompt o imagen.",
             "scope": "Generación multimedia · requiere aprobación",
         },
         {
@@ -4376,6 +4414,8 @@ def prepare_approval_action(name: str, arguments: dict[str, Any] | None) -> dict
             return {"ok": True, "action": prepare_text_to_speech(arguments)}
         if name == "generate_image":
             return {"ok": True, "action": prepare_generate_image(arguments)}
+        if name == "generate_video":
+            return {"ok": True, "action": prepare_generate_video(arguments)}
         if name == "pair_node":
             return {"ok": True, "action": prepare_pair_node(arguments)}
         if name == "revoke_node":
@@ -4704,6 +4744,8 @@ def execute_approved_action(action: dict[str, Any]) -> dict[str, Any]:
             return text_to_speech_approved(action)
         if kind == "generate_image":
             return generate_image_approved(action)
+        if kind == "generate_video":
+            return generate_video_approved(action)
         if kind == "pair_node":
             return pair_node_approved(action, endpoint="http://127.0.0.1:3210")
         if kind == "revoke_node":
