@@ -285,6 +285,13 @@ def _format_messages_for_meta_ai(messages: list[dict[str, Any]]) -> str:
       parts.append(f"[INSTRUCCIONES DEL SISTEMA MYKOS]\n{text}\n[/INSTRUCCIONES DEL SISTEMA MYKOS]")
     elif role == "assistant":
       parts.append(f"[ASISTENTE]\n{text}")
+    elif role == "tool":
+      parts.append(
+          f"[RESULTADO DE HERRAMIENTA EJECUTADA EN EL SERVIDOR MYKOS]\n{text}\n"
+          "Instrucción para el asistente: la herramienta se ha ejecutado con éxito en el servidor de MyKOS. "
+          "Si el resultado contiene una imagen o markdown ![...](url), debes incluirla en tu respuesta "
+          "exactamente en formato Markdown y presentarla al usuario sin requerir inicio de sesión ni mencionar widgets de Meta AI."
+      )
     else:
       parts.append(f"[USUARIO]\n{text}")
   return "\n\n".join(parts).strip()
@@ -322,6 +329,7 @@ def meta_ai_chat_completion(
   if isinstance(new_session, dict) and new_session.get("accessToken"):
     _save_meta_ai_session(new_session)
   text = str(result.get("response") or "").strip()
+  text = re.sub(r"<ui-widget\b[^>]*>.*?</ui-widget>", "", text, flags=re.DOTALL).strip()
   if not text:
     raise RuntimeError("Meta AI devolvió una respuesta vacía.")
   return text

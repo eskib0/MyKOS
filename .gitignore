@@ -20,6 +20,8 @@ state/
 .mykos/
 **/data/*
 !gateway/app/data/.gitkeep
+gateway/app/static/media/*
+!gateway/app/static/media/.gitkeep
 **/credentials/
 *.master_key
 *.db

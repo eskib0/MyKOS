@@ -529,39 +529,53 @@ def generate_image_approved(action: dict[str, Any]) -> dict[str, Any]:
     filename = str(action.get("filename") or f"gen-{uuid.uuid4().hex[:12]}.jpg").strip()
     if not filename.startswith("gen-") or not filename.endswith(".jpg"):
         filename = f"gen-{uuid.uuid4().hex[:12]}.jpg"
+
+    static_media_dir = ROOT / "static" / "media"
+    static_media_dir.mkdir(parents=True, exist_ok=True)
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
-    output = MEDIA_DIR / filename
+
+    static_output = static_media_dir / filename
+    data_output = MEDIA_DIR / filename
+
     encoded_prompt = urllib.parse.quote(prompt)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true"
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "MyKOS-Ecosystem/1.0 (Linux; x86_64)"},
+        headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        },
     )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            image_bytes = resp.read()
-    except Exception as exc:
-        raise MediaError(f"Error al generar la imagen: {exc}") from exc
+
+    image_bytes: bytes | None = None
+    last_err: Exception | None = None
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                image_bytes = resp.read()
+            if image_bytes and len(image_bytes) >= 1000:
+                break
+        except Exception as exc:
+            last_err = exc
+            time.sleep(1.2)
 
     if not image_bytes or len(image_bytes) < 1000:
-        raise MediaError("El motor no devolvió una imagen válida.")
+        raise MediaError(f"Error al generar la imagen: {last_err or 'el servicio no devolvió datos válidos'}")
 
-    output.write_bytes(image_bytes)
-    b64_data = base64.b64encode(image_bytes).decode("ascii")
-    data_url = f"data:image/jpeg;base64,{b64_data}"
+    static_output.write_bytes(image_bytes)
     try:
-        relative_path = output.relative_to(ROOT).as_posix()
-    except ValueError:
-        relative_path = output.name
+        data_output.write_bytes(image_bytes)
+    except Exception:
+        pass
 
+    web_url = f"/static/media/{filename}"
     return {
         "ok": True,
-        "path": relative_path,
-        "filename": output.name,
-        "bytes": output.stat().st_size,
+        "filename": filename,
+        "path": f"static/media/{filename}",
+        "url": web_url,
+        "bytes": len(image_bytes),
         "format": "jpg",
         "prompt": prompt,
-        "data_url": data_url,
-        "markdown": f"![{prompt}]({data_url})",
-        "message": f"Imagen generada con éxito y guardada en {relative_path}.\n\n![{prompt}]({data_url})",
+        "markdown": f"![{prompt}]({web_url})",
+        "message": f"Imagen generada con éxito y disponible en {web_url}.\n\n![{prompt}]({web_url})",
     }

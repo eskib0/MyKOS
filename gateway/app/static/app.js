@@ -1923,7 +1923,7 @@ function addBubble(role, content, isError = false, sources = [], createdAt = "",
   timestamp.textContent = formatMessageTimestamp(createdAt) + (role === "assistant" && model ? " • " + model : "") + (role === "assistant" && meta ? " • " + meta : "");
   const text = document.createElement("div");
   text.className = "message-text";
-  const imgRegex = /!\[([^\]]*)\]\(((?:data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=]+)|(?:https?:\/\/[^\s)]+))\)/g;
+  const imgRegex = /!\[([^\]]*)\]\(((?:data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=]+)|(?:https?:\/\/[^\s)]+)|(?:\/[a-zA-Z0-9_./-]+\.(?:png|jpe?g|webp|gif|svg)))\)/gi;
   let lastIndex = 0;
   let match;
   while ((match = imgRegex.exec(content)) !== null) {
