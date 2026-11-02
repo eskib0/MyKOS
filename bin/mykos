@@ -783,6 +783,76 @@ PY
   esac
 }
 
+cmd_terminal() {
+  local action="${1:-status}"
+  local cfg_file="$CONFIG_FILE"
+  case "$action" in
+    on|enable|1)
+      python3 -c "
+import json, sys
+cfg_path = sys.argv[1]
+try:
+    with open(cfg_path, 'r', encoding='utf-8') as f:
+        d = json.load(f)
+except Exception:
+    d = {}
+entries = d.setdefault('plugins', {}).setdefault('entries', {}).setdefault('mykos-ui', {}).setdefault('config', {})
+entries.setdefault('terminal', {})['enabled'] = True
+with open(cfg_path, 'w', encoding='utf-8') as f:
+    json.dump(d, f, indent=2, ensure_ascii=False)
+" "$cfg_file"
+      echo -e "${C_GREEN}✅ Terminal web habilitada en la configuración.${C_RESET}"
+      if is_running; then
+        echo -e "${C_YELLOW}↻ Reiniciando MyKOS Gateway para aplicar los cambios...${C_RESET}"
+        cmd_stop >/dev/null 2>&1 || true
+        cmd_start >/dev/null 2>&1 || true
+      fi
+      ;;
+    off|disable|0)
+      python3 -c "
+import json, sys
+cfg_path = sys.argv[1]
+try:
+    with open(cfg_path, 'r', encoding='utf-8') as f:
+        d = json.load(f)
+except Exception:
+    d = {}
+entries = d.setdefault('plugins', {}).setdefault('entries', {}).setdefault('mykos-ui', {}).setdefault('config', {})
+entries.setdefault('terminal', {})['enabled'] = False
+with open(cfg_path, 'w', encoding='utf-8') as f:
+    json.dump(d, f, indent=2, ensure_ascii=False)
+" "$cfg_file"
+      echo -e "${C_YELLOW}🔒 Terminal web desactivada en la configuración.${C_RESET}"
+      if is_running; then
+        echo -e "${C_YELLOW}↻ Reiniciando MyKOS Gateway para aplicar los cambios...${C_RESET}"
+        cmd_stop >/dev/null 2>&1 || true
+        cmd_start >/dev/null 2>&1 || true
+      fi
+      ;;
+    status)
+      local is_on
+      is_on="$(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1], 'r', encoding='utf-8') as f:
+        d = json.load(f)
+    print('1' if d.get('plugins', {}).get('entries', {}).get('mykos-ui', {}).get('config', {}).get('terminal', {}).get('enabled') else '0')
+except Exception:
+    print('0')
+" "$cfg_file")"
+      if [[ "$is_on" == "1" ]] || [[ "${MYKOS_ENABLE_WEB_TERMINAL:-0}" == "1" ]]; then
+        echo -e "${C_GREEN}🟢 Terminal web: HABILITADA${C_RESET}"
+      else
+        echo -e "${C_RED}🔴 Terminal web: DESACTIVADA (seguridad)${C_RESET}"
+      fi
+      echo "Uso: mykos terminal on | off"
+      ;;
+    *)
+      echo "Uso: mykos terminal on | off | status"
+      ;;
+  esac
+}
+
 cmd_help() {
   print_logo "MyKOS CLI · Gestión integral del ecosistema MyKOS"
   cat <<EOF
@@ -796,10 +866,12 @@ Comandos del Gateway y Diagnóstico:
   restart                   Reinicia MyKOS Gateway
   status                    Muestra el estado de salud del Gateway, Backend, Almacén y Motores
   doctor [--fix] [--deep]   Diagnostica configuración, permisos, almacén ACID y procesos (--fix repara todo)
+  terminal [on|off|status]  Habilita o desactiva la terminal interactiva web
   open                      Abre la interfaz web de MyKOS en el navegador predeterminado
   logs [-f] [-n N]          Muestra el logo de MyKOS y los registros del Gateway y Backend (-f en vivo)
   store <subcomando>        Gestiona el almacén ACID (status | verify | repair | export --to <dir> | retire)
   realtime <subcomando>     Configura voz en la nube (status | set-key | on | off)
+  terminal <on|off|status>  Activa o desactiva la terminal interactiva web en la interfaz
   rea <subcomando>          Motor de ingeniería inversa REA (status | tools [filtro] | inspect <archivo>)
   test                      Ejecuta la batería completa de pruebas de seguridad, rutas, políticas y almacén
 
@@ -851,6 +923,9 @@ case "$COMMAND" in
     ;;
   realtime)
     cmd_realtime "$@"
+    ;;
+  terminal)
+    cmd_terminal "$@"
     ;;
   rea)
     cmd_rea "$@"

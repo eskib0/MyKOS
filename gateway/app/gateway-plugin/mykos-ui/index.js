@@ -446,6 +446,9 @@ function resolveConfig(api) {
       model: String(geminiLiveRaw.model || "gemini-3.8-live").trim().slice(0, 120) || "gemini-3.8-live",
       voice: String(geminiLiveRaw.voice || "Puck").trim().slice(0, 80) || "Puck",
     },
+    terminal: {
+      enabled: Boolean(raw.terminal?.enabled === true || process.env.MYKOS_ENABLE_WEB_TERMINAL === "1"),
+    },
     control: {
       enabled: rawControl.enabled !== false,
       token: controlToken,
