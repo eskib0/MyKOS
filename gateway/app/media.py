@@ -510,6 +510,9 @@ def prepare_generate_image(arguments: dict[str, Any]) -> dict[str, Any]:
         "3:4": (768, 1024),
     }.get(aspect_ratio, (1024, 1024))
     filename = f"gen-{uuid.uuid4().hex[:12]}.jpg"
+    model = str(arguments.get("model") or "flux").strip().lower()
+    if model not in {"flux", "flux-realism", "flux-anime", "turbo"}:
+        model = "flux"
     return {
         "kind": "generate_image",
         "prompt": prompt,
@@ -517,6 +520,7 @@ def prepare_generate_image(arguments: dict[str, Any]) -> dict[str, Any]:
         "width": width,
         "height": height,
         "filename": filename,
+        "model": model,
     }
 
 
@@ -529,6 +533,9 @@ def generate_image_approved(action: dict[str, Any]) -> dict[str, Any]:
     filename = str(action.get("filename") or f"gen-{uuid.uuid4().hex[:12]}.jpg").strip()
     if not filename.startswith("gen-") or not filename.endswith(".jpg"):
         filename = f"gen-{uuid.uuid4().hex[:12]}.jpg"
+    model = str(action.get("model") or "flux").strip().lower()
+    if model not in {"flux", "flux-realism", "flux-anime", "turbo"}:
+        model = "flux"
 
     static_media_dir = ROOT / "static" / "media"
     static_media_dir.mkdir(parents=True, exist_ok=True)
@@ -538,7 +545,7 @@ def generate_image_approved(action: dict[str, Any]) -> dict[str, Any]:
     data_output = MEDIA_DIR / filename
 
     encoded_prompt = urllib.parse.quote(prompt)
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true"
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true&model={model}"
     req = urllib.request.Request(
         url,
         headers={

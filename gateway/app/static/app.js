@@ -3035,7 +3035,8 @@ function renderApprovals() {
     } else if (approval.kind === "text_to_speech") {
       target.textContent = `Síntesis de voz: ${approval.voice || "voz por defecto"} · ${approval.filename || "audio.wav"}`;
     } else if (approval.kind === "generate_image") {
-      target.textContent = `Generar imagen: ${approval.prompt || "sin descripción"} (${approval.aspect_ratio || "1:1"})`;
+      const modelTag = approval.model ? ` · ${approval.model}` : " · flux";
+      target.textContent = `Generar imagen (${approval.aspect_ratio || "1:1"}${modelTag}): ${approval.prompt || "sin descripción"}`;
     } else if (approval.kind === "pair_node") {
       target.textContent = `Emparejar nodo: ${approval.name || "sin nombre"} (${approval.node_kind || "node"})`;
     } else if (approval.kind === "revoke_node") {

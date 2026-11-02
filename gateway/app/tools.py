@@ -1213,7 +1213,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "generate_image",
-            "description": "Prepara la generación de una imagen digital en alta definición a partir de una descripción detallada en texto (prompt). Requiere aprobación explícita; guarda el resultado en el almacén multimedia local de MyKOS.",
+            "description": "Prepara la generación de una imagen digital en alta definición mediante difusión fotorrealista (FLUX) a partir de una descripción detallada en texto (prompt). Requiere aprobación explícita; guarda el resultado en el almacén multimedia local de MyKOS.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1222,6 +1222,11 @@ TOOL_SCHEMAS = [
                         "type": "string",
                         "enum": ["1:1", "16:9", "9:16", "4:3", "3:4"],
                         "description": "Relación de aspecto deseada para la imagen (por defecto 1:1).",
+                    },
+                    "model": {
+                        "type": "string",
+                        "enum": ["flux", "flux-realism", "turbo"],
+                        "description": "Modelo de difusión a utilizar: 'flux' (fotorrealismo de máxima fidelidad y detalle, por defecto), 'flux-realism' o 'turbo'.",
                     },
                 },
                 "required": ["prompt"],
