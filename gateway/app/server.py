@@ -61,6 +61,13 @@ from antigravity_cli import (
     enable_antigravity,
     is_antigravity_enabled,
 )
+from meta_ai import (
+    logout_meta_ai_oauth,
+    meta_ai_auth_status,
+    meta_ai_chat_completion,
+    meta_ai_models,
+    start_meta_ai_oauth,
+)
 from gemini_live import create_ephemeral_token
 from automations import start_scheduler, stop_scheduler
 from media import MediaError, kokoro_audio, list_media, media_status, transcribe_audio_file
@@ -210,6 +217,9 @@ GATEWAY_DECISION_ROUTES = {
     ("POST", "/api/oauth/openrouter/refresh"),
     ("POST", "/api/oauth/openrouter/logout"),
     ("GET", "/api/oauth/openrouter/callback"),
+    ("POST", "/api/oauth/meta/start"),
+    ("POST", "/api/oauth/meta/refresh"),
+    ("POST", "/api/oauth/meta/logout"),
     ("POST", "/api/providers/nvidia/connect"),
     ("POST", "/api/providers/nvidia/logout"),
     ("POST", "/api/providers/nvidia/refresh"),
@@ -2050,6 +2060,57 @@ def refresh_openrouter_models() -> dict[str, Any]:
     return {"ok": True, "provider": "openrouter", "authenticated": authenticated, "models": len(models), "error": error}
 
 
+def meta_ai_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool, str]:
+    auth = meta_ai_auth_status()
+    authenticated = bool(auth.get("authenticated"))
+    if not authenticated:
+        return [], False, ""
+    rows = meta_ai_models(force=force)
+    models = [
+        {
+            "name": str(row.get("name", "")).strip(),
+            "label": str(row.get("label") or row.get("name", "")).strip(),
+            "provider": "meta_ai_oauth",
+            "provider_label": "Meta AI · OAuth",
+            "size": 0,
+            "parameter_size": "",
+            "family": "Llama 4 (Meta AI)",
+            "quantization": "",
+            "modified_at": "",
+            "capabilities": ["chat", "completion", "tools", *(["thinking"] if row.get("enable_thinking") else [])],
+            "chat_capable": True,
+            "vision_capable": False,
+            "thinking_capable": bool(row.get("enable_thinking")),
+            "tools_capable": True,
+            "context_length": int(row.get("context_length", 128000)),
+            "remote": True,
+            "remote_host": "Meta AI (gateway.meta.ai DGW) mediante sesión OAuth de MyKOS",
+            "benchmark_capable": False,
+            "auth_method": "Meta AI OAuth (ecto1 / OIDC)",
+            "auth_status": "autenticado",
+            "auth_error": "",
+        }
+        for row in rows
+    ]
+    return models, True, ""
+
+
+def start_meta_ai_login() -> dict[str, Any]:
+    return start_meta_ai_oauth(open_browser=True)
+
+
+def refresh_meta_ai_models() -> dict[str, Any]:
+    models, authenticated, error = meta_ai_model_catalog(force=True)
+    if not authenticated:
+        start_meta_ai_oauth(open_browser=False)
+        models, authenticated, error = meta_ai_model_catalog(force=True)
+    return {"ok": True, "provider": "meta_ai_oauth", "authenticated": authenticated, "models": len(models), "error": error}
+
+
+def logout_meta_ai() -> dict[str, Any]:
+    return logout_meta_ai_oauth()
+
+
 def start_claude_login() -> dict[str, Any]:
     global CLAUDE_LOGIN_PROCESS
     executable = claude_executable_path()
@@ -2254,6 +2315,8 @@ def get_model_catalog() -> tuple[list[dict[str, Any]], str]:
     models.extend(anthropic_catalog)
     antigravity_catalog, _antigravity_authenticated, _antigravity_error = antigravity_model_catalog()
     models.extend(antigravity_catalog)
+    meta_ai_catalog, _meta_ai_authenticated, _meta_ai_error = meta_ai_model_catalog()
+    models.extend(meta_ai_catalog)
     return models, ollama_error
 
 
@@ -2431,6 +2494,12 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
             "La petición se envía directamente al endpoint oficial de Mistral AI con la sesión de Vibe. "
             "Las herramientas de MyKOS se solicitan mediante el protocolo JSON controlado por el servidor."
         )
+    elif provider == "meta_ai_oauth":
+        processing_scope = "remoto a través de Meta AI (gateway.meta.ai) mediante la sesión OAuth de MyKOS"
+        provider_note = (
+            "La petición se envía a Meta AI (Llama 4) mediante la sesión OAuth protegida de MyKOS. "
+            "Las herramientas de MyKOS se solicitan mediante el protocolo JSON controlado por el servidor."
+        )
     elif provider == "antigravity_cli":
         processing_scope = "remoto a través de Antigravity CLI (agy) con la sesión Google aislada de MyKOS"
         provider_note = (
@@ -2456,7 +2525,7 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
     )
     if provider_note:
         prompt += f"\n\n{provider_note}"
-        if provider in {"anthropic_oauth", "openai_codex_oauth", "gemini_api", "openrouter", "nvidia_api", "kimi_api", "mistral_api"}:
+        if provider in {"anthropic_oauth", "openai_codex_oauth", "gemini_api", "openrouter", "nvidia_api", "kimi_api", "mistral_api", "meta_ai_oauth"}:
             prompt += f"\n\n{claude_tool_protocol_prompt(arguments_as_string=provider == 'openai_codex_oauth')}"
     if provider == "llama_cpp":
         prompt += "\n\nLas llamadas de herramientas usan el formato OpenAI-compatible del servidor llama.cpp."
@@ -3981,6 +4050,42 @@ def run_mistral_until_result(
     )
 
 
+def run_meta_ai_until_result(
+    model: str,
+    messages: list[dict[str, Any]],
+    conversation_id: str,
+    supports_vision: bool = False,
+    generation: dict[str, Any] | None = None,
+    activity_id: str | None = None,
+    permission_mode: str = "supervisado",
+) -> dict[str, Any]:
+    if not model.startswith("meta-ai/"):
+        raise RuntimeError(f"Modelo Meta AI no reconocido: {model}")
+    generation = generation if isinstance(generation, dict) else {}
+    speed = str(generation.get("speed", "balanced")).strip().casefold()
+    max_tokens = {"fast": 2048, "balanced": 4096, "quality": 6144, "full": 8192}.get(speed, 4096)
+    creativity = str(generation.get("creativity", "precise")).strip().casefold()
+    temperature = {"precise": 0.2, "balanced": 0.5, "creative": 0.8}.get(creativity, 0.2)
+    return _run_openai_json_tool_loop(
+        model,
+        "meta_ai_oauth",
+        "Meta AI · OAuth",
+        f"{model} · Meta AI mediante sesión OAuth protegida de MyKOS.",
+        messages,
+        conversation_id,
+        lambda req_messages: meta_ai_chat_completion(
+            model,
+            req_messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        ),
+        supports_vision=False,
+        generation=generation,
+        activity_id=activity_id,
+        permission_mode=permission_mode,
+    )
+
+
 def run_model_until_result(
     model: str,
     messages: list[dict[str, Any]],
@@ -3995,6 +4100,7 @@ def run_model_until_result(
     gateway_controls_models = MYKOS_GATEWAY_ENABLED and bool(MYKOS_CONTROL_TOKEN)
     is_remote_model = (
         model.startswith("antigravity/")
+        or model.startswith("meta-ai/")
         or model.startswith("nvidia/")
         or model.startswith("kimi/")
         or model.startswith("gemini/")
@@ -4031,6 +4137,16 @@ def run_model_until_result(
         return run_antigravity_until_result(
             model, messages, conversation_id, supports_vision=supports_vision,
             generation=generation, activity_id=activity_id,
+        )
+    if model.startswith("meta-ai/"):
+        return run_meta_ai_until_result(
+            model,
+            messages,
+            conversation_id,
+            supports_vision=supports_vision,
+            generation=generation,
+            activity_id=activity_id,
+            permission_mode=permission_mode,
         )
     if model.startswith("nvidia/"):
         return run_nvidia_until_result(
@@ -4777,12 +4893,21 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     "error": str(status.get("error") or "")[:300],
                 })
                 return
-            if path == "/mykos-control/openrouter/refresh":
+            if path in {"/mykos-control/openrouter/refresh", "/mykos-control/meta/refresh"}:
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
                 if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
                     self.send_json({"ok": False, "error": "Plano de control no autorizado."}, status=403)
                     return
                 payload = self.read_json()
+                if path == "/mykos-control/meta/refresh":
+                    if payload.get("provider", "meta_ai_oauth") not in {"meta", "meta_ai", "meta_ai_oauth"}:
+                        self.send_json({"ok": False, "error": "Proveedor OAuth no compatible."}, status=400)
+                        return
+                    try:
+                        self.send_json(refresh_meta_ai_models())
+                    except RuntimeError as error:
+                        self.send_json({"ok": False, "error": str(error), "models": 0}, status=502)
+                    return
                 if payload.get("provider", "openrouter") != "openrouter":
                     self.send_json({"ok": False, "error": "Proveedor OAuth no compatible."}, status=400)
                     return
@@ -4830,6 +4955,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 "/mykos-control/oauth/openai/logout",
                 "/mykos-control/oauth/claude/logout",
                 "/mykos-control/oauth/openrouter/logout",
+                "/mykos-control/oauth/meta/logout",
                 "/mykos-control/providers/nvidia/logout",
                 "/mykos-control/providers/kimi/logout",
                 "/mykos-control/providers/gemini/logout",
@@ -4846,6 +4972,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     "/mykos-control/oauth/openai/logout": ({"openai", "openai_codex", "openai_codex_oauth"}, logout_openai),
                     "/mykos-control/oauth/claude/logout": ({"claude", "anthropic", "anthropic_oauth", "claude_oauth"}, logout_claude),
                     "/mykos-control/oauth/openrouter/logout": ({"openrouter", "openrouter_oauth"}, logout_openrouter),
+                    "/mykos-control/oauth/meta/logout": ({"meta", "meta_ai", "meta_ai_oauth"}, logout_meta_ai),
                     "/mykos-control/providers/nvidia/logout": ({"nvidia", "nvidia_api"}, lambda: _logout_nvidia()),
                     "/mykos-control/providers/kimi/logout": ({"kimi", "kimi_api"}, lambda: _logout_kimi()),
                     "/mykos-control/providers/gemini/logout": ({"gemini", "gemini_api"}, lambda: _logout_gemini()),
@@ -5068,7 +5195,12 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     return
                 self.handle_benchmark(payload)
                 return
-            if path in {"/mykos-control/oauth/openai/start", "/mykos-control/oauth/claude/start", "/mykos-control/oauth/openrouter/start"}:
+            if path in {
+                "/mykos-control/oauth/openai/start",
+                "/mykos-control/oauth/claude/start",
+                "/mykos-control/oauth/openrouter/start",
+                "/mykos-control/oauth/meta/start",
+            }:
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
                 if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
                     self.send_json({"ok": False, "error": "Plano de control no autorizado."}, status=403)
@@ -5077,6 +5209,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     "/mykos-control/oauth/openai/start": ({"openai", "openai_codex", "openai_codex_oauth"}, start_openai_login),
                     "/mykos-control/oauth/claude/start": ({"claude", "anthropic", "anthropic_oauth", "claude_oauth"}, start_claude_login),
                     "/mykos-control/oauth/openrouter/start": ({"openrouter", "openrouter_oauth"}, start_openrouter_login),
+                    "/mykos-control/oauth/meta/start": ({"meta", "meta_ai", "meta_ai_oauth"}, start_meta_ai_login),
                 }
                 accepted, action = actions[path]
                 sent_provider = str(payload.get("provider", "")).strip()

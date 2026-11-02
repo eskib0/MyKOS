@@ -15,6 +15,7 @@ function providerFor(model) {
   const value = String(model || "").trim();
   if (value.startsWith("openai-codex-oauth/")) return "openai_codex_oauth";
   if (value.startsWith("openrouter/")) return "openrouter";
+  if (value.startsWith("meta-ai/")) return "meta_ai_oauth";
   if (value.startsWith("nvidia/")) return "nvidia_api";
   if (value.startsWith("kimi/")) return "kimi_api";
   if (value.startsWith("gemini/")) return "gemini_api";

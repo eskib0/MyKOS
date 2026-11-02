@@ -78,7 +78,7 @@ const localNode = () => ({
   capabilities: ["chat", "files", "microphone", "tts"], platform: `${os.type()} ${os.release()}`, pid: process.pid,
   last_seen: utcNow(),
 });
-const REMOTE_MODEL_PREFIXES = ["antigravity/", "nvidia/", "kimi/", "mistral/", "openrouter/", "openai-codex-oauth/", "gemini/", "anthropic/"];
+const REMOTE_MODEL_PREFIXES = ["antigravity/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "openrouter/", "openai-codex-oauth/", "gemini/", "anthropic/"];
 const isRemoteModelName = (name) => REMOTE_MODEL_PREFIXES.some((prefix) => name.startsWith(prefix)) || name === "claude-sonnet-oauth";
 const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 const READY_TIMEOUT_MS = 90_000;
@@ -2151,7 +2151,7 @@ export default {
             };
 
             // — Despacho: local (runChatLoop) o remoto (remoteModel) —
-            const REMOTE_PREFIXES = ["antigravity/", "nvidia/", "kimi/", "mistral/", "gemini/", "openrouter/", "openai-codex-oauth/", "anthropic/"];
+            const REMOTE_PREFIXES = ["antigravity/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "gemini/", "openrouter/", "openai-codex-oauth/", "anthropic/"];
             const isRemote = REMOTE_PREFIXES.some((p) => model.startsWith(p)) || model === "claude-sonnet-oauth" || model === "gpt-live-1-codex";
 
             // — Contexto: mensajes de la conversación → array para el modelo —
@@ -2472,10 +2472,22 @@ export default {
           recordApiResult(200, { owner: "mykos-gateway" });
           return true;
         }
-        if (req.method === "POST" && apiPath === "/api/oauth/openrouter/refresh") {
+        if (req.method === "POST" && ["/api/oauth/openrouter/refresh", "/api/oauth/meta/refresh"].includes(apiPath)) {
+          const isMeta = apiPath === "/api/oauth/meta/refresh";
           let payload = {};
           try { payload = JSON.parse((await readBody(req, 2048)) || "{}"); } catch {
             sendJson(res, 400, { error: "El cuerpo debe ser JSON válido." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
+          }
+          if (isMeta) {
+            if (payload?.provider !== undefined && payload.provider !== "meta" && payload.provider !== "meta_ai_oauth") {
+              sendJson(res, 400, { error: "Proveedor OAuth no compatible." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
+            }
+            const refreshed = await jsonRequest(`${backend.config.url}/mykos-control/meta/refresh`, { provider: "meta_ai_oauth" }, 60_000, { "X-MyKOS-Control-Token": cfg.control.token });
+            const status = refreshed.status >= 400 ? refreshed.status : 503;
+            if (refreshed.status >= 400 || !isObject(refreshed.body)) {
+              sendJson(res, status, { ok: false, error: String(refreshed.body?.error || "No se pudo refrescar Meta AI."), models: 0 }); recordApiResult(status, { owner: "mykos-gateway" }); return true;
+            }
+            sendJson(res, 200, refreshed.body); recordApiResult(200, { owner: "mykos-gateway" }); return true;
           }
           if (payload?.provider !== undefined && payload.provider !== "openrouter") {
             sendJson(res, 400, { error: "Proveedor OAuth no compatible." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
@@ -2487,9 +2499,9 @@ export default {
           }
           sendJson(res, 200, refreshed.body); recordApiResult(200, { owner: "mykos-gateway" }); return true;
         }
-        if (req.method === "POST" && ["/api/oauth/openai/start", "/api/oauth/claude/start", "/api/oauth/openrouter/start"].includes(apiPath)) {
+        if (req.method === "POST" && ["/api/oauth/openai/start", "/api/oauth/claude/start", "/api/oauth/openrouter/start", "/api/oauth/meta/start"].includes(apiPath)) {
           const name = apiPath.split("/")[3];
-          const provider = ({ openai: "openai_codex_oauth", claude: "anthropic_oauth", openrouter: "openrouter" })[name];
+          const provider = ({ openai: "openai_codex_oauth", claude: "anthropic_oauth", openrouter: "openrouter", meta: "meta_ai_oauth" })[name];
           let payload = {};
           try { payload = JSON.parse((await readBody(req, 2048)) || "{}"); } catch {
             sendJson(res, 400, { error: "El cuerpo debe ser JSON válido." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
@@ -2510,11 +2522,11 @@ export default {
           const status = await proxyRequest(req, res, backend.config.url, null, `/mykos-control/oauth/openrouter/callback${apiUrl.search}`, { "x-mykos-control-token": cfg.control.token });
           recordApiResult(status, { owner: "mykos-gateway", internal_path: "/mykos-control/oauth/openrouter/callback" }); return true;
         }
-        if (req.method === "POST" && ["/api/oauth/openai/logout", "/api/oauth/claude/logout", "/api/oauth/openrouter/logout", "/api/providers/nvidia/logout", "/api/providers/kimi/logout", "/api/providers/gemini/logout", "/api/providers/mistral/logout", "/api/providers/anthropic/logout", "/api/providers/antigravity/logout"].includes(apiPath)) {
+        if (req.method === "POST" && ["/api/oauth/openai/logout", "/api/oauth/claude/logout", "/api/oauth/openrouter/logout", "/api/oauth/meta/logout", "/api/providers/nvidia/logout", "/api/providers/kimi/logout", "/api/providers/gemini/logout", "/api/providers/mistral/logout", "/api/providers/anthropic/logout", "/api/providers/antigravity/logout"].includes(apiPath)) {
           const match = apiPath.match(/^\/api\/(oauth|providers)\/([^/]+)\/logout$/);
           const group = match?.[1] || "";
           const name = match?.[2] || "";
-          const provider = ({ openai: "openai_codex_oauth", claude: "anthropic_oauth", openrouter: "openrouter", nvidia: "nvidia_api", kimi: "kimi_api", gemini: "gemini_api", mistral: "mistral_api", anthropic: "anthropic_api", antigravity: "antigravity_cli" })[name];
+          const provider = ({ openai: "openai_codex_oauth", claude: "anthropic_oauth", openrouter: "openrouter", meta: "meta_ai_oauth", nvidia: "nvidia_api", kimi: "kimi_api", gemini: "gemini_api", mistral: "mistral_api", anthropic: "anthropic_api", antigravity: "antigravity_cli" })[name];
           let payload = {};
           try { payload = JSON.parse((await readBody(req, 2048)) || "{}"); } catch {
             sendJson(res, 400, { error: "El cuerpo debe ser JSON válido." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;

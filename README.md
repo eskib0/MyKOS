@@ -27,7 +27,9 @@ MyKOS/
 │   │   ├── gemini.py         # Conector Google AI Studio (Gemini) y tokens efímeros Gemini Live
 │   │   ├── nvidia.py         # Conector NVIDIA NIM y cifrado autenticado mykos-sealed-v1
 │   │   ├── kimi.py           # Conector Kimi API (Moonshot)
-│   │   ├── oauth.py          # Flujos OAuth propios (OpenAI Codex, Claude Code, OpenRouter PKCE)
+│   │   ├── meta_ai.py        # Conector Meta AI OAuth (ecto1 / OIDC) y catálogo Llama 4
+│   │   ├── meta_ai_dgw.mjs   # Puente WebSocket DGW + Protobuf/WASM hacia wss://gateway.meta.ai/ws
+│   │   ├── oauth.py          # Flujos OAuth propios (OpenAI Codex, Claude Code, OpenRouter PKCE, Meta AI)
 │   │   ├── antigravity_cli.py# Adaptador aislado para Antigravity CLI (agy)
 │   │   ├── media.py          # Transcripción Whisper persistente y síntesis de voz local
 │   │   ├── chatterbox_worker.py # Trabajador TTS GPU/CPU Chatterbox Multilingual
@@ -58,11 +60,11 @@ MyKOS separa estrictamente **quién decide y guarda los datos** (el **Gateway en
 
 ```mermaid
 flowchart LR
-    Browser["Navegador Web / UI\nhttp://127.0.0.1:3210"] <--> Gateway["MyKOS Gateway (Node.js)\n• Tabla de 71 rutas (routes.js)\n• 33 políticas HMAC (policy.js)\n• Bucle de chat local (chat-loop.js)\n• Autoridad de permisos y aprobaciones"]
+    Browser["Navegador Web / UI\nhttp://127.0.0.1:3210"] <--> Gateway["MyKOS Gateway (Node.js)\n• Tabla de 74 rutas (routes.js)\n• 36 políticas HMAC (policy.js)\n• Bucle de chat local (chat-loop.js)\n• Autoridad de permisos y aprobaciones"]
     Gateway <--> Store["Almacén ACID (store.js)\n~/.mykos/gateway-state/mykos\n• Revisiones + Copias + Diario SHA-256"]
     Gateway -- "HTTP interno autenticado\n/mykos-control/* + Firma HMAC" --> Worker["Trabajador Python (server.py)\n127.0.0.1:3211 (solo local)"]
     Gateway <--> LocalEngines["Motores Locales GPU/CPU\n• Strata (:18080)\n• llama.cpp (:8091)\n• Ollama (:11434)"]
-    Worker <--> CloudProviders["Proveedores Remotos\n• OpenAI Codex / Realtime\n• Claude OAuth / Anthropic API\n• Mistral Vibe / Gemini / NVIDIA / Kimi / OpenRouter"]
+    Worker <--> CloudProviders["Proveedores Remotos\n• OpenAI Codex / Realtime\n• Claude OAuth / Anthropic API\n• Meta AI OAuth (Llama 4 DGW)\n• Mistral Vibe / Gemini / NVIDIA / Kimi / OpenRouter"]
     Worker <--> LocalVoice["Motores Multimedia Locales\n• Whisper (STT)\n• Chatterbox (TTS GPU/CPU)\n• Kokoro 82M (TTS CPU)"]
 ```
 
@@ -96,6 +98,7 @@ flowchart LR
 | **OpenAI Codex OAuth** | [`oauth.py`](gateway/app/oauth.py) | Sesión OAuth aislada de MyKOS (`~/.mykos/gateway-state/mykos/credentials/openai-codex`) | Modelos `openai-codex-oauth/gpt-5.6-luna` (258K contexto), delegación de razonamiento para llamadas de voz y soporte WebRTC Realtime. |
 | **Google Gemini API** | [`gemini.py`](gateway/app/gemini.py) / [`gemini_live.py`](gateway/app/gemini_live.py) | API Key (`AIza...`) cifrada + Tokens efímeros de un solo uso | Modelos Gemini en chat multimodal y llamadas de voz **Gemini Live** por WebSocket bidireccional sin exponer jamás la API key al navegador. |
 | **NVIDIA NIM / Kimi / OpenRouter** | [`nvidia.py`](gateway/app/nvidia.py), [`kimi.py`](gateway/app/kimi.py), [`oauth.py`](gateway/app/oauth.py) | API Key cifrada (`nvapi-...`, Kimi) / OAuth PKCE (OpenRouter) | Catálogo extendido de modelos remotos con el protocolo unificado de herramientas e integridad de MyKOS. |
+| **Meta AI OAuth (`meta.ai`)** | [`meta_ai.py`](gateway/app/meta_ai.py), [`meta_ai_dgw.mjs`](gateway/app/meta_ai_dgw.mjs) | Sesión OAuth (`ecto1` + OIDC `auth.meta.com`) cifrada con `mykos-sealed-v1` | Conexión directa por WebSocket DGW + Protobuf/WASM a `wss://gateway.meta.ai/ws` para usar `meta-ai/llama-4-fast`, `meta-ai/llama-4-reasoning` (Think Hard) y `meta-ai/meta-ai-assistant` con herramientas gobernadas por MyKOS. |
 | **Antigravity CLI (`agy`)** | [`antigravity_cli.py`](gateway/app/antigravity_cli.py) | Sesión Google propia de `agy` en perfil aislado (`runtime/antigravity-home`) | Consultas de solo texto a modelos Gemini Argon / Claude Opus / GPT-OSS mediante `agy --mode plan --sandbox`, con bloqueo estricto (`deny`) de todas las herramientas del CLI. |
 
 ### 3. Motores de Voz, Audio y Memoria

@@ -30,7 +30,7 @@ const check = (name, ok, detail = "") => results.push({ name, ok: Boolean(ok), d
   const okBody = (method, p, value) => jsonVerdict(method, p, value) === null;
   const reasonOf = (verdict) => (verdict === null ? "(aceptado)" : `${verdict.status}/${verdict.reason}`);
 
-  check(`la tabla de política cubre ${POLICY_TABLE.length} rutas de servicios auxiliares`, POLICY_TABLE.length === 33, `${POLICY_TABLE.length}`);
+  check(`la tabla de política cubre ${POLICY_TABLE.length} rutas de servicios auxiliares`, POLICY_TABLE.length === 36, `${POLICY_TABLE.length}`);
 
   // 1. Benchmark
   check("benchmark: modelo y perfiles válidos se aceptan", okBody("POST", "/api/benchmark", { model: "qwen3:14b", profiles: ["fast", "deep"] }), reasonOf(jsonVerdict("POST", "/api/benchmark", { model: "qwen3:14b", profiles: ["fast", "deep"] })));

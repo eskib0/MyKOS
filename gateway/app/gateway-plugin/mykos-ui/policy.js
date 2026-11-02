@@ -130,6 +130,21 @@ export const POLICY_TABLE = [
     fields: { provider: oauthProvider("openrouter", "openrouter") },
   },
   {
+    method: "POST", path: "/api/oauth/meta/start", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
+    fields: { provider: oauthProvider("meta", "meta_ai_oauth") },
+  },
+  {
+    method: "POST", path: "/api/oauth/meta/refresh", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 12 },
+    fields: { provider: oauthProvider("meta", "meta_ai_oauth") },
+  },
+  {
+    method: "POST", path: "/api/oauth/meta/logout", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
+    fields: { provider: oauthProvider("meta", "meta_ai_oauth") },
+  },
+  {
     method: "GET", path: "/api/oauth/openrouter/callback", group: "credentials",
     body: "none", limits: { concurrent: 2, perMinute: 12 },
     // Lo abre el navegador al volver de OpenRouter: se admiten parámetros desconocidos, pero acotados.

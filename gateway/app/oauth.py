@@ -17,6 +17,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from meta_ai import meta_ai_auth_status, meta_ai_login_state
 from nvidia import _decode_key, _encode_key
 
 ROOT = Path(__file__).resolve().parent
@@ -512,6 +513,8 @@ def oauth_status() -> dict[str, Any]:
             {"id": "openai_codex_oauth_login", **_public_login_state()},
             {"id": "openrouter_oauth", "label": "OpenRouter · OAuth", **openrouter_auth_status()},
             {"id": "openrouter_oauth_login", **_openrouter_public_login_state()},
+            {"id": "meta_ai_oauth", "label": "Meta AI · OAuth", **meta_ai_auth_status()},
+            {"id": "meta_ai_oauth_login", **meta_ai_login_state()},
         ]
     }
 

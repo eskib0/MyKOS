@@ -177,6 +177,11 @@ const elements = {
   oauthOpenrouterRefresh: document.querySelector("#oauth-openrouter-refresh"),
   oauthOpenrouterStatus: document.querySelector("#oauth-openrouter-status"),
   oauthOpenrouterModels: document.querySelector("#oauth-openrouter-models"),
+  oauthMeta: document.querySelector("#oauth-meta"),
+  oauthMetaLogout: document.querySelector("#oauth-meta-logout"),
+  oauthMetaRefresh: document.querySelector("#oauth-meta-refresh"),
+  oauthMetaStatus: document.querySelector("#oauth-meta-status"),
+  oauthMetaModels: document.querySelector("#oauth-meta-models"),
   nvidiaApiRefresh: document.querySelector("#nvidia-api-refresh"),
   nvidiaApiConnect: document.querySelector("#nvidia-api-connect"),
   nvidiaApiLogout: document.querySelector("#nvidia-api-logout"),
@@ -1981,6 +1986,7 @@ function renderOAuthStatus(data = {}) {
   renderProviderDirectory();
   renderClaudeOAuthStatus();
   renderOpenRouterOAuthStatus();
+  renderMetaOAuthStatus();
   renderMistralApiStatus();
   renderAntigravityCliStatus();
   const openai = providers.find((item) => item.id === "openai_codex_oauth") || {};
@@ -2094,6 +2100,35 @@ function renderOpenRouterOAuthStatus() {
   }
 }
 
+function renderMetaOAuthStatus() {
+  if (!elements.oauthMetaStatus) return;
+  const models = state.models.filter((item) => item.provider === "meta_ai_oauth");
+  const oauth = state.oauthProviders.find((item) => item.id === "meta_ai_oauth") || {};
+  const login = state.oauthProviders.find((item) => item.id === "meta_ai_oauth_login") || {};
+  const connected = Boolean(oauth.authenticated) || models.some((item) => item.chat_capable && item.auth_status === "autenticado");
+  if (connected) {
+    elements.oauthMetaStatus.textContent = `Meta AI conectado mediante OAuth (ecto1 / DGW). ${models.length} modelos Llama 4 disponibles.`;
+    elements.oauthMeta.textContent = "Actualizar modelos";
+    elements.oauthMeta.disabled = false;
+    elements.oauthMetaLogout.hidden = false;
+    elements.oauthMetaModels.textContent = models.length
+      ? models.map((item) => item.label || item.name).join(" · ")
+      : "Los modelos de Meta AI aparecerán en el selector principal de Modelo.";
+  } else if (login.running) {
+    elements.oauthMetaStatus.textContent = "Negociando sesión OAuth con Meta AI (meta.ai)…";
+    elements.oauthMeta.textContent = "Conectando…";
+    elements.oauthMeta.disabled = true;
+    elements.oauthMetaLogout.hidden = true;
+    elements.oauthMetaModels.textContent = "Autorizando sesión OAuth y canal DGW con Meta AI.";
+  } else {
+    elements.oauthMetaStatus.textContent = login.error || oauth.error || "Meta AI todavía no está conectado en MyKOS.";
+    elements.oauthMeta.textContent = "Conectar Meta AI OAuth";
+    elements.oauthMeta.disabled = false;
+    elements.oauthMetaLogout.hidden = true;
+    elements.oauthMetaModels.textContent = "Vincula Meta AI (https://www.meta.ai/) por OAuth para usar Llama 4 Fast y Reasoning en el chat.";
+  }
+}
+
 function renderNvidiaApiStatus() {
   if (!elements.nvidiaApiStatus) return;
   const models = state.models.filter((item) => item.provider === "nvidia_api");
@@ -2187,6 +2222,7 @@ function providerLabel(provider, models) {
     gemini_api: "Gemini · API",
     mistral_api: "Mistral · API / Vibe",
     antigravity_cli: "Antigravity CLI · Google",
+    meta_ai_oauth: "Meta AI · OAuth",
   };
   return labels[provider] || models[0]?.provider_label || provider || "Proveedor";
 }
@@ -2320,7 +2356,9 @@ async function logoutOAuth(provider, statusElement, logoutButton) {
   if (!window.confirm(`¿Desconectar ${provider} de MyKOS?`)) return;
   logoutButton.disabled = true;
   try {
-    const payloadProvider = provider === "openai" ? "openai_codex_oauth" : (provider === "claude" ? "anthropic_oauth" : provider);
+    const payloadProvider = provider === "openai"
+      ? "openai_codex_oauth"
+      : (provider === "claude" ? "anthropic_oauth" : (provider === "meta" ? "meta_ai_oauth" : provider));
     await api(`/api/oauth/${provider}/logout`, { method: "POST", body: JSON.stringify({ provider: payloadProvider }) });
     statusElement.textContent = `${provider} desconectado de MyKOS.`;
     await loadModels();
@@ -2409,6 +2447,36 @@ elements.oauthOpenrouterRefresh?.addEventListener("click", async () => {
     await loadModels();
   } catch (error) {
     elements.oauthOpenrouterStatus.textContent = error.message;
+  }
+});
+
+async function startMetaAuth() {
+  if (!elements.oauthMeta) return;
+  elements.oauthMeta.disabled = true;
+  try {
+    const connected = state.models.some((item) => item.provider === "meta_ai_oauth" && item.auth_status === "autenticado");
+    if (connected) {
+      await api("/api/oauth/meta/refresh", { method: "POST", body: JSON.stringify({ provider: "meta_ai_oauth" }) });
+      await loadModels();
+      return;
+    }
+    elements.oauthMetaStatus.textContent = "Conectando OAuth con Meta AI (meta.ai)…";
+    await api("/api/oauth/meta/start", { method: "POST", body: JSON.stringify({ provider: "meta_ai_oauth" }) });
+    await loadModels();
+  } catch (error) {
+    elements.oauthMetaStatus.textContent = error.message;
+    elements.oauthMeta.disabled = false;
+  }
+}
+
+elements.oauthMeta?.addEventListener("click", startMetaAuth);
+elements.oauthMetaLogout?.addEventListener("click", () => logoutOAuth("meta", elements.oauthMetaStatus, elements.oauthMetaLogout));
+elements.oauthMetaRefresh?.addEventListener("click", async () => {
+  try {
+    await api("/api/oauth/meta/refresh", { method: "POST", body: JSON.stringify({ provider: "meta_ai_oauth" }) });
+    await loadModels();
+  } catch (error) {
+    elements.oauthMetaStatus.textContent = error.message;
   }
 });
 elements.nvidiaApiConnect?.addEventListener("click", async () => {
