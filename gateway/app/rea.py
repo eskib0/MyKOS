@@ -18,7 +18,7 @@ from typing import Any
 REA_PACKAGE = os.environ.get("MYKOS_REA_PACKAGE", "rea-agents@6.7.0").strip()
 REA_TIMEOUT_SECONDS = int(os.environ.get("MYKOS_REA_TIMEOUT", "120"))
 
-# Herramientas de REA que ejecutan instrumentación dinámica o modifican dispositivos
+# Herramientas de REA que ejecutan instrumentación dinámica, modifican dispositivos o extraen artefactos
 REA_DYNAMIC_TOOLS = {
     "start_frida_session",
     "load_frida_script",
@@ -30,6 +30,7 @@ REA_DYNAMIC_TOOLS = {
     "execute_rizin_command",
     "cutter_command",
     "push_adb_file",
+    "pull_adb_file",
     "install_adb_package",
     "uninstall_adb_package",
     "start_adb_app",
@@ -43,7 +44,24 @@ REA_DYNAMIC_TOOLS = {
     "observe_web_execution",
     "capture_electron_scenario",
     "capture_browser_scenario",
+    "capture_web_screenshot",
+    "export_web_scripts",
+    "extract_firmware",
+    "export_evidence_bundle",
+    "set_address_name",
+    "set_comment",
+    "set_bookmark",
+    "set_inline_comment",
+    "import_managed_reconstruction",
 }
+
+
+def _clean_subproc_env() -> dict[str, str]:
+    """Sanea el entorno para que paquetes npm o scripts externos no hereden tokens ni claves maestras."""
+    return {
+        k: v for k, v in os.environ.items()
+        if not re.search(r"(TOKEN|KEY|SECRET|PASSWORD|AUTH)", k, re.IGNORECASE)
+    }
 
 
 class ReaError(Exception):
@@ -84,6 +102,7 @@ class _ReaMcpSession:
                 text=True,
                 encoding="utf-8",
                 bufsize=1,
+                env=_clean_subproc_env(),
             )
         except OSError as exc:
             raise ReaError(f"No se pudo arrancar el servidor REA ({' '.join(cmd)}): {exc}") from exc

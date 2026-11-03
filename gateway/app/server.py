@@ -263,6 +263,7 @@ MAX_MESSAGE_CHARS = 12_000
 # proveedores.
 MAX_TOOL_ROUNDS = 32
 TOOL_CONTEXT_NUM_CTX = 16_384
+MAX_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("MYKOS_REQUEST_TIMEOUT_SECONDS", "300") or 300)
 MAX_WEB_SEARCH_CALLS_PER_REQUEST = 2
 MAX_WEB_FETCH_CALLS_PER_REQUEST = 6
 APPROVAL_TTL_SECONDS = 15 * 60
@@ -3022,8 +3023,11 @@ def run_claude_until_result(
     integrity_retries = 0
     source_cards = source_cards_from_messages(working_messages, current_turn_only=True)
     generation = generation if isinstance(generation, dict) else {}
+    request_deadline = time.monotonic() + MAX_REQUEST_TIMEOUT_SECONDS
 
     for tool_round in range(MAX_TOOL_ROUNDS + 1):
+        if time.monotonic() > request_deadline:
+            raise ApiError(408, f"Se superó el tiempo límite de la petición ({MAX_REQUEST_TIMEOUT_SECONDS}s). Abortando.")
         update_activity(
             activity_id,
             status="working",
@@ -3189,7 +3193,10 @@ def run_openai_until_result(
         working_messages = ledger_fn(working_messages)
     integrity_fn = globals().get("integrity_check_answer")
     integrity_retries = 0
+    request_deadline = time.monotonic() + MAX_REQUEST_TIMEOUT_SECONDS
     for tool_round in range(MAX_TOOL_ROUNDS + 1):
+        if time.monotonic() > request_deadline:
+            raise ApiError(408, f"Se superó el tiempo límite de la petición ({MAX_REQUEST_TIMEOUT_SECONDS}s). Abortando.")
         update_activity(
             activity_id,
             status="working",
@@ -3620,8 +3627,11 @@ def _run_openai_json_tool_loop(
     working_messages = inline_verified_ledger(working_messages)
     integrity_retries = 0
     generation = generation if isinstance(generation, dict) else {}
+    request_deadline = time.monotonic() + MAX_REQUEST_TIMEOUT_SECONDS
 
     for tool_round in range(MAX_TOOL_ROUNDS + 1):
+        if time.monotonic() > request_deadline:
+            raise ApiError(408, f"Se superó el tiempo límite de la petición ({MAX_REQUEST_TIMEOUT_SECONDS}s). Abortando.")
         update_activity(
             activity_id,
             status="working",

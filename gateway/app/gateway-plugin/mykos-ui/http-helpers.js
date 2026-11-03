@@ -230,7 +230,20 @@ export async function sendFile(req, res, absPath) {
   });
 }
 
+export function isLoopbackAddress(addr) {
+  if (!addr) return false;
+  const clean = String(addr).toLowerCase().trim();
+  return clean === "127.0.0.1" || clean === "::1" || clean === "::ffff:127.0.0.1" || clean === "localhost";
+}
+
 export function isOwnRequest(req, extraOrigins) {
+  const remote = req.socket?.remoteAddress;
+  // Si la conexión TCP no proviene de loopback (p. ej. peticiones desde la LAN con --host 0.0.0.0),
+  // no se considera petición propia del usuario local sin autenticación previa.
+  if (remote && !isLoopbackAddress(remote)) {
+    return false;
+  }
+
   const port = req.socket?.localPort;
   const hosts = [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
   const host = String(req.headers.host ?? "").toLowerCase();
@@ -395,7 +408,17 @@ export function jsonRequest(urlString, payload, timeoutMs = 900_000, extraHeader
       if (signal.aborted) abort();
       else signal.addEventListener("abort", abort, { once: true });
     }
-    request.on("error", reject);
+    request.on("error", (error) => {
+      resolve({
+        status: 503,
+        body: {
+          ok: false,
+          error: error.code === "ECONNREFUSED" ? "backend_unavailable" : "backend_error",
+          detail: error.message,
+          code: error.code || "REQUEST_FAILED",
+        },
+      });
+    });
     request.end(body);
   });
 }

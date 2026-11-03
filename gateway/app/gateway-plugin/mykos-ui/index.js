@@ -89,8 +89,17 @@ const STABLE_RUN_MS = 60_000;
 // ───────────────────── conversaciones propiedad del Gateway ─────────────────────
 
 function conversationStore(storeRuntime) {
-  const doc = storeRuntime?.store?.get("conversations");
-  return doc && Array.isArray(doc.data?.conversations) ? { store: storeRuntime.store, data: doc.data } : null;
+  try {
+    const doc = storeRuntime?.store?.get("conversations");
+    return doc && Array.isArray(doc.data?.conversations) ? { store: storeRuntime.store, data: doc.data } : null;
+  } catch (error) {
+    return {
+      store: storeRuntime?.store,
+      data: null,
+      error: "store_corrupt",
+      detail: String(error?.message || error),
+    };
+  }
 }
 
 // Medidor visual: no prepara ni envía el chat. Lee exclusivamente la conversación
@@ -148,6 +157,16 @@ async function handleConversationApi(req, res, apiPath, apiUrl, storeRuntime) {
   const ownsPath = apiPath === "/api/conversations" || apiPath === "/api/conversation" || apiPath === "/api/conversations/export" || apiPath === "/api/conversations/new" || apiPath === "/api/conversations/compact" || apiPath === "/api/conversations/messages" || apiPath === "/api/context";
   if (!ownsPath) return false;
   const state = conversationStore(storeRuntime);
+  if (state?.error === "store_corrupt") {
+    sendJson(res, 503, {
+      ok: false,
+      error: "store_corrupt",
+      document: "conversations",
+      detail: state.detail,
+      hint: "El archivo de conversaciones está dañado y no tiene copia de seguridad. Ejecuta: mykos store repair",
+    });
+    return true;
+  }
   if (!state) return false; // modo de compatibilidad sin almacén: conserva el trabajador Python.
   const { store, data } = state;
   try {

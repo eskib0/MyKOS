@@ -39,14 +39,28 @@ echo "============================================================"
 
 # 1. Comprobar requisitos básicos
 if ! command -v node >/dev/null 2>&1; then
-  echo "❌ Error: Node.js (>= 20) no está instalado." >&2
+  echo "❌ Error: Node.js no está instalado. MyKOS requiere Node.js (>= 20)." >&2
   exit 1
 fi
+NODE_MAJOR=$(node -v 2>/dev/null | tr -d 'v' | cut -d. -f1)
+if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 20 ]; then
+  echo "❌ Error: Se detectó Node.js $(node -v). MyKOS requiere Node.js >= 20.0.0." >&2
+  exit 1
+fi
+
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "❌ Error: Python 3 (>= 3.10) no está instalado." >&2
+  echo "❌ Error: Python 3 no está instalado. MyKOS requiere Python 3 (>= 3.10)." >&2
   exit 1
 fi
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+  echo "❌ Error: Se detectó $(python3 --version 2>&1). MyKOS requiere Python >= 3.10." >&2
+  exit 1
+fi
+
 echo "✔ Node.js $(node -v) y $(python3 --version) detectados."
+if [ "$NODE_MAJOR" -lt 22 ]; then
+  echo "ℹ Nota: El motor de ingeniería inversa REA requiere Node.js >= 22.19.0 para herramientas avanzadas."
+fi
 
 # 2. Permisos de ejecución en lanzadores
 chmod 755 "$MYKOS_ROOT/bin/mykos" \

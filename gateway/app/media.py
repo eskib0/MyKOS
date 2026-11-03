@@ -575,6 +575,21 @@ def generate_image_approved(action: dict[str, Any]) -> dict[str, Any]:
                     image_bytes = resp.read()
                 if image_bytes and len(image_bytes) >= 1000:
                     break
+            except urllib.error.HTTPError as exc:
+                last_err = exc
+                if exc.code in {402, 429}:
+                    try:
+                        body = exc.read().decode("utf-8", "ignore")
+                        m = re.search(r"Retry after (\d+)s", body)
+                        wait_sec = int(m.group(1)) if m else 5
+                    except Exception:
+                        wait_sec = 5
+                    if wait_sec <= 10:
+                        time.sleep(wait_sec + 1)
+                    else:
+                        raise MediaError(f"El generador de imágenes tiene un límite de 1 imagen cada 45 segundos. Por favor espera {wait_sec} segundos antes de pedir otra.")
+                else:
+                    time.sleep(1.0)
             except Exception as exc:
                 last_err = exc
                 time.sleep(1.0)

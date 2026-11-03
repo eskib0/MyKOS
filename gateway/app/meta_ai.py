@@ -144,6 +144,10 @@ def _invoke_dgw_bridge(payload: dict[str, Any], timeout: int = 75) -> dict[str, 
       **payload,
       "cacheDir": str(META_AI_DIR),
   }
+  clean_env = {
+      k: v for k, v in os.environ.items()
+      if not re.search(r"(TOKEN|KEY|SECRET|PASSWORD|AUTH)", k, re.IGNORECASE)
+  }
   proc = subprocess.run(
       [node_bin, str(META_AI_DGW_SCRIPT)],
       input=json.dumps(bridge_input, ensure_ascii=False),
@@ -151,6 +155,7 @@ def _invoke_dgw_bridge(payload: dict[str, Any], timeout: int = 75) -> dict[str, 
       text=True,
       timeout=timeout,
       check=False,
+      env=clean_env,
   )
   stdout = (proc.stdout or "").strip()
   if stdout:

@@ -123,6 +123,9 @@ def permission_descriptor(tool_name: str, action: dict[str, Any]) -> dict[str, A
 
 def allowed_modes(descriptor: dict[str, Any]) -> list[str]:
     operation = str(descriptor.get("operation", ""))
+    match = descriptor.get("match", {}) if isinstance(descriptor.get("match"), dict) else {}
+    root = str(match.get("root", ""))
+    path = str(match.get("path", ""))
     if operation in {
         "run_powershell",
         "delete_memory",
@@ -143,7 +146,11 @@ def allowed_modes(descriptor: dict[str, Any]) -> list[str]:
         "generate_video",
         "pair_node",
         "revoke_node",
+        "rea_call_tool",
     }:
+        return ["once"]
+    # Los archivos de código e infraestructura del propio Gateway nunca se auto-conceden de forma permanente
+    if root == "mykos" or path.startswith(("gateway/", "static/", "apps/")) or re.search(r"\.(html|js|mjs|py|sh)$", path, re.IGNORECASE):
         return ["once"]
     return ["once", "permanent"]
 

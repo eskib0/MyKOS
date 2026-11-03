@@ -98,12 +98,18 @@ export function permissionDescriptor(toolName, action) {
 
 export function allowedModes(descriptor) {
   const operation = String(descriptor?.operation || "");
+  const root = String(descriptor?.match?.root || "");
+  const path = String(descriptor?.match?.path || "");
   if (new Set([
     "run_powershell", "delete_memory", "delete_ollama_model", "git_commit",
     "stop_process", "start_service", "stop_service", "create_reminder",
     "delete_reminder", "spawn_subagent", "git_branch", "git_remote_fetch",
-    "git_remote_pull", "git_remote_push", "text_to_speech", "generate_image", "generate_video", "pair_node", "revoke_node",
+    "git_remote_pull", "git_remote_push", "text_to_speech", "generate_image", "generate_video", "pair_node", "revoke_node", "rea_call_tool",
   ]).has(operation)) return ["once"];
+  // Los archivos de código e infraestructura del propio Gateway nunca se auto-conceden de forma permanente
+  if (root === "mykos" || path.startsWith("gateway/") || path.startsWith("static/") || path.startsWith("apps/") || /\.(html|js|mjs|py|sh)$/i.test(path)) {
+    return ["once"];
+  }
   return ["once", "permanent"];
 }
 

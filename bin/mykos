@@ -206,9 +206,11 @@ cmd_run() {
     echo -e "${C_YELLOW}⏹ Cerrando MyKOS Gateway y deteniendo todos los servicios asociados...${C_RESET}"
     [[ -n "$tail_pid" ]] && kill -TERM "$tail_pid" 2>/dev/null || true
     if [[ -n "$gw_pid" ]]; then
+      pkill -TERM -P "$gw_pid" 2>/dev/null || true
       kill -TERM "$gw_pid" 2>/dev/null || true
     fi
     for p in $(pgrep -f "mykos-gateway\.mjs" 2>/dev/null); do
+      pkill -TERM -P "$p" 2>/dev/null || true
       kill -TERM "$p" 2>/dev/null || true
     done
     for _ in {1..20}; do
@@ -217,11 +219,20 @@ cmd_run() {
       fi
       sleep 0.1
     done
-    for op in $(pgrep -f "mykos-gateway\.mjs|$GATEWAY_DIR/app/server\.py" 2>/dev/null); do
+    for op in $(pgrep -f "$GATEWAY_DIR/app/server\.py" 2>/dev/null); do
+      pkill -TERM -P "$op" 2>/dev/null || true
       kill -TERM "$op" 2>/dev/null || true
     done
-    sleep 0.2
+    # Dar margen (hasta 1.5 s) para que Python ejecute sus bloques finally (liberar llama.cpp/CUDA y cerrar sockets)
+    for _ in {1..15}; do
+      if ! pgrep -f "$GATEWAY_DIR/app/server\.py" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.1
+    done
+    # Forzar el cierre definitivo si algún subproceso o worker quedó huérfano
     for op in $(pgrep -f "mykos-gateway\.mjs|$GATEWAY_DIR/app/server\.py" 2>/dev/null); do
+      pkill -KILL -P "$op" 2>/dev/null || true
       kill -KILL "$op" 2>/dev/null || true
     done
     rm -f "$PID_FILE"
