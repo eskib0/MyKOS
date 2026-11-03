@@ -252,11 +252,11 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "root": {
                         "type": "string",
-                        "description": "Raíz autorizada; usa mykos salvo que Usuario indique otra.",
+                        "description": "Raíz autorizada; usa workspace salvo que Usuario indique otra.",
                     },
                     "path": {
                         "type": "string",
-                        "description": "Ruta relativa opcional. Por defecto se guarda en proyectos qwen/web-micologica/investigacion/.",
+                        "description": "Ruta relativa opcional dentro de la raíz (por defecto research/<tema>.md).",
                     },
                     "title": {
                         "type": "string",
@@ -1425,7 +1425,16 @@ class ToolError(Exception):
 
 
 def _load_allowed_roots() -> list[dict[str, Any]]:
-    roots: list[dict[str, Any]] = [{"name": "mykos", "path": PROJECT_ROOT}]
+    workspace_env = os.environ.get("MYKOS_WORKSPACE_DIR") or os.environ.get("MYKOS_GATEWAY_WORKSPACE_DIR")
+    default_ws = Path(workspace_env).expanduser() if workspace_env else (Path.home() / ".mykos" / "workspace")
+    try:
+        default_ws.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError:
+        pass
+    roots: list[dict[str, Any]] = [
+        {"name": "workspace", "path": default_ws.resolve()},
+        {"name": "mykos", "path": PROJECT_ROOT},
+    ]
     try:
         data = json.loads(ALLOWED_ROOTS_FILE.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
@@ -1439,7 +1448,7 @@ def _load_allowed_roots() -> list[dict[str, Any]]:
             continue
         name = str(entry.get("name", "")).strip()
         raw_path = entry.get("path")
-        if not name or name in names or not isinstance(raw_path, str):
+        if not name or not isinstance(raw_path, str):
             continue
         if not name.replace("_", "").replace("-", "").replace(".", "").isalnum() or len(name) > 40:
             continue
@@ -1447,14 +1456,22 @@ def _load_allowed_roots() -> list[dict[str, Any]]:
         if not configured_path.is_absolute():
             continue
         try:
+            if not configured_path.exists() and name == "workspace":
+                configured_path.mkdir(parents=True, exist_ok=True, mode=0o700)
             resolved = configured_path.resolve()
         except OSError:
             continue
         if resolved == Path("/"):
             continue
         if resolved.is_dir() and not resolved.is_symlink():
-            roots.append({"name": name, "path": resolved})
-            names.add(name)
+            if name in names:
+                for r in roots:
+                    if r["name"] == name:
+                        r["path"] = resolved
+                        break
+            else:
+                roots.append({"name": name, "path": resolved})
+                names.add(name)
     return roots
 
 
@@ -1773,15 +1790,20 @@ def _relative_label(path: Path, root_path: Path) -> str:
 
 
 def _resolve_root(root_name: Any) -> tuple[str, Path]:
-    requested = str(root_name or "mykos").strip()
-    for root in _load_allowed_roots():
+    roots = _load_allowed_roots()
+    default_root = roots[0]["name"] if roots else "workspace"
+    requested = str(root_name or default_root).strip()
+    for root in roots:
         if root["name"] == requested:
             return root["name"], root["path"]
-    available = ", ".join(root["name"] for root in _load_allowed_roots())
+    available = ", ".join(root["name"] for root in roots)
     raise ToolError(f"Raíz no autorizada: {requested}. Disponibles: {available}.")
 
 
 def _resolve_project_path(root_name: Any, raw_path: Any, *, allow_root: bool = True) -> tuple[str, Path, Path]:
+    roots = _load_allowed_roots()
+    roots_by_name = {item["name"]: item["path"] for item in roots}
+    workspace_root = roots_by_name.get("workspace")
     selected_name, root_path = _resolve_root(root_name)
     if raw_path is None:
         raw_path = ""
@@ -1794,23 +1816,28 @@ def _resolve_project_path(root_name: Any, raw_path: Any, *, allow_root: bool = T
     candidate = Path(raw_path)
     if candidate.is_absolute():
         raise ToolError("Solo se aceptan rutas relativas a una raíz autorizada.")
+
+    # Si se incluye "workspace" como prefijo de ruta (p. ej. "workspace/research/tema.md"):
+    if candidate.parts and candidate.parts[0].lower() == "workspace":
+        remainder = Path(*candidate.parts[1:]) if len(candidate.parts) > 1 else Path(".")
+        if selected_name == "workspace":
+            candidate = remainder
+        elif selected_name == "mykos" and workspace_root is not None:
+            selected_name = "workspace"
+            root_path = workspace_root
+            candidate = remainder
+
     resolved = (root_path / candidate).resolve()
     try:
         resolved.relative_to(root_path)
     except ValueError as error:
         raise ToolError("La ruta queda fuera de la raíz autorizada.") from error
     if not resolved.exists() and raw_path and ".." not in candidate.parts:
-        roots_by_name = {item["name"]: item["path"] for item in _load_allowed_roots()}
         fallback_attempts: list[tuple[str, Path, Path]] = []
-        if "workspace" not in candidate.parts:
-            fallback_attempts.append((selected_name, root_path, (root_path / "workspace" / candidate).resolve()))
-        if selected_name in {"mykos", "mykos"}:
-            other_name = "mykos" if selected_name == "mykos" else "mykos"
-            other_root = roots_by_name.get(other_name)
-            if other_root is not None:
-                fallback_attempts.append((other_name, other_root, (other_root / candidate).resolve()))
-                if "workspace" not in candidate.parts:
-                    fallback_attempts.append((other_name, other_root, (other_root / "workspace" / candidate).resolve()))
+        other_name = "workspace" if selected_name == "mykos" else "mykos"
+        other_root = roots_by_name.get(other_name)
+        if other_root is not None:
+            fallback_attempts.append((other_name, other_root, (other_root / candidate).resolve()))
         for alt_name, alt_root, alt_path in fallback_attempts:
             try:
                 alt_path.relative_to(alt_root)
@@ -4316,10 +4343,14 @@ def _prepare_save_research_note(arguments: dict[str, Any]) -> dict[str, Any]:
     if len(content.encode("utf-8")) > MAX_WRITE_BYTES:
         raise ToolError(f"La ficha supera el límite de {MAX_WRITE_BYTES} bytes.")
 
-    root = arguments.get("root", "mykos")
+    root = arguments.get("root", "workspace")
     raw_path = arguments.get("path")
     if not isinstance(raw_path, str) or not raw_path.strip():
-        raw_path = f"workspace/research/{_research_slug(title)}.md"
+        raw_path = f"research/{_research_slug(title)}.md"
+    else:
+        raw_path = raw_path.strip()
+        if raw_path.lower().startswith("workspace/"):
+            raw_path = raw_path[len("workspace/"):]
     if not raw_path.lower().endswith(".md"):
         raw_path = f"{raw_path}.md"
     root_name, root_path, file_path = _resolve_project_path(root, raw_path, allow_root=False)

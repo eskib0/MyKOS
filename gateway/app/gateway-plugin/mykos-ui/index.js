@@ -314,6 +314,12 @@ function resolveConfig(api) {
   } catch {}
   gatewayStateDir = gatewayStateDir || process.env.MYKOS_GATEWAY_STATE_DIR || path.join(os.homedir(), ".mykos");
 
+  const workspaceDir = path.resolve(
+    typeof raw.workspaceDir === "string" && raw.workspaceDir.trim()
+      ? raw.workspaceDir.trim()
+      : (api.config?.agents?.defaults?.workspace || process.env.MYKOS_GATEWAY_WORKSPACE_DIR || process.env.MYKOS_WORKSPACE_DIR || path.join(os.homedir(), ".mykos", "workspace"))
+  );
+
   const rawControl = raw.control && typeof raw.control === "object" ? raw.control : {};
   const configuredControlToken = typeof rawControl.token === "string" && rawControl.token.trim()
     ? rawControl.token.trim()
@@ -364,8 +370,10 @@ function resolveConfig(api) {
       MYKOS_PUBLIC_PORT: String(gatewayPort),
       MYKOS_GATEWAY_URL: `http://127.0.0.1:${gatewayPort}`,
       MYKOS_CONTROL_URL: `http://127.0.0.1:${gatewayPort}`,
-       MYKOS_CONTROL_TOKEN: controlToken,
-       MYKOS_CREDENTIALS_DIR: path.join(gatewayStateDir, "mykos", "credentials"),
+      MYKOS_CONTROL_TOKEN: controlToken,
+      MYKOS_CREDENTIALS_DIR: path.join(gatewayStateDir, "mykos", "credentials"),
+      MYKOS_WORKSPACE_DIR: workspaceDir,
+      MYKOS_GATEWAY_WORKSPACE_DIR: workspaceDir,
       MYKOS_BACKEND_ONLY: "1",
       MYKOS_WORKER_GUARD: "1", // el trabajador exige el token del Gateway en todo /api/* (menos /api/health)
       MYKOS_GATEWAY_CHAT_LOOP: chatLoopEnabled ? "1" : "0", // el bucle del modelo local lo ejecuta el Gateway (chat-loop.js)
@@ -408,6 +416,7 @@ function resolveConfig(api) {
   return {
     staticRoot,
     projectDir,
+    workspaceDir,
     gatewayPort,
     backend,
     store,
@@ -2851,7 +2860,7 @@ export default {
           // Escribir en el diario
           const { appendFileSync, mkdirSync } = await import("node:fs");
           const { join } = await import("node:path");
-          const diaryDir = join(cfg.projectDir, "workspace", "memory", "core");
+          const diaryDir = join(cfg.workspaceDir || join(os.homedir(), ".mykos", "workspace"), "memory", "core");
           const diaryFile = join(diaryDir, "diario-mykos.md");
           try {
             mkdirSync(diaryDir, { recursive: true });

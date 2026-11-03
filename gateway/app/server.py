@@ -130,7 +130,9 @@ CONVERSATIONS_FILE = DATA_DIR / "conversations.json"
 APPROVALS_FILE = DATA_DIR / "approvals.json"
 SYSTEM_PROMPT_FILE = CONFIG_DIR / "system_prompt.txt"
 UPLOAD_DIR = DATA_DIR / "uploads"
-MEMORY_CORE_DIR = ROOT / "workspace" / "memory" / "core"
+WORKSPACE_ENV = os.environ.get("MYKOS_WORKSPACE_DIR") or os.environ.get("MYKOS_GATEWAY_WORKSPACE_DIR")
+WORKSPACE_DIR = Path(WORKSPACE_ENV).expanduser().resolve() if WORKSPACE_ENV else (Path.home() / ".mykos" / "workspace").resolve()
+MEMORY_CORE_DIR = WORKSPACE_DIR / "memory" / "core"
 MAX_UPLOAD_REQUEST_BYTES = 32 * 1024 * 1024
 MAX_UPLOAD_FILES = 4
 MAX_TRANSCRIPTION_REQUEST_BYTES = 26 * 1024 * 1024
@@ -617,10 +619,10 @@ Entorno y herramientas:
 - Para modificar un archivo existente, léelo primero con `read_project_file` y usa `edit_project_file` con el fragmento exacto que cambia. Usa `write_project_file` solo para crear archivos nuevos.
 - Tienes dos sistemas de memoria separados:
   (A) Memoria interna rápida (`search_memory`, `read_memory`, `list_memory`, `save_memory`, `delete_memory`) para datos puntuales y hechos cortos.
-  (B) Memoria estructural (`workspace/memory/` en `root: "mykos"` o `root: "workspace"`). Nunca guardes documentos largos con `save_memory`.
+  (B) Memoria estructural y documentos (`root: "workspace"`): guarda notas, fichas de investigación (`research/`), diario (`memory/`) y proyectos del usuario en la raíz `workspace` (~/.mykos/workspace). Nunca guardes documentos en la raíz `mykos` para no ensuciar el repositorio de código.
 - Git: `git_status`, `git_diff`, `git_log` y `git_remote_status` son de solo lectura. `git_commit`, `git_branch`, `git_remote_fetch`, `git_remote_pull` (`--ff-only`) y `git_remote_push` (sin force push) requieren aprobación explícita.
-- Investigación web: haz una búsqueda principal con `web_search`, lee hasta 3 fuentes con `web_fetch` y usa `save_research_note` solo con URLs verificadas por esas herramientas.
-- Raíces autorizadas: usa siempre `root` (por ejemplo `mykos` o `workspace`) y una ruta relativa (`path`)."""
+- Investigación web: haz una búsqueda principal con `web_search`, lee hasta 3 fuentes con `web_fetch` y usa `save_research_note` solo con URLs verificadas por esas herramientas (se guardan por defecto en `root: "workspace"`).
+- Raíces autorizadas: `workspace` (espacio de trabajo independiente para archivos y notas del usuario, por defecto) y `mykos` (código fuente del sistema). Usa siempre `root` y una ruta relativa (`path`)."""
 
 
 def utc_now() -> str:
