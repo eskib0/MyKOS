@@ -4702,7 +4702,7 @@ def _execute_run_shell_posix(action: dict[str, Any], cwd_root: str, cwd_root_pat
     environment = {
         k: v
         for k, v in os.environ.items()
-        if not re.match(r"^(MYKOS_.*TOKEN|.*_API_KEY|.*_SECRET)$", k, flags=re.IGNORECASE)
+        if (not re.search(r"(TOKEN|KEY|SECRET|PASSWORD|AUTH)", k, re.IGNORECASE)) or k in {"SSH_AUTH_SOCK", "GPG_AGENT_INFO"}
     }
     environment.update(_desktop_session_environment())
     # La salida va a ficheros temporales, no a tuberías: un programa gráfico lanzado por el comando

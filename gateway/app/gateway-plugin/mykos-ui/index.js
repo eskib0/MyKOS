@@ -1917,7 +1917,7 @@ export default {
         controlAudit(cfg.control.auditFile, { event: "terminal_exec", cwd: clientCwd, command_preview: rawCommand.slice(0, 120) });
         const safeEnv = {};
         for (const [k, v] of Object.entries(process.env)) {
-          if (/^(MYKOS_.*TOKEN|.*_API_KEY|.*_SECRET)$/i.test(k)) continue;
+          if (/(TOKEN|KEY|SECRET|PASSWORD|AUTH)/i.test(k) && !/^(SSH_AUTH_SOCK|GPG_AGENT_INFO)$/i.test(k)) continue;
           safeEnv[k] = v;
         }
         const isWin = process.platform === "win32";
