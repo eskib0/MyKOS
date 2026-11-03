@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -127,6 +128,15 @@ def media_status() -> dict[str, Any]:
         "local_only": True,
         "engines": {
             "text_to_speech": _text_to_speech_status(),
+            "image_generation": {
+                "available": True,
+                "engine": "FLUX Diffusion (flux, flux-realism, flux-anime, turbo)",
+                "default_model": "flux",
+            },
+            "video_generation": {
+                "available": bool(ffmpeg),
+                "engine": "FFmpeg + FLUX Motion (mp4)",
+            },
             "ffmpeg": {"available": bool(ffmpeg), "executable": ffmpeg},
             "ffprobe": {"available": bool(ffprobe), "executable": ffprobe},
             "transcription_cli": {
@@ -545,25 +555,31 @@ def generate_image_approved(action: dict[str, Any]) -> dict[str, Any]:
     data_output = MEDIA_DIR / filename
 
     encoded_prompt = urllib.parse.quote(prompt)
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true&model={model}"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-        },
-    )
+    models_to_try = [model]
+    if model != "turbo":
+        models_to_try.append("turbo")
 
     image_bytes: bytes | None = None
     last_err: Exception | None = None
-    for attempt in range(2):
-        try:
-            with urllib.request.urlopen(req, timeout=45) as resp:
-                image_bytes = resp.read()
-            if image_bytes and len(image_bytes) >= 1000:
-                break
-        except Exception as exc:
-            last_err = exc
-            time.sleep(1.2)
+    for target_model in models_to_try:
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true&model={target_model}"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            },
+        )
+        for attempt in range(2):
+            try:
+                with urllib.request.urlopen(req, timeout=40) as resp:
+                    image_bytes = resp.read()
+                if image_bytes and len(image_bytes) >= 1000:
+                    break
+            except Exception as exc:
+                last_err = exc
+                time.sleep(1.0)
+        if image_bytes and len(image_bytes) >= 1000:
+            break
 
     if not image_bytes or len(image_bytes) < 1000:
         raise MediaError(f"Error al generar la imagen: {last_err or 'el servicio no devolvió datos válidos'}")

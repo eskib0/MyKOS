@@ -622,6 +622,7 @@ Entorno y herramientas:
   (B) Memoria estructural y documentos (`root: "workspace"`): guarda notas, fichas de investigación (`research/`), diario (`memory/`) y proyectos del usuario en la raíz `workspace` (~/.mykos/workspace). Nunca guardes documentos en la raíz `mykos` para no ensuciar el repositorio de código.
 - Git: `git_status`, `git_diff`, `git_log` y `git_remote_status` son de solo lectura. `git_commit`, `git_branch`, `git_remote_fetch`, `git_remote_pull` (`--ff-only`) y `git_remote_push` (sin force push) requieren aprobación explícita.
 - Investigación web: haz una búsqueda principal con `web_search`, lee hasta 3 fuentes con `web_fetch` y usa `save_research_note` solo con URLs verificadas por esas herramientas (se guardan por defecto en `root: "workspace"`).
+- Multimedia: para generar imágenes usa `generate_image` con motor FLUX; para crear vídeos cinemáticos en MP4 usa `generate_video`. Ambas herramientas están completamente disponibles y requieren aprobación explícita.
 - Raíces autorizadas: `workspace` (espacio de trabajo independiente para archivos y notas del usuario, por defecto) y `mykos` (código fuente del sistema). Usa siempre `root` y una ruta relativa (`path`)."""
 
 
