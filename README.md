@@ -48,7 +48,6 @@ MyKOS/
 │   ├── monitor/              # MyKOS Monitor (GTK4 + Cairo): telemetría en tiempo real de CPU, GPU, RAM, disco y red
 │   └── analizador/           # Analizador MyKOS (PySide6): mapa visual de uso de disco y buscador de duplicados
 │
-├── assets/                   # Recursos gráficos, intro en vídeo y tema de arranque Plymouth (mycos-logo)
 └── docs/                     # Informes técnicos de arquitectura e ingeniería inversa (REA)
 ```
 
