@@ -81,6 +81,12 @@ export function permissionDescriptor(toolName, action) {
       stage_all: Boolean(safe.stage_all),
     };
     summary = `Commit Git · ${resource}`;
+  } else if (kind === "rea_call_tool") {
+    category = "rea";
+    const toolName = String(safe.tool_name || safe.tool || "").trim();
+    resource = toolName;
+    match = { kind, tool_name: toolName, arguments: safe.arguments || {} };
+    summary = `REA · ${toolName}`;
   } else {
     match = Object.fromEntries(Object.entries(safe).filter(([key]) => key !== "content"));
     if (!Object.hasOwn(match, "kind")) match.kind = kind;
@@ -93,13 +99,18 @@ export function permissionDescriptor(toolName, action) {
     operation: kind,
     summary,
     scope_key: scopeKey(match),
+    match,
   };
 }
 
 export function allowedModes(descriptor) {
   const operation = String(descriptor?.operation || "");
-  const root = String(descriptor?.match?.root || "");
-  const path = String(descriptor?.match?.path || "");
+  const match = descriptor?.match || {};
+  const root = String(match.root || (descriptor?.resource || "").split("/")[0] || "");
+  const path = String(match.path || (descriptor?.resource || "").split("/").slice(1).join("/") || "");
+  const resource = String(descriptor?.resource || "");
+  const category = String(descriptor?.category || "");
+
   if (new Set([
     "run_powershell", "delete_memory", "delete_ollama_model", "git_commit",
     "stop_process", "start_service", "stop_service", "create_reminder",
@@ -107,8 +118,10 @@ export function allowedModes(descriptor) {
     "git_remote_pull", "git_remote_push", "text_to_speech", "generate_image", "generate_video", "pair_node", "revoke_node", "rea_call_tool",
   ]).has(operation)) return ["once"];
   // Los archivos de código e infraestructura del propio Gateway nunca se auto-conceden de forma permanente
-  if (root === "mykos" || path.startsWith("gateway/") || path.startsWith("static/") || path.startsWith("apps/") || /\.(html|js|mjs|py|sh)$/i.test(path)) {
-    return ["once"];
+  if (category === "filesystem" || ["write_file", "edit_file"].includes(operation)) {
+    if (root === "mykos" || resource.startsWith("mykos/") || path.startsWith("gateway/") || path.startsWith("static/") || path.startsWith("apps/") || /\.(html|js|mjs|py|sh)$/i.test(path || resource)) {
+      return ["once"];
+    }
   }
   return ["once", "permanent"];
 }

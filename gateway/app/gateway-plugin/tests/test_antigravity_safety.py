@@ -34,5 +34,26 @@ class SafetyTests(unittest.TestCase):
         route = source[source.index('if (req.method === "POST" && apiPath === "/api/chat")'):]
         self.assertIn('"antigravity/"', route[:route.index('result = await worker.remoteModel')])
 
+    def test_allowed_modes_core_files_deny_permanent(self):
+        import permissions
+        desc_core = permissions.permission_descriptor("write_project_file", {"kind": "write_file", "root": "mykos", "path": "server.py"})
+        self.assertEqual(permissions.allowed_modes(desc_core), ["once"])
+        desc_user = permissions.permission_descriptor("write_project_file", {"kind": "write_file", "root": "workspace", "path": "notes.txt"})
+        self.assertEqual(permissions.allowed_modes(desc_user), ["once", "permanent"])
+        desc_rea = permissions.permission_descriptor("rea_call_tool", {"kind": "rea_call_tool", "tool_name": "gdb_console"})
+        self.assertEqual(permissions.allowed_modes(desc_rea), ["once"])
+
+    def test_rea_call_tool_is_sensitive(self):
+        import tools
+        self.assertIn("rea_call_tool", tools.SENSITIVE_TOOL_NAMES)
+        res = tools.execute_tool("rea_call_tool", {"tool_name": "gdb_console"})
+        self.assertTrue(res.get("requires_approval"))
+
+    def test_gateway_chat_and_context_handle_store_corrupt(self):
+        source = (ROOT / 'gateway-plugin/mykos-ui/index.js').read_text()
+        self.assertIn('convState?.error === "store_corrupt"', source)
+        self.assertIn('state?.error === "store_corrupt"', source)
+        self.assertIn('"store_corrupt"', source)
+
 if __name__ == '__main__':
     unittest.main()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -108,6 +109,12 @@ def permission_descriptor(tool_name: str, action: dict[str, Any]) -> dict[str, A
             "stage_all": bool(action.get("stage_all", False)),
         })
         summary = f"Commit Git · {resource}"
+    elif kind == "rea_call_tool":
+        category = "rea"
+        tool_name = str(action.get("tool_name", "")).strip()
+        resource = tool_name
+        match.update({"tool_name": tool_name, "arguments": action.get("arguments", {})})
+        summary = f"REA · {tool_name}"
     else:
         match = {key: value for key, value in action.items() if key != "content"}
         summary = f"{kind} · acción exacta"
@@ -118,14 +125,18 @@ def permission_descriptor(tool_name: str, action: dict[str, Any]) -> dict[str, A
         "operation": kind,
         "summary": summary,
         "scope_key": _key(match),
+        "match": match,
     }
 
 
 def allowed_modes(descriptor: dict[str, Any]) -> list[str]:
     operation = str(descriptor.get("operation", ""))
-    match = descriptor.get("match", {}) if isinstance(descriptor.get("match"), dict) else {}
-    root = str(match.get("root", ""))
-    path = str(match.get("path", ""))
+    match = descriptor.get("match") if isinstance(descriptor.get("match"), dict) else {}
+    resource = str(descriptor.get("resource", ""))
+    parts = resource.split("/", 1)
+    root = str(match.get("root", "") or (parts[0] if len(parts) > 0 else ""))
+    path = str(match.get("path", "") or (parts[1] if len(parts) > 1 else ""))
+    category = str(descriptor.get("category", ""))
     if operation in {
         "run_powershell",
         "delete_memory",
@@ -150,8 +161,9 @@ def allowed_modes(descriptor: dict[str, Any]) -> list[str]:
     }:
         return ["once"]
     # Los archivos de código e infraestructura del propio Gateway nunca se auto-conceden de forma permanente
-    if root == "mykos" or path.startswith(("gateway/", "static/", "apps/")) or re.search(r"\.(html|js|mjs|py|sh)$", path, re.IGNORECASE):
-        return ["once"]
+    if category == "filesystem" or operation in {"write_file", "edit_file"}:
+        if root == "mykos" or resource.startswith("mykos/") or path.startswith(("gateway/", "static/", "apps/")) or re.search(r"\.(html|js|mjs|py|sh)$", path or resource, re.IGNORECASE):
+            return ["once"]
     return ["once", "permanent"]
 
 

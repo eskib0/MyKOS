@@ -176,6 +176,7 @@ SENSITIVE_TOOL_NAMES = {
     "generate_video",
     "pair_node",
     "revoke_node",
+    "rea_call_tool",
 }
 MEMORY_LOCK = threading.RLock()
 GIT_LOCK = threading.RLock()
@@ -4400,6 +4401,19 @@ def _prepare_run_powershell(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _prepare_rea_call_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+    tool_name = str(arguments.get("tool_name", "")).strip()
+    tool_args = arguments.get("arguments") if isinstance(arguments.get("arguments"), dict) else {}
+    if not tool_name:
+        raise ToolError("Debes indicar el nombre de la herramienta de REA (tool_name).")
+    return {
+        "kind": "rea_call_tool",
+        "tool_name": tool_name,
+        "arguments": tool_args,
+        "summary": f"Ejecutar herramienta REA · {tool_name}",
+    }
+
+
 def prepare_approval_action(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
     arguments = arguments if isinstance(arguments, dict) else {}
     try:
@@ -4451,6 +4465,8 @@ def prepare_approval_action(name: str, arguments: dict[str, Any] | None) -> dict
             return {"ok": True, "action": prepare_pair_node(arguments)}
         if name == "revoke_node":
             return {"ok": True, "action": prepare_revoke_node(arguments)}
+        if name == "rea_call_tool":
+            return {"ok": True, "action": _prepare_rea_call_tool(arguments)}
         return {"ok": False, "error": f"No existe una acción aprobable llamada: {name}"}
     except ToolError as error:
         return {"ok": False, "error": str(error)}
@@ -4781,6 +4797,10 @@ def execute_approved_action(action: dict[str, Any]) -> dict[str, Any]:
             return pair_node_approved(action, endpoint="http://127.0.0.1:3210")
         if kind == "revoke_node":
             return revoke_node_approved(action)
+        if kind == "rea_call_tool":
+            t_name = str(action.get("tool_name", "")).strip()
+            t_args = action.get("arguments") if isinstance(action.get("arguments"), dict) else {}
+            return rea_call_tool(t_name, t_args, allow_dynamic=True)
         return {"ok": False, "error": f"Tipo de acción desconocido: {kind}"}
     except ToolError as error:
         return {"ok": False, "error": str(error)}

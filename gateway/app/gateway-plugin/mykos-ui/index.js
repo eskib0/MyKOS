@@ -106,7 +106,19 @@ function conversationStore(storeRuntime) {
 // canónica del almacén del Gateway y estima el presupuesto seleccionado en la UI.
 function contextMeter(apiUrl, storeRuntime, cfg) {
   const state = conversationStore(storeRuntime);
-  if (!state) return { status: 503, body: { error: "El almacén de conversaciones del Gateway no está disponible." } };
+  if (state?.error === "store_corrupt") {
+    return {
+      status: 503,
+      body: {
+        ok: false,
+        error: "store_corrupt",
+        document: "conversations",
+        detail: state.detail,
+        hint: "El archivo de conversaciones está dañado y no tiene copia de seguridad. Ejecuta: mykos store repair",
+      },
+    };
+  }
+  if (!state || !state.data) return { status: 503, body: { error: "El almacén de conversaciones del Gateway no está disponible." } };
   const id = String(apiUrl.searchParams.get("id") || "").trim();
   const conversation = id ? conversationById(state.data, id) : null;
   if (id && !conversation) return { status: 400, body: { error: "Conversación no encontrada." } };
@@ -724,7 +736,7 @@ class ControlPlane {
           message.message_id = randomUUID().replace(/-/g, "");
         }
         const convState = conversationStore(this.storeRuntime);
-        if (convState) {
+        if (convState && convState.data) {
           const { store: convStoreObj, data: convData } = convState;
           const conv = conversationById(convData, conversationId);
           if (conv) {
@@ -2114,7 +2126,18 @@ export default {
 
             // — Conversación del almacén —
             const convState = conversationStore(storeRuntime);
-            if (!convState) {
+            if (convState?.error === "store_corrupt") {
+              sendJson(res, 503, {
+                ok: false,
+                error: "store_corrupt",
+                document: "conversations",
+                detail: convState.detail,
+                hint: "El archivo de conversaciones está dañado y no tiene copia de seguridad. Ejecuta: mykos store repair",
+              });
+              recordApiResult(503, { owner: "mykos-gateway" });
+              return true;
+            }
+            if (!convState || !convState.data) {
               sendJson(res, 503, { error: "El almacén de conversaciones del Gateway no está disponible." });
               recordApiResult(503, { owner: "mykos-gateway" });
               return true;
