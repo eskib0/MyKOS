@@ -146,7 +146,7 @@ def _invoke_dgw_bridge(payload: dict[str, Any], timeout: int = 75) -> dict[str, 
   }
   clean_env = {
       k: v for k, v in os.environ.items()
-      if not re.search(r"(MYKOS_.*TOKEN|.*_API_KEY|MYKOS_STORE_TOKEN|.*_SECRET|.*_PASSWORD|.*_MASTER_KEY)", k, re.IGNORECASE)
+      if not re.search(r"(TOKEN|KEY|SECRET|PASSWORD|AUTH)", k, re.IGNORECASE)
   }
   proc = subprocess.run(
       [node_bin, str(META_AI_DGW_SCRIPT)],

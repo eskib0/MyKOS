@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -60,7 +61,7 @@ def _clean_subproc_env() -> dict[str, str]:
     """Sanea el entorno para que paquetes npm o scripts externos no hereden tokens ni claves maestras."""
     return {
         k: v for k, v in os.environ.items()
-        if not re.search(r"(MYKOS_.*TOKEN|.*_API_KEY|MYKOS_STORE_TOKEN|.*_SECRET|.*_PASSWORD|.*_MASTER_KEY)", k, re.IGNORECASE)
+        if not re.search(r"(TOKEN|KEY|SECRET|PASSWORD|AUTH)", k, re.IGNORECASE)
     }
 
 

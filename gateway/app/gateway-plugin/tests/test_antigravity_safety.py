@@ -55,5 +55,29 @@ class SafetyTests(unittest.TestCase):
         self.assertIn('state?.error === "store_corrupt"', source)
         self.assertIn('"store_corrupt"', source)
 
+    def test_rea_clean_subproc_env_scrubbing(self):
+        import rea
+        with patch.dict(rea.os.environ, {
+            "GITHUB_TOKEN": "gh_secret_123",
+            "NPM_TOKEN": "npm_secret_456",
+            "AWS_ACCESS_KEY_ID": "aws_secret_789",
+            "ANTHROPIC_AUTH_TOKEN": "ant_secret_012",
+            "MYKOS_CONTROL_TOKEN": "mykos_secret",
+            "USER_PASSWORD": "super_secret_pw",
+            "PATH": "/usr/bin:/bin",
+            "HOME": "/home/user",
+            "LANG": "es_ES.UTF-8",
+        }, clear=True):
+            cleaned = rea._clean_subproc_env()
+            self.assertIn("PATH", cleaned)
+            self.assertIn("HOME", cleaned)
+            self.assertIn("LANG", cleaned)
+            self.assertNotIn("GITHUB_TOKEN", cleaned)
+            self.assertNotIn("NPM_TOKEN", cleaned)
+            self.assertNotIn("AWS_ACCESS_KEY_ID", cleaned)
+            self.assertNotIn("ANTHROPIC_AUTH_TOKEN", cleaned)
+            self.assertNotIn("MYKOS_CONTROL_TOKEN", cleaned)
+            self.assertNotIn("USER_PASSWORD", cleaned)
+
 if __name__ == '__main__':
     unittest.main()
