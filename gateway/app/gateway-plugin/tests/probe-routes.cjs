@@ -69,7 +69,7 @@ function pythonRoutes() {
   const sensitive = new Set(ROUTE_TABLE.filter((r) => r.risk === "sensitive").map((r) => `${r.method} ${r.pattern}`));
   check("chat, aprobaciones, benchmark, descargas de modelos, voz y transcripción son «sensitive»", ["POST /api/chat", "POST /api/approvals/:id/(approve|reject)", "POST /api/benchmark", "POST /api/ollama/pull-request", "POST /api/ollama/delete-request", "POST /api/tts", "POST /api/transcribe"].every((r) => sensitive.has(r)), "");
   const gatewayOwned = ROUTE_TABLE.filter((r) => r.owner === "gateway").map((r) => `${r.method} ${r.pattern}`).sort();
-  check("propiedad del Gateway: conversaciones, memoria, biblioteca, modelos, Ollama, OAuth, proveedores, automatizaciones, subagentes, nodos, actividad, gestión, herramientas, permisos, aprobaciones, benchmark, llamadas, medios, Realtime y modo de voz", gatewayOwned.length === 83 && ["POST /api/benchmark", "POST /api/approvals/:id/(approve|reject)", "POST /api/ollama/pull-request", "POST /api/ollama/delete-request", "POST /api/nodes/heartbeat", "GET /api/oauth/status", "GET /api/approvals", "GET /api/memory", "POST /api/transcribe", "POST /api/tts", "POST /api/voice/mode", "POST /api/calls/:callid/gemini-tools"].every((r) => gatewayOwned.includes(r)), gatewayOwned.join(", "));
+  check("propiedad del Gateway: conversaciones, memoria, biblioteca, modelos, Ollama, OAuth, proveedores, automatizaciones, subagentes, nodos, actividad, gestión, herramientas, permisos, aprobaciones, benchmark, llamadas, medios, Realtime, modo de voz y perfil de usuario", gatewayOwned.length === 85 && ["POST /api/benchmark", "POST /api/approvals/:id/(approve|reject)", "POST /api/ollama/pull-request", "POST /api/ollama/delete-request", "POST /api/nodes/heartbeat", "GET /api/oauth/status", "GET /api/approvals", "GET /api/memory", "POST /api/transcribe", "POST /api/tts", "POST /api/voice/mode", "POST /api/calls/:callid/gemini-tools", "GET /api/user-profile", "POST /api/user-profile"].every((r) => gatewayOwned.includes(r)), gatewayOwned.join(", "));
 
   // 3. Clasificación
   const c = classifyRoute;
@@ -134,6 +134,7 @@ function pythonRoutes() {
     "GET /api/subagents", // lectura directa del documento de trabajos del Gateway
     "GET /api/nodes", // registro de nodos y ficha del escritorio local del Gateway
     "POST /api/voice/mode", // enciende/apaga Realtime en memoria y lo guarda en disco; lo decide el Gateway, no el trabajador
+    "POST /api/user-profile", // guarda el perfil USER.md en el espacio de trabajo; lo ejecuta el Gateway
     "POST /api/conversations/new", "POST /api/conversations/compact", // datos de conversación, ya en el almacén del Gateway
     "DELETE /api/conversations", "DELETE /api/conversations/messages",
   ]);

@@ -326,6 +326,127 @@ function withTimeOnLastUser(messages) {
   return result;
 }
 
+function parseUserMarkdown(content) {
+  if (!content || typeof content !== "string") {
+    return { name: "", location: "", role: "", tone: "Directo y al grano", notes: "", raw_markdown: "" };
+  }
+  const nameMatch = content.match(/^[ \t]*-[ \t]*\*\*Nombre(?:\s*\/\s*Alias)?:\*\*\s*(.*)$/im);
+  const locationMatch = content.match(/^[ \t]*-[ \t]*\*\*Ubicación:\*\*\s*(.*)$/im);
+  const roleMatch = content.match(/^[ \t]*-[ \t]*\*\*Rol(?:\s*\/\s*Profesión)?:\*\*\s*(.*)$/im);
+  const toneMatch = content.match(/^[ \t]*-[ \t]*\*\*Tono preferido:\*\*\s*(.*)$/im);
+
+  let notes = "";
+  const notesIdx = content.search(/^[ \t]*-[ \t]*\*\*Notas personales:\*\*/im);
+  if (notesIdx !== -1) {
+    const afterNotes = content.slice(notesIdx);
+    const firstLineEnd = afterNotes.indexOf("\n");
+    if (firstLineEnd !== -1) {
+      const rest = afterNotes.slice(firstLineEnd + 1);
+      notes = rest
+        .split("\n")
+        .map((line) => line.replace(/^[ \t]*-[ \t]*/, "").trim())
+        .filter(Boolean)
+        .join("\n");
+    }
+  }
+
+  return {
+    name: nameMatch ? nameMatch[1].trim() : "",
+    location: locationMatch ? locationMatch[1].trim() : "",
+    role: roleMatch ? roleMatch[1].trim() : "",
+    tone: toneMatch ? toneMatch[1].trim() : "Directo y al grano",
+    notes: notes.trim(),
+    raw_markdown: content,
+  };
+}
+
+function buildUserMarkdown(payload) {
+  if (typeof payload?.raw_markdown === "string" && payload.raw_markdown.trim()) {
+    return payload.raw_markdown.trim() + "\n";
+  }
+  const name = typeof payload?.name === "string" ? payload.name.trim() : "";
+  const location = typeof payload?.location === "string" ? payload.location.trim() : "";
+  const role = typeof payload?.role === "string" ? payload.role.trim() : "";
+  const tone = typeof payload?.tone === "string" ? payload.tone.trim() : "Directo y al grano";
+  const notes = typeof payload?.notes === "string" ? payload.notes.trim() : "";
+
+  const lines = ["# Perfil del Usuario"];
+  if (name) lines.push(`- **Nombre:** ${name}`);
+  if (location) lines.push(`- **Ubicación:** ${location}`);
+  if (role) lines.push(`- **Rol:** ${role}`);
+  if (tone) lines.push(`- **Tono preferido:** ${tone}`);
+  if (notes) {
+    lines.push("- **Notas personales:**");
+    for (const noteLine of notes.split("\n")) {
+      const trimmed = noteLine.trim();
+      if (!trimmed) continue;
+      lines.push(trimmed.startsWith("-") || trimmed.startsWith("*") ? `  ${trimmed}` : `  - ${trimmed}`);
+    }
+  }
+  return lines.join("\n") + "\n";
+}
+
+async function handleUserProfileApi(req, res, cfg) {
+  const workspace = cfg.workspaceDir || path.join(os.homedir(), ".mykos", "workspace");
+  const userFile = path.join(workspace, "USER.md");
+
+  if (req.method === "GET") {
+    let rawContent = "";
+    let effectivePath = userFile;
+    try {
+      rawContent = readFileSync(userFile, "utf8");
+    } catch (e) {
+      if (e.code === "ENOENT") {
+        const fallback = path.join(os.homedir(), ".mykos", "USER.md");
+        try {
+          rawContent = readFileSync(fallback, "utf8");
+          effectivePath = fallback;
+        } catch {}
+      } else {
+        sendJson(res, 500, { ok: false, error: "No se pudo leer USER.md." });
+        return true;
+      }
+    }
+    const parsed = parseUserMarkdown(rawContent);
+    sendJson(res, 200, { ok: true, file: effectivePath, exists: Boolean(rawContent), ...parsed });
+    return true;
+  }
+
+  if (req.method === "POST") {
+    let payload;
+    try {
+      const raw = await readBody(req, MAX_JSON_API_BYTES);
+      payload = raw.length ? JSON.parse(raw.toString("utf8")) : {};
+      if (!isObject(payload)) throw new Error();
+    } catch {
+      sendJson(res, 400, { ok: false, error: "JSON inválido en el cuerpo de la petición." });
+      return true;
+    }
+
+    const markdown = buildUserMarkdown(payload);
+    try {
+      mkdirSync(workspace, { recursive: true });
+      const tmpFile = `${userFile}.tmp.${Date.now()}`;
+      writeFileSync(tmpFile, markdown, "utf8");
+      renameSync(tmpFile, userFile);
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: `Error al guardar USER.md: ${e.message}` });
+      return true;
+    }
+
+    const parsed = parseUserMarkdown(markdown);
+    sendJson(res, 200, {
+      ok: true,
+      message: "Perfil guardado con éxito.",
+      file: userFile,
+      ...parsed,
+    });
+    return true;
+  }
+
+  return false;
+}
+
 function resolveConfig(api) {
   const raw = api.pluginConfig ?? {};
 
@@ -2042,6 +2163,13 @@ export default {
         if (conversationsHandled) {
           recordApiResult(res.statusCode || 200, { owner: "mykos-gateway" });
           return true;
+        }
+        if (apiPath === "/api/user-profile") {
+          const profileHandled = await handleUserProfileApi(req, res, cfg);
+          if (profileHandled) {
+            recordApiResult(res.statusCode || 200, { owner: "mykos-gateway" });
+            return true;
+          }
         }
         // Actividad: la URL pública es del Gateway. Durante la transición el trabajador conserva el registro vivo,
         // accesible únicamente por este plano de control autenticado; el chat no se altera.

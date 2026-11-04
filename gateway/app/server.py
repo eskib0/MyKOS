@@ -659,6 +659,32 @@ def load_system_prompt() -> str:
     return prompt or DEFAULT_SYSTEM_PROMPT
 
 
+def load_user_profile() -> str:
+    """Lee el perfil del usuario (USER.md) desde el espacio de trabajo o configuración."""
+    candidates = [
+        WORKSPACE_DIR / "USER.md",
+        Path.home() / ".mykos" / "USER.md",
+        CONFIG_DIR / "USER.md",
+    ]
+    for path in candidates:
+        try:
+            content = path.read_text(encoding="utf-8").strip()
+            if content:
+                return content
+        except OSError:
+            pass
+    return ""
+
+
+def load_base_system_prompt() -> str:
+    prompt = load_system_prompt()
+    user_profile = load_user_profile()
+    if user_profile:
+        header = "" if user_profile.startswith("#") else "# Perfil del Usuario\n\n"
+        prompt += f"\n\n{header}{user_profile}"
+    return prompt
+
+
 _CORE_MEMORY_FILES = [
     ("identity.md",            "## Identidad del asistente"),
     ("operational-lessons.md", "## Lecciones operativas"),
@@ -2533,6 +2559,10 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
             prompt += f"\n\n{claude_tool_protocol_prompt(arguments_as_string=provider == 'openai_codex_oauth')}"
     if provider == "llama_cpp":
         prompt += "\n\nLas llamadas de herramientas usan el formato OpenAI-compatible del servidor llama.cpp."
+    user_profile = load_user_profile()
+    if user_profile:
+        header = "" if user_profile.startswith("#") else "# Perfil del Usuario\n\n"
+        prompt += f"\n\n{header}{user_profile}"
     core_memory = load_core_memory()
     if core_memory:
         prompt += f"\n\n{core_memory}"
@@ -5112,7 +5142,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                         "ok": True,
                         "schemas": TOOL_SCHEMAS,
                         "sensitive": sorted(SENSITIVE_TOOL_NAMES),
-                        "system_prompt": system_prompt_for_model(selected_model) if selected_model else load_system_prompt(),
+                        "system_prompt": system_prompt_for_model(selected_model) if selected_model else load_base_system_prompt(),
                         "default_model": default_model,
                     })
                     return

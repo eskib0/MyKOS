@@ -388,6 +388,33 @@ select:focus, textarea:focus { border-color: var(--accent); }
 .node-status.revoked { color: var(--danger); }
 .nodes-help-panel p { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .nodes-help-panel code { color: var(--accent-hover); }
+
+/* Perfil de Usuario (USER.md) */
+.user-profile-page-content { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; max-width: 980px; width: 100%; margin: 0 auto; }
+.user-profile-panel { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(53, 70, 81, .72); display: flex; flex-direction: column; gap: 12px; }
+.user-profile-header-actions { display: flex; align-items: center; gap: 10px; }
+.user-profile-form { display: grid; gap: 12px; }
+.user-profile-field { display: flex; flex-direction: column; gap: 4px; }
+.user-profile-field label { color: var(--muted); font-size: 11px; font-weight: 500; }
+.user-profile-field input[type="text"], .user-profile-field select, .user-profile-field textarea {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: rgba(27, 35, 44, .72); color: var(--text); font-size: 12px; font-family: inherit;
+  transition: border-color .2s ease;
+}
+.user-profile-field input[type="text"]:focus, .user-profile-field select:focus, .user-profile-field textarea:focus {
+  border-color: var(--accent); outline: none;
+}
+.user-profile-actions { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+.user-profile-status { font-size: 11px; color: var(--muted); transition: color .2s ease; }
+.user-profile-status.ok { color: var(--accent); }
+.user-profile-status.error { color: var(--danger); }
+.user-profile-raw-editor {
+  width: 100%; height: 280px; padding: 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: rgba(20, 26, 33, .85); color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px; line-height: 1.5; resize: vertical; box-sizing: border-box;
+}
+.user-profile-raw-editor:focus { border-color: var(--accent); outline: none; }
+.user-profile-raw-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
 .models-page-content .panel-section > .section-heading { margin-bottom: 12px; }
 .provider-directory-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 9px; margin-top: 12px; }
 .provider-card { min-width: 0; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: rgba(27, 35, 44, .6); }
@@ -778,7 +805,7 @@ textarea::placeholder { color: #748293; }
 
 @media (max-width: 720px) {
   #models-page, #permissions-page, #settings-page { padding: 24px 20px 30px; }
-  .models-page-content, .automations-page-content, .management-page-content, .media-page-content, .nodes-page-content { grid-template-columns: 1fr; }
+  .models-page-content, .automations-page-content, .management-page-content, .media-page-content, .nodes-page-content, .user-profile-page-content { grid-template-columns: 1fr; }
   .models-page-content > .panel-section:first-child { grid-column: auto; }
   body { overflow: auto; }
   .app-shell { display: block; height: auto; min-height: 100vh; overflow: visible; }

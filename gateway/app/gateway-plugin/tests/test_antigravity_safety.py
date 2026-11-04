@@ -79,5 +79,21 @@ class SafetyTests(unittest.TestCase):
             self.assertNotIn("MYKOS_CONTROL_TOKEN", cleaned)
             self.assertNotIn("USER_PASSWORD", cleaned)
 
+    def test_user_profile_system_prompt_injection(self):
+        import tempfile
+        import server
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = pathlib.Path(tmpdir)
+            user_md = tmppath / "USER.md"
+            user_md.write_text("# Perfil del Usuario\n- **Nombre:** Rubén\n- **Tono preferido:** Directo y al grano\n", encoding="utf-8")
+            with patch.object(server, "WORKSPACE_DIR", tmppath):
+                profile = server.load_user_profile()
+                self.assertIn("Rubén", profile)
+                self.assertIn("Directo y al grano", profile)
+                prompt = server.system_prompt_for_model({"name": "test-model", "provider": "ollama"})
+                self.assertIn("# Perfil del Usuario", prompt)
+                self.assertIn("Rubén", prompt)
+                self.assertIn("Directo y al grano", prompt)
+
 if __name__ == '__main__':
     unittest.main()

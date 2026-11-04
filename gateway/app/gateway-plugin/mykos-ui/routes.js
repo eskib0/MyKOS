@@ -25,6 +25,8 @@ export const ROUTE_TABLE = [
   { method: "GET", pattern: "/api/tools", domain: "tools", action: "catalog", risk: "read", owner: "gateway" },
   { method: "GET", pattern: "/api/management", domain: "management", action: "status", risk: "read", owner: "gateway" },
   { method: "GET", pattern: "/api/activity", domain: "chat", action: "activity", risk: "read", owner: "gateway" },
+  { method: "GET", pattern: "/api/user-profile", domain: "system", action: "profile_get", risk: "read", owner: "gateway" },
+  { method: "POST", pattern: "/api/user-profile", domain: "system", action: "profile_set", risk: "write", owner: "gateway" },
 
   // Conversaciones, contexto y chat
   { method: "GET", pattern: "/api/conversations", domain: "conversations", action: "list", risk: "read", owner: "gateway" },

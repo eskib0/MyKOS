@@ -139,6 +139,20 @@ const elements = {
   nodesRefresh: document.querySelector("#nodes-refresh"),
   nodesCount: document.querySelector("#nodes-count"),
   nodesList: document.querySelector("#nodes-list"),
+  userProfileForm: document.querySelector("#user-profile-form"),
+  userProfileName: document.querySelector("#user-profile-name"),
+  userProfileLocation: document.querySelector("#user-profile-location"),
+  userProfileRole: document.querySelector("#user-profile-role"),
+  userProfileTone: document.querySelector("#user-profile-tone"),
+  userProfileNotes: document.querySelector("#user-profile-notes"),
+  userProfileSaveBtn: document.querySelector("#user-profile-save-btn"),
+  userProfileStatus: document.querySelector("#user-profile-status"),
+  userProfileRaw: document.querySelector("#user-profile-raw"),
+  userProfileSaveRawBtn: document.querySelector("#user-profile-save-raw-btn"),
+  userProfileTokenBadge: document.querySelector("#user-profile-token-badge"),
+  userProfileReload: document.querySelector("#user-profile-reload"),
+  userProfileFilePath: document.querySelector("#user-profile-file-path"),
+  userProfileCharCount: document.querySelector("#user-profile-char-count"),
   settingsPage: document.querySelector("#settings-page"),
   settingsBack: document.querySelector("#settings-back"),
   settingsNavBtn: document.querySelector("#settings-nav-btn"),
@@ -779,7 +793,7 @@ function setPage(page) {
 }
 
 function setSettingsTab(tabName) {
-  const validTabs = ["appearance", "voice", "management", "media", "nodes"];
+  const validTabs = ["appearance", "profile", "voice", "management", "media", "nodes"];
   const targetTab = validTabs.includes(tabName) ? tabName : "appearance";
   state.activeSettingsTab = targetTab;
 
@@ -793,6 +807,7 @@ function setSettingsTab(tabName) {
 
   const panels = {
     appearance: document.querySelector("#settings-tab-appearance"),
+    profile: document.querySelector("#settings-tab-profile"),
     voice: document.querySelector("#settings-tab-voice"),
     management: document.querySelector("#management-page"),
     media: document.querySelector("#media-page"),
@@ -808,6 +823,8 @@ function setSettingsTab(tabName) {
   if (targetTab === "appearance") {
     syncThemeUi();
     syncChatDimensionsUi();
+  } else if (targetTab === "profile") {
+    loadUserProfile();
   } else if (targetTab === "voice") {
     syncVoiceSettingsUi();
   } else if (targetTab === "management") {
@@ -817,6 +834,167 @@ function setSettingsTab(tabName) {
   } else if (targetTab === "nodes") {
     loadNodes();
   }
+}
+
+function estimateTokens(text) {
+  if (!text) return 0;
+  return Math.ceil(text.trim().length / 3.8);
+}
+
+function updateProfilePreviewFromForm() {
+  const name = elements.userProfileName?.value?.trim() || "";
+  const location = elements.userProfileLocation?.value?.trim() || "";
+  const role = elements.userProfileRole?.value?.trim() || "";
+  const tone = elements.userProfileTone?.value || "Directo y al grano";
+  const notes = elements.userProfileNotes?.value?.trim() || "";
+
+  const lines = ["# Perfil del Usuario"];
+  if (name) lines.push(`- **Nombre:** ${name}`);
+  if (location) lines.push(`- **Ubicación:** ${location}`);
+  if (role) lines.push(`- **Rol:** ${role}`);
+  if (tone) lines.push(`- **Tono preferido:** ${tone}`);
+  if (notes) {
+    lines.push("- **Notas personales:**");
+    for (const noteLine of notes.split("\n")) {
+      const trimmed = noteLine.trim();
+      if (!trimmed) continue;
+      lines.push(trimmed.startsWith("-") || trimmed.startsWith("*") ? `  ${trimmed}` : `  - ${trimmed}`);
+    }
+  }
+  const markdown = lines.join("\n") + "\n";
+  if (elements.userProfileRaw) {
+    elements.userProfileRaw.value = markdown;
+  }
+  syncProfileStats(markdown);
+}
+
+function syncProfileStats(markdownText) {
+  const chars = (markdownText || "").length;
+  const tokens = estimateTokens(markdownText);
+  if (elements.userProfileCharCount) {
+    elements.userProfileCharCount.textContent = `${chars} caracteres`;
+  }
+  if (elements.userProfileTokenBadge) {
+    elements.userProfileTokenBadge.textContent = `~${tokens} tokens`;
+    elements.userProfileTokenBadge.className = tokens > 200 ? "settings-badge-alert" : "settings-badge-ok";
+  }
+}
+
+async function loadUserProfile() {
+  if (!elements.userProfileForm) return;
+  try {
+    const data = await api("/api/user-profile");
+    if (elements.userProfileName) elements.userProfileName.value = data.name || "";
+    if (elements.userProfileLocation) elements.userProfileLocation.value = data.location || "";
+    if (elements.userProfileRole) elements.userProfileRole.value = data.role || "";
+    if (elements.userProfileTone) {
+      const matched = [...elements.userProfileTone.options].some((opt) => opt.value === data.tone);
+      elements.userProfileTone.value = matched ? data.tone : (data.tone ? "Personalizado" : "Directo y al grano");
+    }
+    if (elements.userProfileNotes) elements.userProfileNotes.value = data.notes || "";
+    if (elements.userProfileRaw) elements.userProfileRaw.value = data.raw_markdown || "";
+    if (elements.userProfileFilePath && data.file) {
+      elements.userProfileFilePath.textContent = data.file;
+    }
+    syncProfileStats(data.raw_markdown || "");
+  } catch (_err) {
+    if (elements.userProfileStatus) {
+      elements.userProfileStatus.textContent = "Error al cargar perfil.";
+      elements.userProfileStatus.className = "user-profile-status error";
+    }
+  }
+}
+
+async function saveUserProfile(fromRaw = false) {
+  if (elements.userProfileSaveBtn) elements.userProfileSaveBtn.disabled = true;
+  if (elements.userProfileSaveRawBtn) elements.userProfileSaveRawBtn.disabled = true;
+  if (elements.userProfileStatus) {
+    elements.userProfileStatus.textContent = "Guardando…";
+    elements.userProfileStatus.className = "user-profile-status";
+  }
+
+  try {
+    let payload;
+    if (fromRaw) {
+      payload = { raw_markdown: elements.userProfileRaw?.value || "" };
+    } else {
+      payload = {
+        name: elements.userProfileName?.value?.trim() || "",
+        location: elements.userProfileLocation?.value?.trim() || "",
+        role: elements.userProfileRole?.value?.trim() || "",
+        tone: elements.userProfileTone?.value || "Directo y al grano",
+        notes: elements.userProfileNotes?.value?.trim() || "",
+      };
+    }
+
+    const data = await api("/api/user-profile", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    if (data.ok) {
+      if (elements.userProfileRaw) elements.userProfileRaw.value = data.raw_markdown || "";
+      if (elements.userProfileName) elements.userProfileName.value = data.name || "";
+      if (elements.userProfileLocation) elements.userProfileLocation.value = data.location || "";
+      if (elements.userProfileRole) elements.userProfileRole.value = data.role || "";
+      if (elements.userProfileNotes) elements.userProfileNotes.value = data.notes || "";
+      if (elements.userProfileFilePath && data.file) {
+        elements.userProfileFilePath.textContent = data.file;
+      }
+      syncProfileStats(data.raw_markdown || "");
+      if (elements.userProfileStatus) {
+        elements.userProfileStatus.textContent = "✓ Guardado en USER.md";
+        elements.userProfileStatus.className = "user-profile-status ok";
+        setTimeout(() => {
+          if (elements.userProfileStatus && elements.userProfileStatus.textContent === "✓ Guardado en USER.md") {
+            elements.userProfileStatus.textContent = "";
+          }
+        }, 3500);
+      }
+    }
+  } catch (err) {
+    if (elements.userProfileStatus) {
+      elements.userProfileStatus.textContent = `Error: ${err.serverMessage || err.message || "No se pudo guardar"}`;
+      elements.userProfileStatus.className = "user-profile-status error";
+    }
+  } finally {
+    if (elements.userProfileSaveBtn) elements.userProfileSaveBtn.disabled = false;
+    if (elements.userProfileSaveRawBtn) elements.userProfileSaveRawBtn.disabled = false;
+  }
+}
+
+function initUserProfile() {
+  if (!elements.userProfileForm) return;
+
+  elements.userProfileForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    saveUserProfile(false);
+  });
+
+  elements.userProfileSaveRawBtn?.addEventListener("click", () => {
+    saveUserProfile(true);
+  });
+
+  elements.userProfileReload?.addEventListener("click", () => {
+    loadUserProfile();
+  });
+
+  const inputs = [
+    elements.userProfileName,
+    elements.userProfileLocation,
+    elements.userProfileRole,
+    elements.userProfileTone,
+    elements.userProfileNotes,
+  ];
+  for (const input of inputs) {
+    input?.addEventListener("input", () => {
+      updateProfilePreviewFromForm();
+    });
+  }
+
+  elements.userProfileRaw?.addEventListener("input", () => {
+    syncProfileStats(elements.userProfileRaw.value);
+  });
 }
 
 function initSettingsTabs() {
@@ -3405,6 +3583,7 @@ initTheme();
 initChatDimensions();
 initVoiceSettings();
 initSettingsTabs();
+initUserProfile();
 mountModelsPage();
 mountPermissionsPage();
 restoreSidebarState();

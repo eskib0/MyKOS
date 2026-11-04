@@ -545,6 +545,13 @@
             </svg>
             <span>Apariencia y Estilo</span>
           </button>
+          <button class="settings-tab-btn" type="button" data-settings-tab="profile">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+              <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+            <span>Perfil de Usuario</span>
+          </button>
           <button class="settings-tab-btn" type="button" data-settings-tab="voice">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
@@ -748,6 +755,69 @@
                 <div class="settings-badge-ok">Local</div>
               </div>
             </section>
+          </div>
+
+          <!-- Pestaña: Perfil de Usuario (USER.md) -->
+          <div id="settings-tab-profile" class="settings-tab-panel">
+            <div class="settings-tab-header">
+              <p class="settings-hint">Define quién eres y cómo quieres que MyKOS interactúe contigo. Se guarda directamente en <code>USER.md</code> sin sobrecargar de tokens al modelo.</p>
+              <div class="user-profile-header-actions">
+                <span id="user-profile-token-badge" class="settings-badge-ok">~0 tokens</span>
+                <button id="user-profile-reload" class="text-button" type="button">Recargar</button>
+              </div>
+            </div>
+
+            <div class="user-profile-page-content">
+              <section class="user-profile-panel">
+                <div class="section-heading">
+                  <span>Cuestionario guiado</span>
+                </div>
+                <form id="user-profile-form" class="user-profile-form">
+                  <div class="user-profile-field">
+                    <label for="user-profile-name">¿Cómo quieres que te llame?</label>
+                    <input id="user-profile-name" type="text" placeholder="Ej: Rubén, Maestro, etc." autocomplete="name">
+                  </div>
+                  <div class="user-profile-field">
+                    <label for="user-profile-location">¿Dónde vives o cuál es tu zona?</label>
+                    <input id="user-profile-location" type="text" placeholder="Ej: Madrid, España (UTC+1)">
+                  </div>
+                  <div class="user-profile-field">
+                    <label for="user-profile-role">¿A qué te dedicas o cuál es tu rol?</label>
+                    <input id="user-profile-role" type="text" placeholder="Ej: Programador, Administrador de sistemas, Diseñador...">
+                  </div>
+                  <div class="user-profile-field">
+                    <label for="user-profile-tone">¿Qué estilo o tono prefieres en las respuestas?</label>
+                    <select id="user-profile-tone">
+                      <option value="Directo y al grano">Directo y al grano (conciso, sin rodeos)</option>
+                      <option value="Cercano y coloquial">Cercano y coloquial (natural, estilo colega de taller)</option>
+                      <option value="Técnico y analítico">Técnico y analítico (detallado, enfocado a código y arquitectura)</option>
+                      <option value="Personalizado">Personalizado (especificado en las notas)</option>
+                    </select>
+                  </div>
+                  <div class="user-profile-field">
+                    <label for="user-profile-notes">Notas personales e instrucciones fijas</label>
+                    <textarea id="user-profile-notes" rows="4" placeholder="Ej: Prefiero ejemplos en Bash antes que Python. No uses explicaciones introductorias largas..."></textarea>
+                  </div>
+                  <div class="user-profile-actions">
+                    <button id="user-profile-save-btn" class="primary-button" type="submit">Guardar en USER.md</button>
+                    <span id="user-profile-status" class="user-profile-status" aria-live="polite"></span>
+                  </div>
+                </form>
+              </section>
+
+              <section class="user-profile-panel">
+                <div class="section-heading">
+                  <span>Vista previa / Edición directa</span>
+                  <span id="user-profile-file-path" class="section-count">~/.mykos/workspace/USER.md</span>
+                </div>
+                <p class="settings-hint">Puedes editar libremente el Markdown generado si lo prefieres:</p>
+                <textarea id="user-profile-raw" class="user-profile-raw-editor" rows="12" spellcheck="false" placeholder="# Perfil del Usuario&#10;- **Nombre:** ..."></textarea>
+                <div class="user-profile-raw-footer">
+                  <span id="user-profile-char-count" class="settings-hint">0 caracteres</span>
+                  <button id="user-profile-save-raw-btn" class="text-button" type="button">Guardar cambios manuales</button>
+                </div>
+              </section>
+            </div>
           </div>
 
           <!-- Pestaña 2: Ajustes de Voz y Micrófono (Configurables) -->
