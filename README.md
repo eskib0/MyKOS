@@ -3,6 +3,9 @@
 > **MyKOS**: Plataforma personal de inteligencia artificial, pasarela multimodelo gobernada por políticas, motor de voz bidireccional y suite de aplicaciones para **Linux** y **Windows**.
 
 [![GitHub Release](https://img.shields.io/github/v/release/eskib0/MyKOS?style=flat-square&color=00d4ff)](https://github.com/eskib0/MyKOS/releases/latest)
+[![GitHub Stars](https://img.shields.io/github/stars/eskib0/MyKOS?style=flat-square&color=ffd700&label=estrellas%20%E2%AD%90)](https://github.com/eskib0/MyKOS/stargazers)
+[![Total Downloads](https://img.shields.io/github/downloads/eskib0/MyKOS/total?style=flat-square&color=2ea44f&label=descargas%20oficiales)](https://github.com/eskib0/MyKOS/releases)
+[![Git Clones](https://img.shields.io/badge/clones%20semanales-200%2B-blueviolet?style=flat-square&logo=git)](https://github.com/eskib0/MyKOS)
 [![Windows](https://img.shields.io/badge/Windows-MyKOS--Setup--1.0.0.exe-0078d4?style=flat-square&logo=windows)](https://github.com/eskib0/MyKOS/releases/latest/download/MyKOS-Setup-1.0.0.exe)
 [![Linux](https://img.shields.io/badge/Linux-mykos__1.0.0__amd64.deb-e95420?style=flat-square&logo=ubuntu)](https://github.com/eskib0/MyKOS/releases/latest/download/mykos_1.0.0_amd64.deb)
 
@@ -70,15 +73,15 @@ MyKOS separa estrictamente **quién decide y guarda los datos** (el **Gateway en
 
 ```mermaid
 flowchart LR
-    Browser["Navegador Web / UI\nhttp://127.0.0.1:3210"] <--> Gateway["MyKOS Gateway (Node.js)\n• Tabla de 87 rutas (routes.js)\n• 36 políticas HMAC (policy.js)\n• Bucle de chat local (chat-loop.js)\n• Autoridad de permisos y aprobaciones"]
+    Browser["Navegador Web / UI\nhttp://127.0.0.1:3210"] <--> Gateway["MyKOS Gateway (Node.js)\n• Tabla de 93 rutas (routes.js)\n• 42 políticas HMAC (policy.js)\n• Bucle de chat local (chat-loop.js)\n• Autoridad de permisos y aprobaciones"]
     Gateway <--> Store["Almacén ACID (store.js)\n~/.mykos/gateway-state/mykos\n• Revisiones + Copias + Diario SHA-256"]
     Gateway -- "HTTP interno autenticado\n/mykos-control/* + Firma HMAC" --> Worker["Trabajador Python (server.py)\n127.0.0.1:3211 (solo local)"]
     Gateway <--> LocalEngines["Motores Locales GPU/CPU\n• Strata (:18080)\n• llama.cpp (:8091)\n• Ollama (:11434)"]
-    Worker <--> CloudProviders["Proveedores Remotos\n• OpenAI Codex / Realtime\n• Claude OAuth / Anthropic API\n• Meta AI OAuth (Llama 4 DGW)\n• Mistral Vibe / Gemini / NVIDIA / Kimi / OpenRouter"]
+    Worker <--> CloudProviders["Proveedores Remotos\n• OpenAI Codex / Realtime\n• Claude OAuth / Anthropic API\n• Meta AI OAuth (Llama 4 DGW)\n• Grok OAuth (xAI RFC 8628)\n• Mistral Vibe / Gemini / NVIDIA / Kimi / OpenRouter"]
     Worker <--> LocalVoice["Motores Multimedia Locales\n• Whisper (STT)\n• Chatterbox (TTS GPU/CPU)\n• Kokoro 82M (TTS CPU)"]
 ```
 
-1. **Frontera Única y Política Firmada:** El navegador solo se comunica con el Gateway (`127.0.0.1:3210`). Toda petición pasa primero por [`routes.js`](gateway/app/gateway-plugin/mykos-ui/routes.js) (87 rutas clasificadas por dominio y nivel de riesgo: `read`, `write`, `sensitive`) y por [`policy.js`](gateway/app/gateway-plugin/mykos-ui/policy.js) (que valida esquemas JSON, aplica límites de concurrencia/ritmo por minuto y adjunta la cabecera firmada `X-MyKOS-Gateway-Decision`).
+1. **Frontera Única y Política Firmada:** El navegador solo se comunica con el Gateway (`127.0.0.1:3210`). Toda petición pasa primero por [`routes.js`](gateway/app/gateway-plugin/mykos-ui/routes.js) (93 rutas clasificadas por dominio y nivel de riesgo: `read`, `write`, `sensitive`) y por [`policy.js`](gateway/app/gateway-plugin/mykos-ui/policy.js) (que valida esquemas JSON, aplica límites de concurrencia/ritmo por minuto y adjunta la cabecera firmada `X-MyKOS-Gateway-Decision`).
 2. **Bucle de Chat Propiedad del Gateway (`chat-loop.js`):** Para los modelos locales (Strata, llama.cpp y Ollama), el propio Gateway ejecuta el bucle de herramientas, inyecta la hora local de Madrid en el último turno del usuario (preservando la caché de prompt del sistema), verifica cada acción con la **Guardia de Integridad Anti-Alucinaciones** y calcula la telemetría universal (`tokens/s`, `TTFT`, tokens de entrada/salida y duración).
 3. **Tres Modos de Permiso en Tiempo Real:**
    - **Solo lectura (`solo_lectura`):** Bloquea cualquier herramienta sensible sin preguntar.
@@ -108,6 +111,7 @@ flowchart LR
 | **OpenAI Codex OAuth** | [`oauth.py`](gateway/app/oauth.py) | Sesión OAuth aislada de MyKOS (`~/.mykos/gateway-state/mykos/credentials/openai-codex`) | Modelos `openai-codex-oauth/gpt-5.6-luna` (258K contexto), delegación de razonamiento para llamadas de voz y soporte WebRTC Realtime. |
 | **Google Gemini API** | [`gemini.py`](gateway/app/gemini.py) / [`gemini_live.py`](gateway/app/gemini_live.py) | API Key (`AIza...`) cifrada + Tokens efímeros de un solo uso | Modelos Gemini en chat multimodal y llamadas de voz **Gemini Live** por WebSocket bidireccional sin exponer jamás la API key al navegador. |
 | **NVIDIA NIM / Kimi / OpenRouter** | [`nvidia.py`](gateway/app/nvidia.py), [`kimi.py`](gateway/app/kimi.py), [`oauth.py`](gateway/app/oauth.py) | API Key cifrada (`nvapi-...`, Kimi) / OAuth PKCE (OpenRouter) | Catálogo extendido de modelos remotos con el protocolo unificado de herramientas e integridad de MyKOS. |
+| **Grok (xAI)** | [`grok.py`](gateway/app/grok.py) | OAuth 2.0 (RFC 8628 Device Flow) o API Key cifrada con `mykos-sealed-v1` | Modelos `grok/grok-4.7`, `grok/grok-4.6`, `grok/grok-4.5`, `grok/grok-4` y `grok/grok-3` con contexto de hasta 512K tokens y bucle de herramientas. |
 | **Meta AI OAuth (`meta.ai`)** | [`meta_ai.py`](gateway/app/meta_ai.py), [`meta_ai_dgw.mjs`](gateway/app/meta_ai_dgw.mjs) | Sesión OAuth (`ecto1` + OIDC `auth.meta.com`) cifrada con `mykos-sealed-v1` | Conexión directa por WebSocket DGW + Protobuf/WASM a `wss://gateway.meta.ai/ws` para usar `meta-ai/llama-4-fast`, `meta-ai/llama-4-reasoning` (Think Hard) y `meta-ai/meta-ai-assistant` con herramientas gobernadas por MyKOS. |
 | **Antigravity CLI (`agy`)** | [`antigravity_cli.py`](gateway/app/antigravity_cli.py) | Sesión Google propia de `agy` en perfil aislado (`runtime/antigravity-home`) | Consultas de solo texto a modelos Gemini Argon / Claude Opus / GPT-OSS mediante `agy --mode plan --sandbox`, con bloqueo estricto (`deny`) de todas las herramientas del CLI. |
 
