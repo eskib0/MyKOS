@@ -3507,6 +3507,18 @@ function renderApprovals() {
     title.textContent = approval.title || "Acción pendiente";
     card.appendChild(title);
 
+    if (approval.risk_level === "critical") {
+      const banner = document.createElement("div");
+      banner.className = "approval-risk-badge critical";
+      banner.textContent = `🛑 RIESGO ALTO: ${approval.risk_warning || "Acción potencialmente destructiva o con privilegios"}`;
+      card.appendChild(banner);
+    } else if (approval.risk_level === "warning") {
+      const banner = document.createElement("div");
+      banner.className = "approval-risk-badge warning";
+      banner.textContent = `⚠️ AVISO: ${approval.risk_warning || "Operación con impacto en infraestructura"}`;
+      card.appendChild(banner);
+    }
+
     const target = document.createElement("div");
     target.className = "approval-target";
     if (approval.kind === "write_file") {

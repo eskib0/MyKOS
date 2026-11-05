@@ -2,7 +2,13 @@
   "roots": [
     {
       "name": "workspace",
-      "path": "~/.mykos/workspace"
+      "path": "~/.mykos/workspace",
+      "description": "Área de trabajo personal del usuario"
+    },
+    {
+      "name": "mykos",
+      "path": ".",
+      "description": "Código fuente e infraestructura de MyKOS"
     }
   ]
 }

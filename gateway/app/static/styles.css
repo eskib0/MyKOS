@@ -692,6 +692,13 @@ h1 { margin: 5px 0 0; font-size: 22px; font-weight: 600; }
 .approval-card { padding: 14px; border: 1px solid #635133; border-radius: 12px; background: #201e1a; box-shadow: 0 8px 25px rgba(2, 6, 12, .5); }
 .approval-card + .approval-card { margin-top: 8px; }
 .approval-card strong { display: block; color: #f0d59b; font-size: 13px; }
+.approval-risk-badge { margin: 8px 0; padding: 6px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.approval-risk-badge.critical { background: rgba(220, 38, 38, 0.22); border: 1px solid #ef4444; color: #fca5a5; box-shadow: 0 0 12px rgba(239, 68, 68, 0.25); animation: critical-pulse 2s infinite ease-in-out; }
+.approval-risk-badge.warning { background: rgba(217, 119, 6, 0.2); border: 1px solid #f59e0b; color: #fde68a; }
+@keyframes critical-pulse {
+  0%, 100% { border-color: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.2); }
+  50% { border-color: #f87171; box-shadow: 0 0 16px rgba(248, 113, 113, 0.45); }
+}
 .approval-target, .approval-expiry { margin-top: 5px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .approval-preview { max-height: 190px; margin: 10px 0 0; padding: 10px; overflow: auto; border: 1px solid #3d3b31; border-radius: 7px; color: #e9e5dc; background: #12161a; font: 12px/1.45 "Cascadia Code", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .approval-actions { display: flex; gap: 8px; margin-top: 11px; }

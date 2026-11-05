@@ -1455,7 +1455,7 @@ def _load_allowed_roots() -> list[dict[str, Any]]:
             continue
         configured_path = Path(os.path.expandvars(raw_path)).expanduser()
         if not configured_path.is_absolute():
-            continue
+            configured_path = (PROJECT_ROOT / configured_path).resolve()
         try:
             if not configured_path.exists() and name == "workspace":
                 configured_path.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -4414,60 +4414,122 @@ def _prepare_rea_call_tool(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def analyze_action_risk(action: dict[str, Any]) -> tuple[str, str]:
+    """Analiza heurísticamente el nivel de riesgo de una acción aprobable.
+
+    Devuelve (risk_level, risk_warning):
+    - 'critical': Acciones potencialmente destructivas, privilegios o modificación de núcleo.
+    - 'warning': Modificaciones en mykos, eliminación de recuerdos/modelos o envío remoto.
+    - 'normal': Operaciones estándar acotadas en workspace.
+    """
+    kind = str(action.get("kind", "")).strip()
+
+    if kind == "run_powershell":
+        cmd = str(action.get("command", "")).strip()
+        cmd_lower = cmd.lower()
+        if re.search(r"\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|--recursive|--force)", cmd, re.IGNORECASE) or "rm -rf" in cmd_lower:
+            return "critical", "Comando de borrado recursivo forzado (rm -rf)"
+        if re.search(r"\b(mkfs|dd\s+if=|truncate\s+-s\s*0|shred\b)", cmd, re.IGNORECASE):
+            return "critical", "Comando potencialmente destructivo para el almacenamiento o particiones"
+        if re.search(r"\b(sudo\s+|su\s+-|chmod\s+(-R\s+)?777|chown\s+-R)", cmd, re.IGNORECASE):
+            return "critical", "Ejecución con privilegios de superusuario o permisos inseguros (sudo / chmod 777)"
+        if re.search(r"\b(curl|wget)\s+.*\|\s*(ba|z)?sh\b", cmd, re.IGNORECASE):
+            return "critical", "Descarga e interpretación directa de script remoto por tubería (curl | sh)"
+        if re.search(r"\b/(etc|boot|sys|proc|dev|root)\b", cmd):
+            return "critical", "Comando que referencia directorios protegidos del sistema (/etc, /boot, /root)"
+        if re.search(r"\b~/\.(bashrc|profile|zshrc|config/systemd)\b", cmd):
+            return "warning", "Modificación de archivos de inicio del usuario (~/.bashrc, ~/.profile)"
+        return "normal", ""
+
+    if kind in {"write_file", "edit_file", "write_project_file", "edit_project_file"}:
+        root = str(action.get("root", "")).strip()
+        path = str(action.get("path", "")).strip().lower()
+        if root == "mykos":
+            core_files = {"server.py", "policy.js", "routes.js", "permissions.py", "index.js", "tools.py"}
+            if any(path.endswith(cf) for cf in core_files):
+                return "critical", f"Modificación directa de la infraestructura crítica de MyKOS ({path})"
+            return "warning", f"Escritura en el repositorio de código fuente de MyKOS ({path})"
+        return "normal", ""
+
+    if kind in {"stop_process", "stop_service"}:
+        name = str(action.get("process_name") or action.get("service") or "").lower()
+        if any(crit in name for crit in ["systemd", "dbus", "sshd", "xorg", "gnome", "wayland"]):
+            return "critical", f"Detención de un servicio crítico del sistema ({name})"
+        return "warning", f"Detención de proceso o servicio ({name})"
+
+    if kind in {"delete_ollama_model", "delete_memory"}:
+        return "warning", f"Eliminación permanente solicitada ({kind})"
+
+    if kind == "git_remote_push":
+        if bool(action.get("force")):
+            return "critical", "Empuje forzado a repositorio remoto (git push --force)"
+        return "warning", "Envío de cambios a repositorio remoto (git push)"
+
+    return "normal", ""
+
+
 def prepare_approval_action(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
     arguments = arguments if isinstance(arguments, dict) else {}
     try:
+        res: dict[str, Any]
         if name == "save_memory":
-            return {"ok": True, "action": _prepare_save_memory(arguments)}
-        if name == "delete_memory":
-            return {"ok": True, "action": _prepare_delete_memory(arguments)}
-        if name == "write_project_file":
-            return {"ok": True, "action": _prepare_write_project_file(arguments)}
-        if name == "edit_project_file":
-            return {"ok": True, "action": _prepare_edit_project_file(arguments)}
-        if name == "save_research_note":
-            return {"ok": True, "action": _prepare_save_research_note(arguments)}
-        if name == "run_powershell":
-            return {"ok": True, "action": _prepare_run_powershell(arguments)}
-        if name == "git_commit":
-            return {"ok": True, "action": _prepare_git_commit(arguments)}
-        if name == "git_remote_fetch":
-            return {"ok": True, "action": _prepare_git_remote_action(arguments, "git_remote_fetch")}
-        if name == "git_remote_pull":
-            return {"ok": True, "action": _prepare_git_remote_action(arguments, "git_remote_pull")}
-        if name == "git_remote_push":
-            return {"ok": True, "action": _prepare_git_remote_action(arguments, "git_remote_push")}
-        if name == "git_branch":
-            return {"ok": True, "action": _prepare_git_remote_action(arguments, "git_branch")}
-        if name == "pull_ollama_model":
-            return {"ok": True, "action": _prepare_pull_ollama_model(arguments)}
-        if name == "delete_ollama_model":
-            return {"ok": True, "action": _prepare_delete_ollama_model(arguments)}
-        if name == "stop_process":
-            return {"ok": True, "action": _prepare_stop_process(arguments)}
-        if name == "start_service":
-            return {"ok": True, "action": _prepare_service_action(arguments, "start_service", "stopped")}
-        if name == "stop_service":
-            return {"ok": True, "action": _prepare_service_action(arguments, "stop_service", "running")}
-        if name == "create_reminder":
-            return {"ok": True, "action": prepare_create(arguments)}
-        if name == "delete_reminder":
-            return {"ok": True, "action": prepare_delete(arguments)}
-        if name == "spawn_subagent":
-            return {"ok": True, "action": prepare_spawn(arguments)}
-        if name == "text_to_speech":
-            return {"ok": True, "action": prepare_text_to_speech(arguments)}
-        if name == "generate_image":
-            return {"ok": True, "action": prepare_generate_image(arguments)}
-        if name == "generate_video":
-            return {"ok": True, "action": prepare_generate_video(arguments)}
-        if name == "pair_node":
-            return {"ok": True, "action": prepare_pair_node(arguments)}
-        if name == "revoke_node":
-            return {"ok": True, "action": prepare_revoke_node(arguments)}
-        if name == "rea_call_tool":
-            return {"ok": True, "action": _prepare_rea_call_tool(arguments)}
-        return {"ok": False, "error": f"No existe una acción aprobable llamada: {name}"}
+            res = {"ok": True, "action": _prepare_save_memory(arguments)}
+        elif name == "delete_memory":
+            res = {"ok": True, "action": _prepare_delete_memory(arguments)}
+        elif name == "write_project_file":
+            res = {"ok": True, "action": _prepare_write_project_file(arguments)}
+        elif name == "edit_project_file":
+            res = {"ok": True, "action": _prepare_edit_project_file(arguments)}
+        elif name == "save_research_note":
+            res = {"ok": True, "action": _prepare_save_research_note(arguments)}
+        elif name == "run_powershell":
+            res = {"ok": True, "action": _prepare_run_powershell(arguments)}
+        elif name == "git_commit":
+            res = {"ok": True, "action": _prepare_git_commit(arguments)}
+        elif name == "git_remote_fetch":
+            res = {"ok": True, "action": _prepare_git_remote_action(arguments, "git_remote_fetch")}
+        elif name == "git_remote_pull":
+            res = {"ok": True, "action": _prepare_git_remote_action(arguments, "git_remote_pull")}
+        elif name == "git_remote_push":
+            res = {"ok": True, "action": _prepare_git_remote_action(arguments, "git_remote_push")}
+        elif name == "git_branch":
+            res = {"ok": True, "action": _prepare_git_remote_action(arguments, "git_branch")}
+        elif name == "pull_ollama_model":
+            res = {"ok": True, "action": _prepare_pull_ollama_model(arguments)}
+        elif name == "delete_ollama_model":
+            res = {"ok": True, "action": _prepare_delete_ollama_model(arguments)}
+        elif name == "stop_process":
+            res = {"ok": True, "action": _prepare_stop_process(arguments)}
+        elif name == "start_service":
+            res = {"ok": True, "action": _prepare_service_action(arguments, "start_service", "stopped")}
+        elif name == "stop_service":
+            res = {"ok": True, "action": _prepare_service_action(arguments, "stop_service", "running")}
+        elif name == "create_reminder":
+            res = {"ok": True, "action": prepare_create(arguments)}
+        elif name == "delete_reminder":
+            res = {"ok": True, "action": prepare_delete(arguments)}
+        elif name == "spawn_subagent":
+            res = {"ok": True, "action": prepare_spawn(arguments)}
+        elif name == "text_to_speech":
+            res = {"ok": True, "action": prepare_text_to_speech(arguments)}
+        elif name == "generate_image":
+            res = {"ok": True, "action": prepare_generate_image(arguments)}
+        elif name == "generate_video":
+            res = {"ok": True, "action": prepare_generate_video(arguments)}
+        elif name == "pair_node":
+            res = {"ok": True, "action": prepare_pair_node(arguments)}
+        elif name == "revoke_node":
+            res = {"ok": True, "action": prepare_revoke_node(arguments)}
+        elif name == "rea_call_tool":
+            res = {"ok": True, "action": _prepare_rea_call_tool(arguments)}
+        else:
+            return {"ok": False, "error": f"No existe una acción aprobable llamada: {name}"}
+
+        if res.get("ok") and isinstance(res.get("action"), dict):
+            risk_level, risk_warning = analyze_action_risk(res["action"])
+            res["action"]["risk_level"] = risk_level
+            res["action"]["risk_warning"] = risk_warning
+        return res
     except ToolError as error:
         return {"ok": False, "error": str(error)}
     except (OSError, RuntimeError) as error:

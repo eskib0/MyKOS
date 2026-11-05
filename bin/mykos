@@ -751,6 +751,8 @@ cmd_test() {
     done
     echo "── test_antigravity_safety.py ──"
     python3 test_antigravity_safety.py
+    echo "── test_security_audit.py (Seguridad y Auditoría v2.0) ──"
+    python3 "$MYKOS_ROOT/tests/test_security_audit.py"
   )
   rm -rf "$GATEWAY_DIR/app/__pycache__" "$GATEWAY_DIR/app/gateway-plugin/tests/__pycache__"
   echo "✅ Todas las pruebas superadas."
