@@ -18,9 +18,10 @@ from anthropic_api import get_anthropic_api_key
 from tools import TOOL_SCHEMAS, _desktop_session_environment
 from worker_helpers import ApiError
 
-CLAUDE_MODEL_NAME = "anthropic/claude-sonnet-4-6"
-CLAUDE_MODEL_LABEL = "Claude Sonnet 4.6 · claude.ai"
-CLAUDE_CLI_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL_NAME = "claude-sonnet-oauth"
+CLAUDE_MODEL_LABEL = "Claude Sonnet · OAuth"
+CLAUDE_CLI_MODEL = os.environ.get("MYKOS_CLAUDE_MODEL", "sonnet").strip() or "sonnet"
+CLAUDE_CONTEXT_LENGTH = 131_072
 CLAUDE_STATUS_CACHE_SECONDS = 30.0
 CLAUDE_STATUS_LOCK = threading.Lock()
 CLAUDE_STATUS_CACHE: dict[str, Any] = {"checked_at": 0.0, "status": None}
@@ -234,21 +235,22 @@ def claude_model_summary() -> dict[str, Any]:
         "provider_label": "Claude Code · claude.ai OAuth",
         "size": 0,
         "parameter_size": "",
-        "family": "Claude",
+        "family": "Claude Sonnet",
         "quantization": "",
         "modified_at": "",
-        "capabilities": ["chat", "completion", "tools", "vision"],
-        "chat_capable": True,
-        "vision_capable": True,
-        "thinking_capable": False,
+        "capabilities": ["chat", "completion", "thinking", "tools"],
+        "chat_capable": authenticated,
+        "vision_capable": False,
+        "thinking_capable": True,
         "tools_capable": True,
-        "context_length": 200000,
+        "context_length": CLAUDE_CONTEXT_LENGTH,
         "remote": True,
-        "remote_host": "Anthropic claude.ai mediante Claude Code local",
+        "remote_host": "Anthropic mediante Claude Code",
         "benchmark_capable": False,
-        "auth_method": auth.get("auth_method", ""),
+        "auth_method": auth.get("auth_method", "claude.ai OAuth"),
         "auth_status": "autenticado" if authenticated else ("disponible" if available else "no_instalado"),
-        "auth_error": auth.get("error", ""),
+        "subscription_type": str(auth.get("subscription_tier") or auth.get("subscription_type", "")),
+        "auth_error": str(auth.get("error", "")),
     }
 
 

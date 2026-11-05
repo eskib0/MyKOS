@@ -258,8 +258,11 @@ def logout_meta_ai_oauth() -> dict[str, Any]:
       }
   )
   return {
+      "ok": True,
+      "provider": "meta_ai_oauth",
+      "status": "logged_out",
       "removed": removed,
-      "status": meta_ai_auth_status(),
+      "auth": meta_ai_auth_status(),
       "login": meta_ai_login_state(),
   }
 

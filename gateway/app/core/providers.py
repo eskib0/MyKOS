@@ -11,7 +11,12 @@ from antigravity_cli import antigravity_auth_status, antigravity_model_catalog, 
 from gemini import clear_gemini_api_key, gemini_auth_status, gemini_models
 from grok import clear_grok_credentials, grok_auth_status, grok_models, start_grok_oauth
 from kimi import clear_kimi_api_key, kimi_auth_status, kimi_models
-from meta_ai import logout_meta_ai_oauth as meta_ai_logout, meta_ai_models, meta_ai_auth_status, start_meta_ai_oauth as meta_ai_start_login
+from meta_ai import (
+    logout_meta_ai_oauth,
+    meta_ai_auth_status,
+    meta_ai_models,
+    start_meta_ai_oauth,
+)
 from mistral import clear_mistral_api_key, mistral_auth_status, mistral_models
 from nvidia import clear_nvidia_api_key, nvidia_auth_status, nvidia_models
 from oauth import logout_openrouter_oauth, openrouter_auth_status, openrouter_models, start_openrouter_oauth
