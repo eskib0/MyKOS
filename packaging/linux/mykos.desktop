@@ -1,0 +1,30 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=MyKOS
+GenericName=Asistente de IA Local
+Comment=Ecosistema de IA local y en la nube con pasarela Gateway, bucle de herramientas y voz
+Exec=/usr/bin/mykos open
+Icon=mykos
+Terminal=false
+Categories=Utility;Development;ArtificialIntelligence;
+Keywords=AI;Assistant;Local;Ollama;LLM;Voice;Gateway;
+StartupNotify=true
+StartupWMClass=MyKOS
+Actions=Start;Stop;Restart;Status;
+
+[Desktop Action Start]
+Name=Iniciar MyKOS
+Exec=/usr/bin/mykos start
+
+[Desktop Action Stop]
+Name=Detener MyKOS
+Exec=/usr/bin/mykos stop
+
+[Desktop Action Restart]
+Name=Reiniciar MyKOS
+Exec=/usr/bin/mykos restart
+
+[Desktop Action Status]
+Name=Estado del Sistema
+Exec=/usr/bin/mykos status

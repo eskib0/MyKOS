@@ -18,6 +18,12 @@ $BackendLog = Join-Path $GatewayDir "app\data\mykos-backend.log"
 $ConfigFile = if ($env:MYKOS_GATEWAY_CONFIG) { $env:MYKOS_GATEWAY_CONFIG } else { Join-Path $StateDir "mykos-gateway.json" }
 $DefaultPort = if ($env:MYKOS_GATEWAY_PORT) { [int]$env:MYKOS_GATEWAY_PORT } else { 3210 }
 
+# Si existe Node.js embebido en runtime\node, añadirlo al inicio del PATH
+$BundledNode = Join-Path $MykosRoot "runtime\node"
+if (Test-Path (Join-Path $BundledNode "node.exe")) {
+    $env:PATH = "$BundledNode;$env:PATH"
+}
+
 New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 
 function Show-MykosLogo {
@@ -34,8 +40,10 @@ function Show-MykosLogo {
 }
 
 function Get-MykosPython {
+    $bundledPy = Join-Path $MykosRoot "runtime\python\python.exe"
     $venvPy = Join-Path $HOME ".mykos\venv\Scripts\python.exe"
     if ($env:MYKOS_BACKEND_PYTHON -and (Test-Path $env:MYKOS_BACKEND_PYTHON)) { return $env:MYKOS_BACKEND_PYTHON }
+    if (Test-Path $bundledPy) { return $bundledPy }
     if (Test-Path $venvPy) { return $venvPy }
     return "python"
 }
@@ -221,6 +229,39 @@ function Invoke-MykosDoctor {
     }
 }
 
+function Invoke-MykosUpdate {
+    Show-MykosLogo "MyKOS Updater · Actualización del Sistema (Windows)"
+    Write-Host "▶ Comprobando actualizaciones para MyKOS..." -ForegroundColor Cyan
+    if (Test-Path (Join-Path $MykosRoot ".git")) {
+        $curCommit = (& git -C $MykosRoot rev-parse --short HEAD).Trim()
+        Write-Host "  Versión local instalada (commit): $curCommit" -ForegroundColor Gray
+        Write-Host "▶ Consultando repositorio remoto en GitHub..." -ForegroundColor Cyan
+        & git -C $MykosRoot fetch origin main --quiet
+        $remoteCommit = (& git -C $MykosRoot rev-parse --short origin/main).Trim()
+        if ($curCommit -eq $remoteCommit) {
+            Write-Host "✅ Ya tienes la versión más reciente instalada ($curCommit). Todo al día." -ForegroundColor Green
+            return
+        }
+        Write-Host "🚀 ¡Nueva versión disponible: $remoteCommit!" -ForegroundColor Yellow
+        Write-Host "▶ Aplicando actualización en caliente..." -ForegroundColor Cyan
+        & git -C $MykosRoot reset --hard origin/main
+        $venvPy = Get-MykosPython
+        if (Test-Path (Join-Path $GatewayDir "app\requirements.txt")) {
+            Write-Host "▶ Verificando dependencias en Python..." -ForegroundColor Cyan
+            & $venvPy -m pip install --quiet -r (Join-Path $GatewayDir "app\requirements.txt")
+        }
+        Write-Host "✅ Código actualizado con éxito a la versión $remoteCommit." -ForegroundColor Green
+        $proc = Get-MykosProcess
+        if ($proc) {
+            Write-Host "↻ Reiniciando MyKOS Gateway para aplicar los cambios..." -ForegroundColor Yellow
+            Invoke-MykosStop
+            Invoke-MykosStart
+        }
+    } else {
+        Write-Host "ℹ️  Esta instalación no utiliza Git directo. Descarga la nueva versión desde https://github.com/eskib0/MyKOS/releases" -ForegroundColor Yellow
+    }
+}
+
 function Invoke-MykosTest {
     Write-Host "▶ Ejecutando pruebas del Gateway de MyKOS..." -ForegroundColor Cyan
     Push-Location (Join-Path $GatewayDir "app\gateway-plugin\tests")
@@ -272,6 +313,7 @@ switch ($Command) {
         & $pyExe (Join-Path $MykosRoot "apps\analizador\main.py") @RestArgs
     }
     { $_ -in @("test", "tests", "check") } { Invoke-MykosTest }
+    { $_ -in @("update", "upgrade") } { Invoke-MykosUpdate }
     default {
         Show-MykosLogo "MyKOS CLI (Windows) · Gestión integral del ecosistema MyKOS"
         Write-Host "Uso: mykos <run|start|stop|restart|status|doctor [--fix]|open|logs [-f]|store|rea|analizador|test>"

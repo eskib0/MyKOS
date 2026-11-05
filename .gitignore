@@ -49,6 +49,9 @@ apps/horario/
 .env
 .env.*
 *.tmp
+dist/
+runtime/
+packaging/staging/
 
 # OS & Editor
 .DS_Store

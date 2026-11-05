@@ -1,0 +1,118 @@
+name: "Compilar y Publicar Instaladores Oficiales (Linux y Windows)"
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test-and-verify:
+    name: "Verificación de Seguridad y Tests"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Descargar repositorio"
+        uses: actions/checkout@v4
+
+      - name: "Configurar Node.js 20"
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: "Configurar Python 3.12"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: "Instalar dependencias de Python"
+        run: |
+          pip install --upgrade pip
+          pip install -r gateway/app/requirements.txt
+
+      - name: "Ejecutar batería completa de pruebas"
+        run: ./bin/mykos test
+
+  build-linux-deb:
+    name: "Empaquetar instalador Linux (.deb)"
+    needs: test-and-verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Descargar repositorio"
+        uses: actions/checkout@v4
+
+      - name: "Configurar Python para generar iconos"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: "Instalar Pillow para iconos"
+        run: pip install Pillow
+
+      - name: "Construir paquete .deb"
+        run: |
+          chmod +x packaging/linux/build-deb.sh
+          ./packaging/linux/build-deb.sh
+
+      - name: "Subir artefacto Debian"
+        uses: actions/upload-artifact@v4
+        with:
+          name: mykos-linux-deb
+          path: dist/*.deb
+
+  build-windows-exe:
+    name: "Empaquetar instalador Windows (.exe)"
+    needs: test-and-verify
+    runs-on: windows-latest
+    steps:
+      - name: "Descargar repositorio"
+        uses: actions/checkout@v4
+
+      - name: "Configurar Inno Setup"
+        run: |
+          choco install innosetup --no-progress
+
+      - name: "Compilar instalador MyKOS-Setup.exe"
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          ISCC.exe packaging/windows/mykos-setup.iss
+
+      - name: "Subir artefacto Windows"
+        uses: actions/upload-artifact@v4
+        with:
+          name: mykos-windows-setup
+          path: dist/*.exe
+
+  publish-release:
+    name: "Publicar en GitHub Releases"
+    needs: [build-linux-deb, build-windows-exe]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: "Descargar código"
+        uses: actions/checkout@v4
+
+      - name: "Descargar instalador Linux"
+        uses: actions/download-artifact@v4
+        with:
+          name: mykos-linux-deb
+          path: dist-release
+
+      - name: "Descargar instalador Windows"
+        uses: actions/download-artifact@v4
+        with:
+          name: mykos-windows-setup
+          path: dist-release
+
+      - name: "Publicar Release Oficial con instaladores adjuntos"
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-release/*.deb
+            dist-release/*.exe
+          generate_release_notes: true
+          draft: false
+          prerelease: false
