@@ -55,30 +55,44 @@ _DEVICE_POLL_THREAD: threading.Thread | None = None
 
 DEFAULT_GROK_MODELS: list[dict[str, Any]] = [
     {
-        "id": "grok-2-latest",
-        "name": "grok/grok-2-latest",
-        "label": "Grok 2 (xAI)",
-        "context_length": 131072,
+        "id": "grok-4.7",
+        "name": "grok/grok-4.7",
+        "label": "Grok 4.7 (xAI)",
+        "context_length": 524288,
         "vision": False,
     },
     {
-        "id": "grok-2-vision-1212",
-        "name": "grok/grok-2-vision-1212",
-        "label": "Grok 2 Vision (xAI)",
-        "context_length": 32768,
-        "vision": True,
+        "id": "grok-4.6",
+        "name": "grok/grok-4.6",
+        "label": "Grok 4.6 (xAI)",
+        "context_length": 262144,
+        "vision": False,
     },
     {
-        "id": "grok-beta",
-        "name": "grok/grok-beta",
-        "label": "Grok Beta (xAI)",
-        "context_length": 131072,
+        "id": "grok-4.5",
+        "name": "grok/grok-4.5",
+        "label": "Grok 4.5 (xAI)",
+        "context_length": 262144,
+        "vision": False,
+    },
+    {
+        "id": "grok-4",
+        "name": "grok/grok-4",
+        "label": "Grok 4 (xAI)",
+        "context_length": 262144,
         "vision": False,
     },
     {
         "id": "grok-3",
         "name": "grok/grok-3",
         "label": "Grok 3 (xAI)",
+        "context_length": 131072,
+        "vision": False,
+    },
+    {
+        "id": "grok-3-mini",
+        "name": "grok/grok-3-mini",
+        "label": "Grok 3 Mini (xAI)",
         "context_length": 131072,
         "vision": False,
     },
@@ -471,6 +485,12 @@ def grok_chat_completion(
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         err_msg = exc.read().decode("utf-8", errors="replace")[:500]
+        if exc.code == 402 or "spending-limit" in err_msg or "supergrok" in err_msg:
+            raise RuntimeError(
+                "xAI Grok requiere saldo/créditos de API o suscripción SuperGrok activa. "
+                "Las cuentas gratuitas de Grok no incluyen llamadas de API directas. "
+                "Recarga créditos en console.x.ai o suscríbete en grok.com/supergrok."
+            ) from exc
         raise RuntimeError(f"xAI Grok rechazó la llamada ({exc.code}): {err_msg}") from exc
     except Exception as exc:
         raise RuntimeError(f"Error conectando con Grok (xAI): {exc}") from exc

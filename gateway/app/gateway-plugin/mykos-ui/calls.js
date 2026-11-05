@@ -20,6 +20,7 @@ function providerFor(model) {
   if (value.startsWith("kimi/")) return "kimi_api";
   if (value.startsWith("gemini/")) return "gemini_api";
   if (value.startsWith("mistral/")) return "mistral_api";
+  if (value.startsWith("grok/")) return "grok";
   return "unknown";
 }
 

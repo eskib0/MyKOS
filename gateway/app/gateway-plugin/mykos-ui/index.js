@@ -79,7 +79,7 @@ const localNode = () => ({
   capabilities: ["chat", "files", "microphone", "tts"], platform: `${os.type()} ${os.release()}`, pid: process.pid,
   last_seen: utcNow(),
 });
-const REMOTE_MODEL_PREFIXES = ["antigravity/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "openrouter/", "openai-codex-oauth/", "gemini/", "anthropic/"];
+const REMOTE_MODEL_PREFIXES = ["antigravity/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "openrouter/", "openai-codex-oauth/", "gemini/", "anthropic/", "grok/"];
 const isRemoteModelName = (name) => REMOTE_MODEL_PREFIXES.some((prefix) => name.startsWith(prefix)) || name === "claude-sonnet-oauth";
 const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 const READY_TIMEOUT_MS = 90_000;
@@ -2519,7 +2519,7 @@ export default {
             };
 
             // — Despacho: local (runChatLoop) o remoto (remoteModel) —
-            const REMOTE_PREFIXES = ["antigravity/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "gemini/", "openrouter/", "openai-codex-oauth/", "anthropic/"];
+            const REMOTE_PREFIXES = ["antigravity/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "gemini/", "openrouter/", "openai-codex-oauth/", "anthropic/", "grok/"];
             const isRemote = REMOTE_PREFIXES.some((p) => model.startsWith(p)) || model === "claude-sonnet-oauth" || model === "gpt-live-1-codex";
 
             // — Contexto: mensajes de la conversación → array para el modelo —
