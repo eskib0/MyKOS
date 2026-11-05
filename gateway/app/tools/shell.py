@@ -25,9 +25,15 @@ def _desktop_session_environment() -> dict[str, str]:
     El backend arranca con un HOME propio y sin DISPLAY; se toman de un proceso del escritorio del
     mismo usuario. Si no hay sesión gráfica, se devuelve solo lo que se pueda deducir.
     """
-    import pwd
+    if os.name != "posix":
+        return {}
 
-    uid = os.getuid()
+    try:
+        import pwd
+        uid = os.getuid()
+    except (ImportError, AttributeError):
+        return {}
+
     wanted = (
         "DISPLAY",
         "WAYLAND_DISPLAY",
@@ -40,24 +46,26 @@ def _desktop_session_environment() -> dict[str, str]:
         "LANG",
     )
     found: dict[str, str] = {}
-    for name in ("gnome-shell", "plasmashell", "xfce4-session", "cinnamon", "gnome-session-binary"):
-        for proc in Path("/proc").iterdir():
-            if not proc.name.isdigit():
-                continue
-            try:
-                if proc.stat().st_uid != uid or (proc / "comm").read_text().strip() != name[:15]:
+    proc_dir = Path("/proc")
+    if proc_dir.is_dir():
+        for name in ("gnome-shell", "plasmashell", "xfce4-session", "cinnamon", "gnome-session-binary"):
+            for proc in proc_dir.iterdir():
+                if not proc.name.isdigit():
                     continue
-                raw = (proc / "environ").read_bytes().split(b"\0")
-            except OSError:
-                continue
-            for item in raw:
-                key, _, value = item.decode("utf-8", "replace").partition("=")
-                if key in wanted and value:
-                    found.setdefault(key, value)
+                try:
+                    if proc.stat().st_uid != uid or (proc / "comm").read_text().strip() != name[:15]:
+                        continue
+                    raw = (proc / "environ").read_bytes().split(b"\0")
+                except OSError:
+                    continue
+                for item in raw:
+                    key, _, value = item.decode("utf-8", "replace").partition("=")
+                    if key in wanted and value:
+                        found.setdefault(key, value)
+                if "DISPLAY" in found or "WAYLAND_DISPLAY" in found:
+                    break
             if "DISPLAY" in found or "WAYLAND_DISPLAY" in found:
                 break
-        if "DISPLAY" in found or "WAYLAND_DISPLAY" in found:
-            break
     runtime_dir = Path(f"/run/user/{uid}")
     if runtime_dir.is_dir():
         found.setdefault("XDG_RUNTIME_DIR", str(runtime_dir))
@@ -65,7 +73,7 @@ def _desktop_session_environment() -> dict[str, str]:
             found.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={runtime_dir / 'bus'}")
     try:
         found["HOME"] = pwd.getpwuid(uid).pw_dir
-    except KeyError:
+    except (KeyError, Exception):
         pass
     return found
 
@@ -137,7 +145,10 @@ def _execute_run_shell_posix(
         except subprocess.TimeoutExpired:
             timed_out = True
             try:
-                os.killpg(process.pid, 15)
+                if hasattr(os, "killpg"):
+                    os.killpg(process.pid, 15)
+                else:
+                    process.kill()
             except OSError:
                 pass
             returncode = None
@@ -167,6 +178,79 @@ def _execute_run_shell_posix(
     }
 
 
+def _execute_run_shell_windows(
+    action: dict[str, Any],
+    cwd_root: str,
+    cwd_root_path: Path,
+    cwd_path: Path,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    """Ejecuta en Windows mediante PowerShell el comando ya aprobado por el usuario."""
+    shell = shutil.which("pwsh") or shutil.which("powershell") or "powershell.exe"
+    environment = {
+        k: v
+        for k, v in os.environ.items()
+        if (not re.search(r"(TOKEN|KEY|SECRET|PASSWORD|AUTH)", k, re.IGNORECASE))
+        or k in {"SSH_AUTH_SOCK", "GPG_AGENT_INFO"}
+    }
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        timed_out = False
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            process = subprocess.Popen(
+                [shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", action["command"]],
+                cwd=str(cwd_path),
+                stdin=subprocess.DEVNULL,
+                stdout=out,
+                stderr=err,
+                env=environment,
+                creationflags=creationflags,
+            )
+        except OSError as error:
+            raise ToolError(f"No se pudo iniciar PowerShell en Windows: {error}") from error
+        try:
+            returncode = process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                    capture_output=True,
+                    creationflags=creationflags,
+                )
+            except OSError:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+            returncode = None
+        out.seek(0)
+        err.seek(0)
+        stdout = out.read().decode("utf-8", "replace")[-12_000:]
+        stderr = err.read().decode("utf-8", "replace")[-12_000:]
+    shell_label = "pwsh" if "pwsh" in shell.lower() else "powershell"
+    if timed_out:
+        return {
+            "ok": False,
+            "action": "run_powershell",
+            "shell": shell_label,
+            "timed_out": True,
+            "timeout_seconds": timeout_seconds,
+            "stdout": stdout,
+            "stderr": "El comando superó el tiempo máximo de ejecución.",
+        }
+    return {
+        "ok": returncode == 0,
+        "action": "run_powershell",
+        "shell": shell_label,
+        "cwd_root": cwd_root,
+        "cwd_path": _relative_label(cwd_path, cwd_root_path),
+        "returncode": returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+    }
+
+
 def _execute_run_powershell(action: dict[str, Any]) -> dict[str, Any]:
     prepared = _prepare_run_powershell(action)
     action = prepared
@@ -174,6 +258,8 @@ def _execute_run_powershell(action: dict[str, Any]) -> dict[str, Any]:
         action.get("cwd_root", "mykos"), action.get("cwd_path", "")
     )
     timeout_seconds = int(action.get("timeout_seconds", 30))
+    if os.name == "nt":
+        return _execute_run_shell_windows(action, cwd_root, cwd_root_path, cwd_path, timeout_seconds)
     return _execute_run_shell_posix(action, cwd_root, cwd_root_path, cwd_path, timeout_seconds)
 
 
@@ -198,6 +284,10 @@ def analyze_action_risk(action: dict[str, Any]) -> tuple[str, str]:
             return "critical", "Ejecución con privilegios de superusuario o permisos inseguros (sudo / chmod 777)"
         if re.search(r"\b(curl|wget)\s+.*\|\s*(ba|z)?sh\b", cmd, re.IGNORECASE):
             return "critical", "Descarga e interpretación directa de script remoto por tubería (curl | sh)"
+        if re.search(r"\b(rmdir|rd)\s+.*(/s|/q)\b", cmd, re.IGNORECASE) or re.search(r"\bRemove-Item\b.*(-Recurse|-Force)", cmd, re.IGNORECASE):
+            return "critical", "Comando de borrado recursivo forzado en Windows (Remove-Item / rmdir /s)"
+        if re.search(r"\b(format\s+[a-z]:|Format-Volume|Clear-Disk)\b", cmd, re.IGNORECASE):
+            return "critical", "Comando potencialmente destructivo para el almacenamiento en Windows"
         if re.search(r"\b/(etc|boot|sys|proc|dev|root)\b", cmd):
             return "critical", "Comando que referencia directorios protegidos del sistema (/etc, /boot, /root)"
         if re.search(r"\b~/\.(bashrc|profile|zshrc|config/systemd)\b", cmd):

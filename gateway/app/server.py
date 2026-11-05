@@ -487,7 +487,10 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-LOCAL_TIMEZONE = ZoneInfo("Europe/Madrid")
+try:
+    LOCAL_TIMEZONE = ZoneInfo("Europe/Madrid")
+except Exception:
+    LOCAL_TIMEZONE = timezone.utc
 _SPANISH_WEEKDAYS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 _SPANISH_MONTHS = [
     "enero", "febrero", "marzo", "abril", "mayo", "junio",
@@ -3092,6 +3095,7 @@ def backend_health(check_gateway: bool = False) -> dict[str, Any]:
         "ok": True,
         "service": "mykos-backend",
         "pid": os.getpid(),
+        "ppid": os.getppid() if hasattr(os, "getppid") else None,
         "port": PORT,
         "public_port": PUBLIC_PORT,
         "backend_only": BACKEND_ONLY,

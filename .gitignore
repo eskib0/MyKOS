@@ -50,7 +50,7 @@ apps/horario/
 .env.*
 *.tmp
 dist/
-runtime/
+/runtime/
 packaging/staging/
 
 # OS & Editor

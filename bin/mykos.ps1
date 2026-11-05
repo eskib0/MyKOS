@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # MyKOS CLI (Windows PowerShell) — Herramienta unificada para el ecosistema MyKOS
 # ==============================================================================
 $ErrorActionPreference = "Stop"
@@ -89,9 +89,18 @@ function Invoke-MykosStop {
         return
     }
     Write-Host "Deteniendo MyKOS Gateway..."
-    if ($proc) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-    foreach ($np in $nodeProcs) { Stop-Process -Id $np.ProcessId -Force -ErrorAction SilentlyContinue }
-    foreach ($pp in $pyProcs) { Stop-Process -Id $pp.ProcessId -Force -ErrorAction SilentlyContinue }
+    if ($proc) {
+        try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+        try { Start-Process -FilePath "taskkill" -ArgumentList @("/pid", "$($proc.Id)", "/T", "/F") -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue } catch {}
+    }
+    foreach ($np in $nodeProcs) {
+        try { Stop-Process -Id $np.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+        try { Start-Process -FilePath "taskkill" -ArgumentList @("/pid", "$($np.ProcessId)", "/T", "/F") -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue } catch {}
+    }
+    foreach ($pp in $pyProcs) {
+        try { Stop-Process -Id $pp.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+        try { Start-Process -FilePath "taskkill" -ArgumentList @("/pid", "$($pp.ProcessId)", "/T", "/F") -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue } catch {}
+    }
     Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
     Write-Host "✅ MyKOS Gateway detenido." -ForegroundColor Green
 }
@@ -111,22 +120,34 @@ function Invoke-MykosStart {
     }
     Write-Host "Arrancando MyKOS Gateway en segundo plano (puerto $Port)..."
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $GatewayLog) | Out-Null
-    $proc = Start-Process -FilePath "node" -ArgumentList @($RuntimeMjs, "gateway", "--port", "$Port") `
-        -RedirectStandardOutput $GatewayLog -RedirectStandardError "$GatewayLog.err" `
-        -WindowStyle Hidden -PassThru
-    Set-Content -Path $PidFile -Value $proc.Id -Encoding ASCII
+    $procId = $null
+    try {
+        $nodeCmd = "cmd.exe /c node `"$RuntimeMjs`" gateway --port $Port > `"$GatewayLog`" 2> `"$GatewayLog.err`""
+        $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $nodeCmd }
+        if ($res -and $res.ReturnValue -eq 0 -and $res.ProcessId) {
+            $procId = $res.ProcessId
+        }
+    } catch {}
+
+    if (-not $procId) {
+        $proc = Start-Process -FilePath "node" -ArgumentList @($RuntimeMjs, "gateway", "--port", "$Port") `
+            -RedirectStandardOutput $GatewayLog -RedirectStandardError "$GatewayLog.err" `
+            -WindowStyle Hidden -PassThru
+        $procId = $proc.Id
+    }
+    Set-Content -Path $PidFile -Value $procId -Encoding ASCII
 
     for ($i = 0; $i -lt 30; $i++) {
         try {
             $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/mykos-health" -TimeoutSec 1 -ErrorAction Stop
             if ($resp.ok) {
-                Write-Host "✅ MyKOS Gateway listo (PID $($proc.Id)) -> http://127.0.0.1:$Port" -ForegroundColor Green
+                Write-Host "✅ MyKOS Gateway listo (PID $procId) -> http://127.0.0.1:$Port" -ForegroundColor Green
                 return
             }
         } catch {}
         Start-Sleep -Milliseconds 300
     }
-    Write-Host "⚠️  MyKOS Gateway arrancó (PID $($proc.Id)) -> http://127.0.0.1:$Port" -ForegroundColor Yellow
+    Write-Host "⚠️  MyKOS Gateway arrancó (PID $procId) -> http://127.0.0.1:$Port" -ForegroundColor Yellow
 }
 
 function Invoke-MykosRun {

@@ -1369,8 +1369,32 @@ class ControlPlane {
 function killTree(pid) {
   if (!pid) return;
   try {
-    process.kill(pid, "SIGTERM");
+    if (process.platform === "win32") {
+      spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    } else {
+      process.kill(pid, "SIGTERM");
+    }
   } catch {}
+}
+
+function isSameOrChildProcess(childPid, health) {
+  if (!childPid || !health) return true;
+  if (health.pid === childPid) return true;
+  if (health.ppid && health.ppid === childPid) return true;
+  if (process.platform === "win32") {
+    try {
+      const res = spawnSync("powershell.exe", [
+        "-NoProfile",
+        "-Command",
+        `(Get-CimInstance Win32_Process -Filter "ProcessId = ${health.pid}").ParentProcessId`
+      ], { encoding: "utf8", windowsHide: true, timeout: 2000 });
+      const ppid = parseInt(res.stdout?.trim(), 10);
+      return ppid === childPid;
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 function rotateLog(logFile) {
@@ -1389,6 +1413,7 @@ class Backend {
     this.extraEnv = {};
     this.phase = "stopped"; // stopped | starting | up | restarting | failed
     this.child = null;
+    this.backendPid = null;
     this.restarts = 0;
     this.quickFailures = 0;
     this.lastError = "";
@@ -1458,11 +1483,12 @@ class Backend {
       const probe = await probeJson(`${this.config.url}/api/health`);
       const health = probe?.json;
       if (health?.service === "mykos-backend") {
-        if (health.pid === child.pid) {
+        if (isSameOrChildProcess(child.pid, health)) {
+          this.backendPid = health.pid;
           this.phase = "up";
           this.startedAt = Date.now();
           this.ctx?.serviceHealth?.clearFailure?.();
-          this.info(`backend listo (PID ${child.pid})`);
+          this.info(`backend listo (PID ${child.pid}${health.pid !== child.pid ? `, Python PID ${health.pid}` : ""})`);
           return;
         }
         this.fail(`El puerto ${new URL(this.config.url).port} lo ocupa otro backend de MyKOS (PID ${health.pid}); ciérralo con «mykos stop».`);
@@ -1520,11 +1546,15 @@ class Backend {
     }
     const child = this.child;
     if (child && child.exitCode === null) {
+      if (this.backendPid && process.platform === "win32") {
+        killTree(this.backendPid);
+      }
       killTree(child.pid);
       for (let i = 0; i < 50 && child.exitCode === null && child.signalCode === null; i += 1) await sleep(100);
       this.info(`backend detenido (PID ${child.pid})`);
     }
     this.child = null;
+    this.backendPid = null;
     this.phase = "stopped";
     if (globalThis[ACTIVE_BACKEND] === this) globalThis[ACTIVE_BACKEND] = null;
   }
@@ -1533,7 +1563,7 @@ class Backend {
   async snapshot() {
     const probe = await probeJson(`${this.config.url}/api/health`);
     const health = probe?.json?.service === "mykos-backend" ? probe.json : null;
-    const pidMatches = !this.child || !health ? true : health.pid === this.child.pid;
+    const pidMatches = isSameOrChildProcess(this.child?.pid, health);
     return {
       configured: true,
       spawn: this.config.spawn,

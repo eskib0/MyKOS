@@ -307,7 +307,9 @@ async function shutdown(signal) {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGHUP", () => shutdown("SIGHUP"));
+if (process.platform !== "win32") {
+  process.on("SIGHUP", () => shutdown("SIGHUP"));
+}
 
 startGateway().catch((err) => {
   gatewayLogger.error(`No se pudo iniciar MyKOS Gateway: ${err?.stack || err}`);

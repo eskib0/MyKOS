@@ -168,6 +168,40 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
         self.assertEqual(parsed.get("kind"), "answer")
         self.assertEqual(parsed.get("content"), "Hola MyKOS")
 
+    def test_cross_platform_windows_safety(self):
+        """Verifica la compatibilidad y protecciones multiplataforma Linux/Windows."""
+        from tools.shell import _desktop_session_environment, analyze_action_risk
+
+        # 1. Comandos destructivos de Windows detectados por el semáforo
+        risk, reason = analyze_action_risk({"kind": "run_powershell", "command": "Remove-Item -Recurse -Force C:\\Data"})
+        self.assertEqual(risk, "critical")
+        self.assertIn("borrado recursivo", reason)
+
+        risk, reason = analyze_action_risk({"kind": "run_powershell", "command": "rmdir /s /q C:\\Users"})
+        self.assertEqual(risk, "critical")
+        self.assertIn("borrado recursivo", reason)
+
+        risk, reason = analyze_action_risk({"kind": "run_powershell", "command": "Format-Volume -DriveLetter D"})
+        self.assertEqual(risk, "critical")
+        self.assertIn("almacenamiento en Windows", reason)
+
+        # 2. Resiliencia de _desktop_session_environment sin POSIX/pwd
+        orig_os_name = os.name
+        try:
+            os.name = "nt"
+            env = _desktop_session_environment()
+            self.assertEqual(env, {})
+        finally:
+            os.name = orig_os_name
+
+        # 3. Comprobar que backend_health exporta ppid
+        import server
+        health = server.backend_health()
+        self.assertIn("pid", health)
+        self.assertIn("ppid", health)
+        self.assertEqual(health["pid"], os.getpid())
+
+
 
 if __name__ == "__main__":
     unittest.main()
