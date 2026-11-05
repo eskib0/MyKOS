@@ -2,6 +2,17 @@
 
 > **MyKOS**: Plataforma personal de inteligencia artificial, pasarela multimodelo gobernada por políticas, motor de voz bidireccional y suite de aplicaciones para **Linux** y **Windows**.
 
+[![GitHub Release](https://img.shields.io/github/v/release/eskib0/MyKOS?style=flat-square&color=00d4ff)](https://github.com/eskib0/MyKOS/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-MyKOS--Setup--1.0.0.exe-0078d4?style=flat-square&logo=windows)](https://github.com/eskib0/MyKOS/releases/latest/download/MyKOS-Setup-1.0.0.exe)
+[![Linux](https://img.shields.io/badge/Linux-mykos__1.0.0__amd64.deb-e95420?style=flat-square&logo=ubuntu)](https://github.com/eskib0/MyKOS/releases/latest/download/mykos_1.0.0_amd64.deb)
+
+### ⚡ Descarga Rápida (Instaladores Oficiales)
+
+| Sistema Operativo | Formato | Enlace de Descarga Directa | Modo de Instalación |
+| :--- | :--- | :--- | :--- |
+| **Windows 10 / 11** | `.exe` (Setup) | [**Descargar `MyKOS-Setup-1.0.0.exe`**](https://github.com/eskib0/MyKOS/releases/latest/download/MyKOS-Setup-1.0.0.exe) | Doble clic, asistente visual y acceso directo en el Escritorio. |
+| **Linux (Ubuntu / Debian / Mint)** | `.deb` | [**Descargar `mykos_1.0.0_amd64.deb`**](https://github.com/eskib0/MyKOS/releases/latest/download/mykos_1.0.0_amd64.deb) | Doble clic en el centro de software o `sudo apt install ./mykos_1.0.0_amd64.deb`. |
+
 ---
 
 ## 🏛️ Estructura del Repositorio
