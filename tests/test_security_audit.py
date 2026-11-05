@@ -136,6 +136,38 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
         self.assertTrue(status.get("ok"))
         self.assertIn("platform", status)
 
+    def test_modular_core_package_integrity(self):
+        """Verifica que core sea un paquete modularizado con sus submódulos accesibles y funcionales."""
+        import core
+        from core import (
+            activity,
+            benchmark,
+            claude,
+            integrity,
+            ollama_catalog,
+            providers,
+            runners,
+            uploads,
+        )
+
+        core_path = Path(core.__file__)
+        self.assertEqual(core_path.name, "__init__.py")
+        self.assertTrue(core_path.parent.is_dir())
+
+        # Comprobar funciones clave exportadas
+        self.assertTrue(callable(core.update_activity))
+        self.assertTrue(callable(core.execute_benchmark_suite))
+        self.assertTrue(callable(core.run_claude_cli))
+        self.assertTrue(callable(core.integrity_check_answer))
+        self.assertTrue(callable(core.parse_gemini_response))
+        self.assertTrue(callable(core.fetch_ollama_catalog))
+        self.assertTrue(callable(core.process_multipart_uploads))
+
+        # Comprobar parsing de respuesta Gemini
+        parsed = core.parse_gemini_response('{"kind": "answer", "content": "Hola MyKOS"}')
+        self.assertEqual(parsed.get("kind"), "answer")
+        self.assertEqual(parsed.get("content"), "Hola MyKOS")
+
 
 if __name__ == "__main__":
     unittest.main()
