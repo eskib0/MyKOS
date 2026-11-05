@@ -5,7 +5,7 @@
 
 #define MyAppName "MyKOS"
 #define MyAppFullName "MyKOS Ecosystem"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "Ruben (eskib0)"
 #define MyAppURL "https://github.com/eskib0/MyKOS"
 #define MyAppExeName "MyKOS.vbs"

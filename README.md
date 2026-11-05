@@ -6,15 +6,15 @@
 [![GitHub Stars](https://img.shields.io/github/stars/eskib0/MyKOS?style=flat-square&color=ffd700&label=estrellas%20%E2%AD%90)](https://github.com/eskib0/MyKOS/stargazers)
 [![Total Downloads](https://img.shields.io/github/downloads/eskib0/MyKOS/total?style=flat-square&color=2ea44f&label=descargas%20oficiales)](https://github.com/eskib0/MyKOS/releases)
 [![Git Clones](https://img.shields.io/badge/clones%20semanales-200%2B-blueviolet?style=flat-square&logo=git)](https://github.com/eskib0/MyKOS)
-[![Windows](https://img.shields.io/badge/Windows-MyKOS--Setup--1.0.0.exe-0078d4?style=flat-square&logo=windows)](https://github.com/eskib0/MyKOS/releases/latest/download/MyKOS-Setup-1.0.0.exe)
-[![Linux](https://img.shields.io/badge/Linux-mykos__1.0.0__amd64.deb-e95420?style=flat-square&logo=ubuntu)](https://github.com/eskib0/MyKOS/releases/latest/download/mykos_1.0.0_amd64.deb)
+[![Windows](https://img.shields.io/badge/Windows-MyKOS--Setup--2.0.0.exe-0078d4?style=flat-square&logo=windows)](https://github.com/eskib0/MyKOS/releases/latest/download/MyKOS-Setup-2.0.0.exe)
+[![Linux](https://img.shields.io/badge/Linux-mykos__2.0.0__amd64.deb-e95420?style=flat-square&logo=ubuntu)](https://github.com/eskib0/MyKOS/releases/latest/download/mykos_2.0.0_amd64.deb)
 
-### ⚡ Descarga Rápida (Instaladores Oficiales)
+### ⚡ Descarga Rápida (Instaladores Oficiales v2.0.0)
 
 | Sistema Operativo | Formato | Enlace de Descarga Directa | Modo de Instalación |
 | :--- | :--- | :--- | :--- |
-| **Windows 10 / 11** | `.exe` (Setup) | [**Descargar `MyKOS-Setup-1.0.0.exe`**](https://github.com/eskib0/MyKOS/releases/latest/download/MyKOS-Setup-1.0.0.exe) | Doble clic, asistente visual y acceso directo en el Escritorio. |
-| **Linux (Ubuntu / Debian / Mint)** | `.deb` | [**Descargar `mykos_1.0.0_amd64.deb`**](https://github.com/eskib0/MyKOS/releases/latest/download/mykos_1.0.0_amd64.deb) | Doble clic en el centro de software o `sudo apt install ./mykos_1.0.0_amd64.deb`. |
+| **Windows 10 / 11** | `.exe` (Setup) | [**Descargar `MyKOS-Setup-2.0.0.exe`**](https://github.com/eskib0/MyKOS/releases/latest/download/MyKOS-Setup-2.0.0.exe) | Doble clic, asistente visual y acceso directo en el Escritorio. |
+| **Linux (Ubuntu / Debian / Mint)** | `.deb` | [**Descargar `mykos_2.0.0_amd64.deb`**](https://github.com/eskib0/MyKOS/releases/latest/download/mykos_2.0.0_amd64.deb) | Doble clic en el centro de software o `sudo apt install ./mykos_2.0.0_amd64.deb`. |
 
 ---
 
@@ -28,28 +28,35 @@ MyKOS/
 │   └── mykos.cmd             # Lanzador para Windows CMD
 ├── install.sh                # Instalador automático para Linux (venv, enlaces en ~/.local/bin, systemd)
 ├── install.ps1               # Instalador automático para Windows (venv, PATH de usuario, acceso directo)
+├── CONTRIBUTING.md           # Guía oficial para colaboradores: cómo añadir herramientas y proveedores
+├── tests/                    # Suite de auditoría de seguridad y pruebas unitarias de aislamiento
 │
 ├── gateway/                  # MyKOS Gateway: Pasarela multimodelo, autoridad de permisos y Web UI
 │   ├── runtime/              # Servidor HTTP y supervisor nativo en Node.js (mykos-gateway.mjs)
 │   │   └── antigravity-home/ # Perfil aislado de solo texto (deny total de herramientas) para agy
 │   ├── app/                  # Trabajador Python y conectores de modelos/herramientas
-│   │   ├── server.py         # Ejecutor interno (/mykos-control/*), catálogo y bucle de modelos remotos
+│   │   ├── server.py         # Enrutador interno (/mykos-control/*) y orquestación del backend
+│   │   ├── core/             # Paquete modular de servicios del servidor backend (v2.0)
+│   │   │   ├── activity.py   # Registro efímero de actividad y supervisión de servidores locales
+│   │   │   ├── benchmark.py  # Suite de benchmarks y telemetría de rendimiento
+│   │   │   ├── claude.py     # Integración con Claude CLI y suscripción OAuth
+│   │   │   ├── integrity.py  # Guardia contra alucinaciones de acciones del asistente
+│   │   │   ├── ollama_catalog.py # Integración con el catálogo público y descargas de modelos
+│   │   │   ├── providers.py  # Gestión de catálogos y autenticación de proveedores remotos
+│   │   │   ├── runners.py    # Bucle universal de herramientas y runners de inferencia
+│   │   │   └── uploads.py    # Gestión y purga de archivos temporales multipart
+│   │   ├── tools/            # Paquete modular de herramientas del sistema (v2.0 · 11 submódulos)
+│   │   │   ├── schemas.py    # Esquemas JSON formales de herramientas y lista de sensibles
+│   │   │   ├── filesystem.py # Operaciones en disco, búsquedas y fichas de investigación
+│   │   │   ├── shell.py      # Subprocesos seguros y semáforo heurístico de riesgo
+│   │   │   ├── git_tools.py  # Operaciones de control de versiones Git
+│   │   │   ├── system.py     # Hardware, procesos y servicios systemd
+│   │   │   ├── documents.py  # Lectura de PDF, Office e imágenes con OCR
+│   │   │   ├── web.py        # Búsqueda DuckDuckGo y navegación web con anti-SSRF
+│   │   │   ├── memory.py     # Recuerdos locales y memoria persistente
+│   │   │   └── ollama.py     # Gestión e introspección de modelos locales Ollama
 │   │   ├── rea.py            # Motor integrado REA (Reverse Engineer Anything · 207 herramientas MCP)
 │   │   ├── strata.py         # Conector para el motor local CUDA Strata (Qwen3.8 125B / Qwen3.6 35B)
-│   │   ├── anthropic_api.py  # Conector directo Anthropic Messages API (Claude 3.7 / 3.5)
-│   │   ├── mistral.py        # Conector Mistral AI / Vibe (con enlace automático al keyring del sistema)
-│   │   ├── gemini.py         # Conector Google AI Studio (Gemini) y tokens efímeros Gemini Live
-│   │   ├── nvidia.py         # Conector NVIDIA NIM y cifrado autenticado mykos-sealed-v1
-│   │   ├── kimi.py           # Conector Kimi API (Moonshot)
-│   │   ├── meta_ai.py        # Conector Meta AI OAuth (ecto1 / OIDC) y catálogo Llama 4
-│   │   ├── meta_ai_dgw.mjs   # Puente WebSocket DGW + Protobuf/WASM hacia wss://gateway.meta.ai/ws
-│   │   ├── oauth.py          # Flujos OAuth propios (OpenAI Codex, Claude Code, OpenRouter PKCE, Meta AI)
-│   │   ├── antigravity_cli.py# Adaptador aislado para Antigravity CLI (agy)
-│   │   ├── media.py          # Transcripción Whisper persistente y síntesis de voz local
-│   │   ├── chatterbox_worker.py # Trabajador TTS GPU/CPU Chatterbox Multilingual
-│   │   ├── kokoro_worker.py  # Trabajador TTS CPU Kokoro 82M (espeak-ng)
-│   │   ├── whisper_worker.py # Trabajador STT persistente con OpenAI Whisper
-│   │   ├── tools.py          # Catálogo de herramientas del sistema, navegador y memoria
 │   │   ├── static/           # Interfaz web reactiva (index.html, app.js, styles.css)
 │   │   └── gateway-plugin/
 │   │       ├── mykos-ui/     # Núcleo del Gateway (index.js, routes.js, policy.js, chat-loop.js, store.js)
