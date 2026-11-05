@@ -59,7 +59,7 @@ MyKOS separa estrictamente **quién decide y guarda los datos** (el **Gateway en
 
 ```mermaid
 flowchart LR
-    Browser["Navegador Web / UI\nhttp://127.0.0.1:3210"] <--> Gateway["MyKOS Gateway (Node.js)\n• Tabla de 85 rutas (routes.js)\n• 36 políticas HMAC (policy.js)\n• Bucle de chat local (chat-loop.js)\n• Autoridad de permisos y aprobaciones"]
+    Browser["Navegador Web / UI\nhttp://127.0.0.1:3210"] <--> Gateway["MyKOS Gateway (Node.js)\n• Tabla de 87 rutas (routes.js)\n• 36 políticas HMAC (policy.js)\n• Bucle de chat local (chat-loop.js)\n• Autoridad de permisos y aprobaciones"]
     Gateway <--> Store["Almacén ACID (store.js)\n~/.mykos/gateway-state/mykos\n• Revisiones + Copias + Diario SHA-256"]
     Gateway -- "HTTP interno autenticado\n/mykos-control/* + Firma HMAC" --> Worker["Trabajador Python (server.py)\n127.0.0.1:3211 (solo local)"]
     Gateway <--> LocalEngines["Motores Locales GPU/CPU\n• Strata (:18080)\n• llama.cpp (:8091)\n• Ollama (:11434)"]
@@ -67,7 +67,7 @@ flowchart LR
     Worker <--> LocalVoice["Motores Multimedia Locales\n• Whisper (STT)\n• Chatterbox (TTS GPU/CPU)\n• Kokoro 82M (TTS CPU)"]
 ```
 
-1. **Frontera Única y Política Firmada:** El navegador solo se comunica con el Gateway (`127.0.0.1:3210`). Toda petición pasa primero por [`routes.js`](gateway/app/gateway-plugin/mykos-ui/routes.js) (85 rutas clasificadas por dominio y nivel de riesgo: `read`, `write`, `sensitive`) y por [`policy.js`](gateway/app/gateway-plugin/mykos-ui/policy.js) (que valida esquemas JSON, aplica límites de concurrencia/ritmo por minuto y adjunta la cabecera firmada `X-MyKOS-Gateway-Decision`).
+1. **Frontera Única y Política Firmada:** El navegador solo se comunica con el Gateway (`127.0.0.1:3210`). Toda petición pasa primero por [`routes.js`](gateway/app/gateway-plugin/mykos-ui/routes.js) (87 rutas clasificadas por dominio y nivel de riesgo: `read`, `write`, `sensitive`) y por [`policy.js`](gateway/app/gateway-plugin/mykos-ui/policy.js) (que valida esquemas JSON, aplica límites de concurrencia/ritmo por minuto y adjunta la cabecera firmada `X-MyKOS-Gateway-Decision`).
 2. **Bucle de Chat Propiedad del Gateway (`chat-loop.js`):** Para los modelos locales (Strata, llama.cpp y Ollama), el propio Gateway ejecuta el bucle de herramientas, inyecta la hora local de Madrid en el último turno del usuario (preservando la caché de prompt del sistema), verifica cada acción con la **Guardia de Integridad Anti-Alucinaciones** y calcula la telemetría universal (`tokens/s`, `TTFT`, tokens de entrada/salida y duración).
 3. **Tres Modos de Permiso en Tiempo Real:**
    - **Solo lectura (`solo_lectura`):** Bloquea cualquier herramienta sensible sin preguntar.

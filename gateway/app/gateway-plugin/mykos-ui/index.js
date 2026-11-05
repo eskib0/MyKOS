@@ -20,6 +20,7 @@ import { appendFileSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync,
 import { stat } from "node:fs/promises";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import http from "node:http";
+import https from "node:https";
 import path from "node:path";
 import { exec, spawn, spawnSync } from "node:child_process";
 import { pipeline } from "node:stream";
@@ -440,6 +441,184 @@ async function handleUserProfileApi(req, res, cfg) {
       message: "Perfil guardado con éxito.",
       file: userFile,
       ...parsed,
+    });
+    return true;
+  }
+
+  return false;
+}
+
+// ── Actualizaciones del Sistema (GitHub Releases / Git) ────────────────────────
+let updateCache = {
+  data: null,
+  cachedAt: 0,
+};
+const UPDATE_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos
+
+function fetchGithubJson(apiPath) {
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: "api.github.com",
+      path: apiPath,
+      method: "GET",
+      headers: {
+        "User-Agent": "MyKOS-Updater/1.0",
+        "Accept": "application/vnd.github.v3+json",
+      },
+      timeout: 6000,
+    }, (res) => {
+      let data = "";
+      res.on("data", (chunk) => { data += chunk; });
+      res.on("end", () => {
+        try {
+          resolve({ status: res.statusCode, body: JSON.parse(data) });
+        } catch {
+          resolve({ status: res.statusCode, error: "parse_error" });
+        }
+      });
+    });
+    req.on("error", (err) => resolve({ status: 0, error: err.message }));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve({ status: 0, error: "timeout" });
+    });
+    req.end();
+  });
+}
+
+async function handleSystemUpdatesApi(req, res, cfg, apiUrl) {
+  const mykosRoot = path.resolve(cfg.projectDir || path.join(os.homedir(), "MyKOS"), "..", "..");
+  const isGit = existsSync(path.join(mykosRoot, ".git"));
+
+  // Leer versión local desde version.json
+  let localVersion = "1.0.0";
+  let repoName = "eskib0/MyKOS";
+  try {
+    const vRaw = readFileSync(path.join(mykosRoot, "version.json"), "utf8");
+    const vJson = JSON.parse(vRaw);
+    if (vJson.version) localVersion = vJson.version;
+    if (vJson.repository) repoName = vJson.repository;
+  } catch {}
+
+  let localCommit = "";
+  if (isGit) {
+    try {
+      const gitOut = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: mykosRoot, encoding: "utf8" });
+      if (gitOut.status === 0 && gitOut.stdout) localCommit = gitOut.stdout.trim();
+    } catch {}
+  }
+
+  // GET /api/system/updates: comprobar versión
+  if (req.method === "GET" && apiUrl.pathname === "/api/system/updates") {
+    const force = apiUrl.searchParams.get("force") === "1";
+    const now = Date.now();
+
+    if (!force && updateCache.data && (now - updateCache.cachedAt < UPDATE_CACHE_TTL_MS)) {
+      sendJson(res, 200, {
+        ok: true,
+        cached: true,
+        current_version: localVersion,
+        current_commit: localCommit,
+        is_git: isGit,
+        repository: repoName,
+        ...updateCache.data,
+      });
+      return true;
+    }
+
+    let updateData = {
+      update_available: false,
+      latest_version: localVersion,
+      latest_commit: localCommit,
+      release_name: "",
+      release_notes: "",
+      html_url: `https://github.com/${repoName}`,
+      published_at: "",
+      checked_at: new Date().toISOString(),
+    };
+
+    // 1. Probar GitHub Releases
+    const relRes = await fetchGithubJson(`/repos/${repoName}/releases/latest`);
+    if (relRes.status === 200 && relRes.body?.tag_name) {
+      const remoteTag = relRes.body.tag_name;
+      const cleanRemote = remoteTag.replace(/^v/, "");
+      const cleanLocal = localVersion.replace(/^v/, "");
+      updateData.latest_version = remoteTag;
+      updateData.release_name = relRes.body.name || remoteTag;
+      updateData.release_notes = relRes.body.body || "";
+      updateData.html_url = relRes.body.html_url || `https://github.com/${repoName}`;
+      updateData.published_at = relRes.body.published_at || "";
+      updateData.update_available = cleanRemote !== cleanLocal;
+    } else {
+      // 2. Si no hay release formal aún, comprobar último commit de la rama main
+      const commitRes = await fetchGithubJson(`/repos/${repoName}/commits/main`);
+      if (commitRes.status === 200 && commitRes.body?.sha) {
+        const remoteSha = commitRes.body.sha.slice(0, 7);
+        updateData.latest_commit = remoteSha;
+        updateData.latest_version = remoteSha;
+        updateData.release_name = commitRes.body.commit?.message?.split("\n")[0] || "Actualización disponible";
+        updateData.release_notes = commitRes.body.commit?.message || "";
+        updateData.html_url = commitRes.body.html_url || `https://github.com/${repoName}`;
+        updateData.published_at = commitRes.body.commit?.author?.date || "";
+        if (isGit && localCommit && remoteSha !== localCommit) {
+          updateData.update_available = true;
+        }
+      }
+    }
+
+    updateCache = { data: updateData, cachedAt: now };
+    sendJson(res, 200, {
+      ok: true,
+      cached: false,
+      current_version: localVersion,
+      current_commit: localCommit,
+      is_git: isGit,
+      repository: repoName,
+      ...updateData,
+    });
+    return true;
+  }
+
+  // POST /api/system/update: aplicar actualización
+  if (req.method === "POST" && apiUrl.pathname === "/api/system/update") {
+    if (isGit) {
+      return new Promise((resolve) => {
+        exec("git fetch origin main && git reset --hard origin/main", { cwd: mykosRoot }, (err, stdout, stderr) => {
+          if (err) {
+            sendJson(res, 500, {
+              ok: false,
+              error: `Error al actualizar código desde Git: ${stderr || err.message}`,
+            });
+            return resolve(true);
+          }
+
+          sendJson(res, 200, {
+            ok: true,
+            message: "Actualización descargada e instalada con éxito. Reiniciando MyKOS...",
+            restarting: true,
+            output: stdout ? stdout.trim() : "",
+          });
+
+          // Programar reinicio limpio tras responder al cliente
+          setTimeout(() => {
+            const restartScript = path.join(mykosRoot, "bin", "mykos");
+            if (existsSync(restartScript) && process.platform !== "win32") {
+              spawn("/bin/bash", ["-c", `sleep 1 && "${restartScript}" restart`], {
+                detached: true,
+                stdio: "ignore",
+              }).unref();
+            }
+            process.exit(0);
+          }, 1200);
+
+          resolve(true);
+        });
+      });
+    }
+
+    sendJson(res, 400, {
+      ok: false,
+      error: "Este método de instalación empaquetado requiere descargar el nuevo instalador.",
     });
     return true;
   }
@@ -2167,6 +2346,13 @@ export default {
         if (apiPath === "/api/user-profile") {
           const profileHandled = await handleUserProfileApi(req, res, cfg);
           if (profileHandled) {
+            recordApiResult(res.statusCode || 200, { owner: "mykos-gateway" });
+            return true;
+          }
+        }
+        if (apiPath === "/api/system/updates" || apiPath === "/api/system/update") {
+          const updateHandled = await handleSystemUpdatesApi(req, res, cfg, apiUrl);
+          if (updateHandled) {
             recordApiResult(res.statusCode || 200, { owner: "mykos-gateway" });
             return true;
           }

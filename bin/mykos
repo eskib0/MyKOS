@@ -876,6 +876,50 @@ except Exception:
   esac
 }
 
+cmd_update() {
+  print_logo "MyKOS Updater · Actualización del Sistema"
+  echo -e "${C_CYAN}▶ Comprobando actualizaciones para MyKOS...${C_RESET}"
+
+  if [[ -d "$MYKOS_ROOT/.git" ]]; then
+    local cur_commit
+    cur_commit="$(git -C "$MYKOS_ROOT" rev-parse --short HEAD 2>/dev/null || echo "desconocido")"
+    echo -e "  Versión local instalada (commit): ${C_BOLD}$cur_commit${C_RESET}"
+
+    echo -e "${C_CYAN}▶ Consultando repositorio remoto en GitHub...${C_RESET}"
+    git -C "$MYKOS_ROOT" fetch origin main --quiet || {
+      echo -e "${C_RED}❌ Error al conectar con GitHub. Comprueba tu conexión a internet.${C_RESET}"
+      return 1
+    }
+
+    local remote_commit
+    remote_commit="$(git -C "$MYKOS_ROOT" rev-parse --short origin/main 2>/dev/null || echo "")"
+
+    if [[ "$cur_commit" == "$remote_commit" ]]; then
+      echo -e "${C_GREEN}✅ Ya tienes la versión más reciente instalada ($cur_commit). Todo al día.${C_RESET}"
+      return 0
+    fi
+
+    echo -e "${C_YELLOW}🚀 ¡Nueva versión disponible: $remote_commit!${C_RESET}"
+    echo -e "${C_CYAN}▶ Aplicando actualización en caliente...${C_RESET}"
+    git -C "$MYKOS_ROOT" reset --hard origin/main
+
+    if [[ -x "$HOME/.mykos/venv/bin/python" ]] && [[ -f "$MYKOS_ROOT/gateway/app/requirements.txt" ]]; then
+      echo -e "${C_CYAN}▶ Verificando dependencias en Python...${C_RESET}"
+      "$HOME/.mykos/venv/bin/python" -m pip install --quiet -r "$MYKOS_ROOT/gateway/app/requirements.txt" 2>/dev/null || true
+    fi
+
+    echo -e "${C_GREEN}✅ Código actualizado con éxito a la versión $remote_commit.${C_RESET}"
+
+    if is_running; then
+      echo -e "${C_YELLOW}↻ Reiniciando MyKOS Gateway para aplicar los cambios...${C_RESET}"
+      cmd_stop >/dev/null 2>&1 || true
+      cmd_start >/dev/null 2>&1 || true
+    fi
+  else
+    echo -e "${C_YELLOW}ℹ️  Esta instalación no utiliza Git directo. Comprueba nuevas versiones en https://github.com/eskib0/MyKOS/releases${C_RESET}"
+  fi
+}
+
 cmd_help() {
   print_logo "MyKOS CLI · Gestión integral del ecosistema MyKOS"
   cat <<EOF
@@ -897,6 +941,7 @@ Comandos del Gateway y Diagnóstico:
   terminal <on|off|status>  Activa o desactiva la terminal interactiva web en la interfaz
   rea <subcomando>          Motor de ingeniería inversa REA (status | tools [filtro] | inspect <archivo>)
   test                      Ejecuta la batería completa de pruebas de seguridad, rutas, políticas y almacén
+  update                    Comprueba e instala la última versión de MyKOS desde GitHub
 
 Aplicaciones de Escritorio MyKOS:
   monitor                   Abre MyKOS Monitor (panel en tiempo real de CPU, GPU, RAM, disco y red)
@@ -961,6 +1006,9 @@ case "$COMMAND" in
     ;;
   test|tests|check)
     cmd_test
+    ;;
+  update|upgrade)
+    cmd_update "$@"
     ;;
   help|--help|-h)
     cmd_help

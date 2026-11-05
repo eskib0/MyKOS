@@ -373,6 +373,10 @@
           </div>
         </div>
         <div class="chat-header-right">
+          <button id="header-update-pill" class="header-update-pill" type="button" hidden title="Nueva versión disponible para MyKOS">
+            <span class="update-pulse-dot"></span>
+            <span>Actualización <strong id="header-update-version"></strong></span>
+          </button>
           <button id="right-sidebar-toggle" class="right-sidebar-toggle-btn" type="button" title="Terminal Bash">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="4 17 10 11 4 5"></polyline>
@@ -987,6 +991,47 @@
               <section class="management-panel">
                 <div class="section-heading"><span>Componentes locales</span></div>
                 <div id="management-details" class="management-details"></div>
+              </section>
+              <section class="management-panel system-updates-panel">
+                <div class="section-heading">
+                  <span>Actualizaciones del Sistema</span>
+                  <span id="system-update-badge" class="settings-badge-ok">Al día</span>
+                </div>
+                <div class="system-updates-content">
+                  <div class="system-updates-grid">
+                    <div class="update-field">
+                      <span class="update-label">Versión instalada:</span>
+                      <strong id="update-current-ver">v1.0.0</strong>
+                    </div>
+                    <div class="update-field">
+                      <span class="update-label">Última disponible:</span>
+                      <strong id="update-latest-ver">—</strong>
+                    </div>
+                    <div class="update-field">
+                      <span class="update-label">Repositorio:</span>
+                      <span id="update-repo-name" class="update-value">eskib0/MyKOS</span>
+                    </div>
+                    <div class="update-field">
+                      <span class="update-label">Modo:</span>
+                      <span id="update-mode-name" class="update-badge-mode">Git</span>
+                    </div>
+                  </div>
+                  <div id="update-notes-card" class="update-notes-card" hidden>
+                    <div class="update-notes-header">
+                      <strong id="update-release-title">Notas de la versión</strong>
+                      <span id="update-release-date" class="settings-hint"></span>
+                    </div>
+                    <div id="update-release-body" class="update-release-body"></div>
+                  </div>
+                  <div class="system-updates-actions">
+                    <button id="btn-check-updates" class="text-button" type="button">Buscar actualizaciones</button>
+                    <button id="btn-apply-update" class="ollama-action-button" type="button" disabled>Actualizar ahora (1 clic)</button>
+                  </div>
+                  <div id="update-progress-bar" class="update-progress-bar" hidden>
+                    <div class="update-progress-inner"></div>
+                  </div>
+                  <div id="update-status-msg" class="update-status-msg"></div>
+                </div>
               </section>
             </div>
           </div>

@@ -153,6 +153,21 @@ const elements = {
   userProfileReload: document.querySelector("#user-profile-reload"),
   userProfileFilePath: document.querySelector("#user-profile-file-path"),
   userProfileCharCount: document.querySelector("#user-profile-char-count"),
+  headerUpdatePill: document.querySelector("#header-update-pill"),
+  headerUpdateVersion: document.querySelector("#header-update-version"),
+  systemUpdateBadge: document.querySelector("#system-update-badge"),
+  updateCurrentVer: document.querySelector("#update-current-ver"),
+  updateLatestVer: document.querySelector("#update-latest-ver"),
+  updateRepoName: document.querySelector("#update-repo-name"),
+  updateModeName: document.querySelector("#update-mode-name"),
+  updateNotesCard: document.querySelector("#update-notes-card"),
+  updateReleaseTitle: document.querySelector("#update-release-title"),
+  updateReleaseDate: document.querySelector("#update-release-date"),
+  updateReleaseBody: document.querySelector("#update-release-body"),
+  btnCheckUpdates: document.querySelector("#btn-check-updates"),
+  btnApplyUpdate: document.querySelector("#btn-apply-update"),
+  updateProgressBar: document.querySelector("#update-progress-bar"),
+  updateStatusMsg: document.querySelector("#update-status-msg"),
   settingsPage: document.querySelector("#settings-page"),
   settingsBack: document.querySelector("#settings-back"),
   settingsNavBtn: document.querySelector("#settings-nav-btn"),
@@ -995,6 +1010,179 @@ function initUserProfile() {
   elements.userProfileRaw?.addEventListener("input", () => {
     syncProfileStats(elements.userProfileRaw.value);
   });
+}
+
+// ── Actualizaciones del Sistema (MyKOS Update) ──────────────────────────
+async function checkSystemUpdates(force = false) {
+  if (elements.btnCheckUpdates) elements.btnCheckUpdates.disabled = true;
+  if (elements.updateStatusMsg) {
+    elements.updateStatusMsg.textContent = "Comprobando actualizaciones en GitHub…";
+    elements.updateStatusMsg.className = "update-status-msg";
+  }
+
+  try {
+    const url = force ? "/api/system/updates?force=1" : "/api/system/updates";
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Error al verificar actualizaciones");
+
+    // Rellenar datos en la UI
+    if (elements.updateCurrentVer) {
+      elements.updateCurrentVer.textContent = data.current_version
+        ? `v${data.current_version.replace(/^v/, "")}${data.current_commit ? ` (${data.current_commit})` : ""}`
+        : "v1.0.0";
+    }
+    if (elements.updateLatestVer) {
+      elements.updateLatestVer.textContent = data.latest_version
+        ? `v${data.latest_version.replace(/^v/, "")}${data.latest_commit && data.latest_commit !== data.latest_version ? ` (${data.latest_commit})` : ""}`
+        : "—";
+    }
+    if (elements.updateRepoName && data.repository) {
+      elements.updateRepoName.textContent = data.repository;
+    }
+    if (elements.updateModeName) {
+      elements.updateModeName.textContent = data.is_git ? "Git Oficial" : "Paquete";
+    }
+
+    if (data.update_available) {
+      // Píldora del header visible
+      if (elements.headerUpdatePill) {
+        elements.headerUpdatePill.hidden = false;
+        if (elements.headerUpdateVersion) {
+          elements.headerUpdateVersion.textContent = data.latest_version ? `v${data.latest_version.replace(/^v/, "")}` : "";
+        }
+      }
+      if (elements.systemUpdateBadge) {
+        elements.systemUpdateBadge.textContent = "¡Nueva versión!";
+        elements.systemUpdateBadge.className = "settings-badge-alert";
+      }
+      if (elements.btnApplyUpdate) {
+        elements.btnApplyUpdate.disabled = false;
+      }
+      if (elements.updateNotesCard && (data.release_name || data.release_notes)) {
+        elements.updateNotesCard.hidden = false;
+        if (elements.updateReleaseTitle) {
+          elements.updateReleaseTitle.textContent = data.release_name || "Novedades de la actualización";
+        }
+        if (elements.updateReleaseDate && data.published_at) {
+          try {
+            const d = new Date(data.published_at);
+            elements.updateReleaseDate.textContent = d.toLocaleDateString("es-ES", { year: "numeric", month: "short", day: "numeric" });
+          } catch {}
+        }
+        if (elements.updateReleaseBody) {
+          elements.updateReleaseBody.textContent = data.release_notes || "(Sin notas adicionales)";
+        }
+      }
+      if (elements.updateStatusMsg) {
+        elements.updateStatusMsg.textContent = "Hay una actualización disponible lista para instalar.";
+        elements.updateStatusMsg.className = "update-status-msg ok";
+      }
+    } else {
+      // Al día
+      if (elements.headerUpdatePill) elements.headerUpdatePill.hidden = true;
+      if (elements.systemUpdateBadge) {
+        elements.systemUpdateBadge.textContent = "Al día";
+        elements.systemUpdateBadge.className = "settings-badge-ok";
+      }
+      if (elements.btnApplyUpdate) elements.btnApplyUpdate.disabled = true;
+      if (elements.updateNotesCard) elements.updateNotesCard.hidden = true;
+      if (elements.updateStatusMsg) {
+        elements.updateStatusMsg.textContent = "Tienes instalada la versión más reciente.";
+        elements.updateStatusMsg.className = "update-status-msg";
+      }
+    }
+  } catch (err) {
+    if (elements.updateStatusMsg) {
+      elements.updateStatusMsg.textContent = `No se pudo comprobar: ${err.message}`;
+      elements.updateStatusMsg.className = "update-status-msg error";
+    }
+  } finally {
+    if (elements.btnCheckUpdates) elements.btnCheckUpdates.disabled = false;
+  }
+}
+
+async function applySystemUpdate() {
+  if (!confirm("¿Deseas descargar e instalar la actualización ahora? MyKOS se reiniciará automáticamente.")) {
+    return;
+  }
+
+  if (elements.btnApplyUpdate) elements.btnApplyUpdate.disabled = true;
+  if (elements.btnCheckUpdates) elements.btnCheckUpdates.disabled = true;
+  if (elements.updateProgressBar) elements.updateProgressBar.hidden = false;
+  if (elements.updateStatusMsg) {
+    elements.updateStatusMsg.textContent = "Descargando e instalando actualización en caliente…";
+    elements.updateStatusMsg.className = "update-status-msg";
+  }
+
+  try {
+    const res = await fetch("/api/system/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || "Fallo al aplicar la actualización");
+
+    if (elements.updateStatusMsg) {
+      elements.updateStatusMsg.textContent = "¡Actualización instalada con éxito! Reiniciando MyKOS en 3 segundos…";
+      elements.updateStatusMsg.className = "update-status-msg ok";
+    }
+
+    // Esperar a que el servidor reinicie y recargar la página
+    let countdown = 3;
+    const timer = setInterval(() => {
+      countdown -= 1;
+      if (elements.updateStatusMsg && countdown > 0) {
+        elements.updateStatusMsg.textContent = `Reiniciando MyKOS en ${countdown} segundos…`;
+      }
+      if (countdown <= 0) {
+        clearInterval(timer);
+        pollForRestartAndReload();
+      }
+    }, 1000);
+  } catch (err) {
+    if (elements.updateProgressBar) elements.updateProgressBar.hidden = true;
+    if (elements.btnApplyUpdate) elements.btnApplyUpdate.disabled = false;
+    if (elements.btnCheckUpdates) elements.btnCheckUpdates.disabled = false;
+    if (elements.updateStatusMsg) {
+      elements.updateStatusMsg.textContent = `Error al actualizar: ${err.message}`;
+      elements.updateStatusMsg.className = "update-status-msg error";
+    }
+  }
+}
+
+function pollForRestartAndReload() {
+  let attempts = 0;
+  const poll = setInterval(async () => {
+    attempts += 1;
+    try {
+      const res = await fetch("/api/health", { cache: "no-store" });
+      if (res.ok) {
+        clearInterval(poll);
+        window.location.reload();
+      }
+    } catch {}
+    if (attempts > 30) {
+      clearInterval(poll);
+      window.location.reload();
+    }
+  }, 1000);
+}
+
+function initSystemUpdates() {
+  elements.btnCheckUpdates?.addEventListener("click", () => checkSystemUpdates(true));
+  elements.btnApplyUpdate?.addEventListener("click", () => applySystemUpdate());
+  elements.headerUpdatePill?.addEventListener("click", () => {
+    setPage("settings");
+    switchSettingsTab("management");
+  });
+
+  // Comprobar actualizaciones automáticamente 2.5s después de cargar la UI
+  setTimeout(() => {
+    checkSystemUpdates(false);
+  }, 2500);
 }
 
 function initSettingsTabs() {
@@ -3584,6 +3772,7 @@ initChatDimensions();
 initVoiceSettings();
 initSettingsTabs();
 initUserProfile();
+initSystemUpdates();
 mountModelsPage();
 mountPermissionsPage();
 restoreSidebarState();
