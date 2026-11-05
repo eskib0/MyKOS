@@ -145,6 +145,21 @@ export const POLICY_TABLE = [
     fields: { provider: oauthProvider("meta", "meta_ai_oauth") },
   },
   {
+    method: "POST", path: "/api/oauth/grok/start", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
+    fields: { provider: oauthProvider("grok", "grok_oauth") },
+  },
+  {
+    method: "POST", path: "/api/oauth/grok/refresh", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 12 },
+    fields: { provider: oauthProvider("grok", "grok_oauth") },
+  },
+  {
+    method: "POST", path: "/api/oauth/grok/logout", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
+    fields: { provider: oauthProvider("grok", "grok_oauth") },
+  },
+  {
     method: "GET", path: "/api/oauth/openrouter/callback", group: "credentials",
     body: "none", limits: { concurrent: 2, perMinute: 12 },
     // Lo abre el navegador al volver de OpenRouter: se admiten parámetros desconocidos, pero acotados.
@@ -257,6 +272,24 @@ export const POLICY_TABLE = [
     method: "POST", path: "/api/providers/antigravity/refresh", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 12 },
     fields: { provider: { type: "string", enum: ["antigravity", "antigravity_cli"], max: 64 } },
+  },
+  {
+    method: "POST", path: "/api/providers/grok/connect", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
+    fields: {
+      provider: { type: "string", enum: ["grok", "grok_api"], max: 64 },
+      api_key: { type: "string", required: true, pattern: OPAQUE_RE, max: 400, secret: true },
+    },
+  },
+  {
+    method: "POST", path: "/api/providers/grok/logout", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
+    fields: { provider: { type: "string", enum: ["grok", "grok_api"], max: 64 } },
+  },
+  {
+    method: "POST", path: "/api/providers/grok/refresh", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 12 },
+    fields: { provider: { type: "string", enum: ["grok", "grok_api"], max: 64 } },
   },
 
   // Subidas: el cuerpo puede llegar a 32 MB, así que el Gateway no lo lee; decide por cabeceras.

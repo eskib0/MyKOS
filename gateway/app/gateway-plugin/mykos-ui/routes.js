@@ -89,6 +89,9 @@ export const ROUTE_TABLE = [
   { method: "POST", pattern: "/api/oauth/meta/start", domain: "oauth", action: "start-meta", risk: "sensitive", owner: "gateway" },
   { method: "POST", pattern: "/api/oauth/meta/refresh", domain: "oauth", action: "refresh-meta", risk: "sensitive", owner: "gateway" },
   { method: "POST", pattern: "/api/oauth/meta/logout", domain: "oauth", action: "logout-meta", risk: "sensitive", owner: "gateway" },
+  { method: "POST", pattern: "/api/oauth/grok/start", domain: "oauth", action: "start-grok", risk: "sensitive", owner: "gateway" },
+  { method: "POST", pattern: "/api/oauth/grok/refresh", domain: "oauth", action: "refresh-grok", risk: "sensitive", owner: "gateway" },
+  { method: "POST", pattern: "/api/oauth/grok/logout", domain: "oauth", action: "logout-grok", risk: "sensitive", owner: "gateway" },
   { method: "POST", pattern: "/api/providers/nvidia/connect", domain: "providers", action: "connect-nvidia", risk: "sensitive", owner: "gateway" },
   { method: "POST", pattern: "/api/providers/nvidia/logout", domain: "providers", action: "logout-nvidia", risk: "sensitive", owner: "gateway" },
   { method: "POST", pattern: "/api/providers/nvidia/refresh", domain: "providers", action: "refresh-nvidia", risk: "sensitive", owner: "gateway" },
@@ -107,6 +110,9 @@ export const ROUTE_TABLE = [
   { method: "POST", pattern: "/api/providers/antigravity/connect", domain: "providers", action: "connect-antigravity", risk: "sensitive", owner: "gateway" },
   { method: "POST", pattern: "/api/providers/antigravity/logout", domain: "providers", action: "logout-antigravity", risk: "sensitive", owner: "gateway" },
   { method: "POST", pattern: "/api/providers/antigravity/refresh", domain: "providers", action: "refresh-antigravity", risk: "sensitive", owner: "gateway" },
+  { method: "POST", pattern: "/api/providers/grok/connect", domain: "providers", action: "connect-grok", risk: "sensitive", owner: "gateway" },
+  { method: "POST", pattern: "/api/providers/grok/logout", domain: "providers", action: "logout-grok", risk: "sensitive", owner: "gateway" },
+  { method: "POST", pattern: "/api/providers/grok/refresh", domain: "providers", action: "refresh-grok", risk: "sensitive", owner: "gateway" },
 
   // Automatizaciones, subagentes, nodos y medios
   { method: "GET", pattern: "/api/automations", domain: "automations", action: "list", risk: "read", owner: "gateway" },

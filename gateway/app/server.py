@@ -68,6 +68,15 @@ from meta_ai import (
     meta_ai_models,
     start_meta_ai_oauth,
 )
+from grok import (
+    clear_grok_credentials,
+    grok_auth_status,
+    grok_chat_completion,
+    grok_models,
+    logout_grok,
+    save_grok_api_key,
+    start_grok_oauth,
+)
 from gemini_live import create_ephemeral_token
 from automations import start_scheduler, stop_scheduler
 from media import MediaError, kokoro_audio, list_media, media_status, transcribe_audio_file
@@ -222,6 +231,9 @@ GATEWAY_DECISION_ROUTES = {
     ("POST", "/api/oauth/meta/start"),
     ("POST", "/api/oauth/meta/refresh"),
     ("POST", "/api/oauth/meta/logout"),
+    ("POST", "/api/oauth/grok/start"),
+    ("POST", "/api/oauth/grok/refresh"),
+    ("POST", "/api/oauth/grok/logout"),
     ("POST", "/api/providers/nvidia/connect"),
     ("POST", "/api/providers/nvidia/logout"),
     ("POST", "/api/providers/nvidia/refresh"),
@@ -240,6 +252,9 @@ GATEWAY_DECISION_ROUTES = {
     ("POST", "/api/providers/antigravity/connect"),
     ("POST", "/api/providers/antigravity/logout"),
     ("POST", "/api/providers/antigravity/refresh"),
+    ("POST", "/api/providers/grok/connect"),
+    ("POST", "/api/providers/grok/logout"),
+    ("POST", "/api/providers/grok/refresh"),
     ("POST", "/api/uploads"),
     ("POST", "/api/nodes/heartbeat"),
 }
@@ -380,6 +395,9 @@ GEMINI_MODEL_CACHE: dict[str, Any] = {"checked_at": 0.0, "models": [], "authenti
 MISTRAL_LOCK = threading.RLock()
 MISTRAL_MODEL_CACHE: dict[str, Any] = {"checked_at": 0.0, "models": [], "authenticated": False, "error": ""}
 MISTRAL_MODEL_CACHE_SECONDS = 300.0
+GROK_LOCK = threading.RLock()
+GROK_MODEL_CACHE: dict[str, Any] = {"checked_at": 0.0, "models": [], "authenticated": False, "error": ""}
+GROK_MODEL_CACHE_SECONDS = 60.0
 ACTIVE_ACTIVITIES: dict[str, dict[str, Any]] = {}
 ACTIVITY_STALE_SECONDS = 30 * 60
 LLAMA_CPP_PROCESS_LOCK = threading.RLock()
@@ -2141,6 +2159,70 @@ def logout_meta_ai() -> dict[str, Any]:
     return logout_meta_ai_oauth()
 
 
+def grok_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool, str]:
+    now = time.monotonic()
+    with GROK_LOCK:
+        cached = GROK_MODEL_CACHE.get("models") or []
+        if not force and cached and now - float(GROK_MODEL_CACHE.get("checked_at", 0)) < GROK_MODEL_CACHE_SECONDS:
+            return list(cached), bool(GROK_MODEL_CACHE.get("authenticated")), str(GROK_MODEL_CACHE.get("error", ""))
+        try:
+            auth = grok_auth_status()
+            if not auth.get("authenticated"):
+                error = str(auth.get("error", ""))
+                GROK_MODEL_CACHE.update(checked_at=now, models=[], authenticated=False, error=error)
+                return [], False, error
+            rows = grok_models()
+            is_oauth = auth.get("mode") == "oauth"
+            models = [
+                {
+                    "name": str(row.get("name", f"grok/{row.get('id', '')}")).strip(),
+                    "label": str(row.get("label", row.get("id", ""))).strip(),
+                    "provider": "grok_oauth" if is_oauth else "grok_api",
+                    "provider_label": "Grok · xAI (OAuth)" if is_oauth else "Grok · xAI (API)",
+                    "size": 0,
+                    "parameter_size": "",
+                    "family": "Grok",
+                    "quantization": "",
+                    "modified_at": "",
+                    "capabilities": ["chat", "completion", "tools"] + (["vision"] if row.get("vision") else []),
+                    "chat_capable": True,
+                    "vision_capable": bool(row.get("vision")),
+                    "thinking_capable": False,
+                    "tools_capable": True,
+                    "context_length": int(row.get("context_length", 131072)),
+                    "remote": True,
+                    "remote_host": "xAI API mediante la credencial protegida de MyKOS",
+                    "benchmark_capable": False,
+                    "auth_method": str(auth.get("auth_method", "Grok")),
+                    "auth_status": "autenticado",
+                    "auth_error": "",
+                }
+                for row in rows
+            ]
+            GROK_MODEL_CACHE.update(checked_at=now, models=models, authenticated=True, error="")
+            return models, True, ""
+        except RuntimeError as exc:
+            GROK_MODEL_CACHE.update(checked_at=now, error=str(exc))
+            return list(cached), bool(GROK_MODEL_CACHE.get("authenticated")), str(exc)
+
+
+def start_grok_login() -> dict[str, Any]:
+    return start_grok_oauth(open_browser=True)
+
+
+def refresh_grok_models() -> dict[str, Any]:
+    models, authenticated, error = grok_model_catalog(force=True)
+    return {"ok": True, "provider": "grok", "authenticated": authenticated, "models": len(models), "error": error}
+
+
+def _logout_grok() -> dict[str, Any]:
+    clear_grok_credentials()
+    with GROK_LOCK:
+        GROK_MODEL_CACHE.clear()
+        GROK_MODEL_CACHE.update(checked_at=0.0, models=[], authenticated=False, error="")
+    return {"ok": True, "provider": "grok", "status": "logged_out"}
+
+
 def start_claude_login() -> dict[str, Any]:
     global CLAUDE_LOGIN_PROCESS
     executable = claude_executable_path()
@@ -2347,6 +2429,8 @@ def get_model_catalog() -> tuple[list[dict[str, Any]], str]:
     models.extend(antigravity_catalog)
     meta_ai_catalog, _meta_ai_authenticated, _meta_ai_error = meta_ai_model_catalog()
     models.extend(meta_ai_catalog)
+    grok_catalog, _grok_authenticated, _grok_error = grok_model_catalog()
+    models.extend(grok_catalog)
     return models, ollama_error
 
 
@@ -3910,6 +3994,45 @@ def run_kimi_until_result(
     )
 
 
+def run_grok_until_result(
+    model: str,
+    messages: list[dict[str, Any]],
+    conversation_id: str,
+    *,
+    supports_vision: bool = False,
+    generation: dict[str, Any] | None = None,
+    activity_id: str | None = None,
+    permission_mode: str = "supervisado",
+) -> dict[str, Any]:
+    if not model.startswith("grok/"):
+        raise RuntimeError(f"Modelo Grok no reconocido: {model}")
+    generation = generation if isinstance(generation, dict) else {}
+    speed = str(generation.get("speed", "balanced")).strip().casefold()
+    max_tokens = {"fast": 2048, "balanced": 4096, "quality": 8192, "full": 16384}.get(speed, 4096)
+    creativity = str(generation.get("creativity", "precise")).strip().casefold()
+    temperature = {"precise": 0.2, "balanced": 0.5, "creative": 0.8}.get(creativity, 0.2)
+    auth = grok_auth_status()
+    provider_id = "grok_oauth" if auth.get("mode") == "oauth" else "grok_api"
+    return _run_openai_json_tool_loop(
+        model,
+        provider_id,
+        "Grok",
+        f"{model} · xAI Grok directa de MyKOS.",
+        messages,
+        conversation_id,
+        lambda req_messages: grok_chat_completion(
+            model,
+            req_messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        ),
+        supports_vision=supports_vision,
+        generation=generation,
+        activity_id=activity_id,
+        permission_mode=permission_mode,
+    )
+
+
 def parse_gemini_response(result_text: str) -> dict[str, Any]:
     cleaned = re.sub(r"<think>[\s\S]*?</think>", "", result_text, flags=re.IGNORECASE).strip()
     if not cleaned:
@@ -4150,6 +4273,7 @@ def run_model_until_result(
         or model.startswith("mistral/")
         or model.startswith("anthropic/")
         or model.startswith("openrouter/")
+        or model.startswith("grok/")
         or model.startswith("openai-codex-oauth/") or model == "gpt-live-1-codex"
         or model == CLAUDE_MODEL_NAME
     )
@@ -4233,6 +4357,16 @@ def run_model_until_result(
         )
     if model.startswith("anthropic/"):
         return run_anthropic_until_result(
+            model,
+            messages,
+            conversation_id,
+            supports_vision=supports_vision,
+            generation=generation,
+            activity_id=activity_id,
+            permission_mode=permission_mode,
+        )
+    if model.startswith("grok/"):
+        return run_grok_until_result(
             model,
             messages,
             conversation_id,
@@ -4903,6 +5037,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 providers.append({"id": "gemini_api", "label": "Gemini · API", **gemini_auth_status()})
                 providers.append({"id": "mistral_api", "label": "Mistral · API / Vibe", **mistral_auth_status()})
                 providers.append({"id": "antigravity_cli", "label": "Antigravity · CLI", **antigravity_auth_status()})
+                providers.append({"id": "grok_oauth", "label": "Grok · xAI (OAuth / API)", **grok_auth_status()})
                 self.send_json(status)
                 return
             if path == "/mykos-control/gemini-live/token":
@@ -4936,12 +5071,21 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     "error": str(status.get("error") or "")[:300],
                 })
                 return
-            if path in {"/mykos-control/openrouter/refresh", "/mykos-control/meta/refresh"}:
+            if path in {"/mykos-control/openrouter/refresh", "/mykos-control/meta/refresh", "/mykos-control/grok/refresh", "/mykos-control/oauth/grok/refresh"}:
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
                 if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
                     self.send_json({"ok": False, "error": "Plano de control no autorizado."}, status=403)
                     return
                 payload = self.read_json()
+                if path in {"/mykos-control/grok/refresh", "/mykos-control/oauth/grok/refresh"}:
+                    if payload.get("provider", "grok_oauth") not in {"grok", "grok_oauth", "grok_api"}:
+                        self.send_json({"ok": False, "error": "Proveedor OAuth no compatible."}, status=400)
+                        return
+                    try:
+                        self.send_json(refresh_grok_models())
+                    except RuntimeError as error:
+                        self.send_json({"ok": False, "error": str(error), "models": 0}, status=502)
+                    return
                 if path == "/mykos-control/meta/refresh":
                     if payload.get("provider", "meta_ai_oauth") not in {"meta", "meta_ai", "meta_ai_oauth"}:
                         self.send_json({"ok": False, "error": "Proveedor OAuth no compatible."}, status=400)
@@ -4966,6 +5110,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 "/mykos-control/providers/mistral/refresh",
                 "/mykos-control/providers/anthropic/refresh",
                 "/mykos-control/providers/antigravity/refresh",
+                "/mykos-control/providers/grok/refresh",
             }:
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
                 if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
@@ -4988,6 +5133,8 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                         res = refresh_mistral_models()
                     elif provider == "anthropic":
                         res = refresh_anthropic_models()
+                    elif provider == "grok":
+                        res = refresh_grok_models()
                     else:
                         res = refresh_antigravity_models()
                     self.send_json(res)
@@ -4999,12 +5146,14 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 "/mykos-control/oauth/claude/logout",
                 "/mykos-control/oauth/openrouter/logout",
                 "/mykos-control/oauth/meta/logout",
+                "/mykos-control/oauth/grok/logout",
                 "/mykos-control/providers/nvidia/logout",
                 "/mykos-control/providers/kimi/logout",
                 "/mykos-control/providers/gemini/logout",
                 "/mykos-control/providers/mistral/logout",
                 "/mykos-control/providers/anthropic/logout",
                 "/mykos-control/providers/antigravity/logout",
+                "/mykos-control/providers/grok/logout",
             }:
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
                 if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
@@ -5022,6 +5171,8 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     "/mykos-control/providers/mistral/logout": ({"mistral", "mistral_api"}, lambda: _logout_mistral()),
                     "/mykos-control/providers/anthropic/logout": ({"anthropic", "anthropic_api"}, lambda: _logout_anthropic()),
                     "/mykos-control/providers/antigravity/logout": ({"antigravity", "antigravity_cli"}, lambda: _logout_antigravity()),
+                    "/mykos-control/oauth/grok/logout": ({"grok", "grok_oauth", "grok_api"}, lambda: _logout_grok()),
+                    "/mykos-control/providers/grok/logout": ({"grok", "grok_oauth", "grok_api"}, lambda: _logout_grok()),
                 }
                 accepted, action = actions[path]
                 sent_provider = str(payload.get("provider", "")).strip()
@@ -5243,6 +5394,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 "/mykos-control/oauth/claude/start",
                 "/mykos-control/oauth/openrouter/start",
                 "/mykos-control/oauth/meta/start",
+                "/mykos-control/oauth/grok/start",
             }:
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
                 if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
@@ -5253,6 +5405,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     "/mykos-control/oauth/claude/start": ({"claude", "anthropic", "anthropic_oauth", "claude_oauth"}, start_claude_login),
                     "/mykos-control/oauth/openrouter/start": ({"openrouter", "openrouter_oauth"}, start_openrouter_login),
                     "/mykos-control/oauth/meta/start": ({"meta", "meta_ai", "meta_ai_oauth"}, start_meta_ai_login),
+                    "/mykos-control/oauth/grok/start": ({"grok", "grok_oauth"}, start_grok_login),
                 }
                 accepted, action = actions[path]
                 sent_provider = str(payload.get("provider", "")).strip()
@@ -5271,13 +5424,14 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 "/mykos-control/providers/mistral/connect",
                 "/mykos-control/providers/anthropic/connect",
                 "/mykos-control/providers/antigravity/connect",
+                "/mykos-control/providers/grok/connect",
             }:
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
                 if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
                     self.send_json({"ok": False, "error": "Plano de control no autorizado."}, status=403)
                     return
                 provider = path.split("/")[3]
-                accepted = {provider, f"{provider}_api", f"{provider}_cli"}
+                accepted = {provider, f"{provider}_api", f"{provider}_cli", f"{provider}_oauth"}
                 if payload.get("provider", provider) not in accepted:
                     self.send_json({"ok": False, "error": "Proveedor no compatible."}, status=400)
                     return
@@ -5301,6 +5455,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                         "kimi": "Kimi",
                         "mistral": "Mistral",
                         "anthropic": "Anthropic",
+                        "grok": "xAI (Grok)",
                     }
                     raise ApiError(f"Introduce una clave personal de {provider_names.get(provider, provider)}.")
                 if provider == "nvidia":
@@ -5338,6 +5493,13 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                         ANTHROPIC_MODEL_CACHE.clear()
                         ANTHROPIC_MODEL_CACHE.update(checked_at=0.0, models=[], authenticated=False, error="")
                     self.send_json({"ok": True, "provider": "anthropic_api", "authenticated": True, "models": len(ANTHROPIC_MODELS)})
+                elif provider == "grok":
+                    save_grok_api_key(api_key)
+                    with GROK_LOCK:
+                        GROK_MODEL_CACHE.clear()
+                        GROK_MODEL_CACHE.update(checked_at=0.0, models=[], authenticated=False, error="")
+                    rows = grok_models(key=api_key)
+                    self.send_json({"ok": True, "provider": "grok_api", "authenticated": True, "models": len(rows)})
                 return
             self.send_json({"error": "Ruta no encontrada."}, status=404)
         except ApiError as error:

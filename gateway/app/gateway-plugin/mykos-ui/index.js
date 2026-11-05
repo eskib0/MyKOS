@@ -2840,11 +2840,23 @@ export default {
           recordApiResult(200, { owner: "mykos-gateway" });
           return true;
         }
-        if (req.method === "POST" && ["/api/oauth/openrouter/refresh", "/api/oauth/meta/refresh"].includes(apiPath)) {
+        if (req.method === "POST" && ["/api/oauth/openrouter/refresh", "/api/oauth/meta/refresh", "/api/oauth/grok/refresh"].includes(apiPath)) {
           const isMeta = apiPath === "/api/oauth/meta/refresh";
+          const isGrok = apiPath === "/api/oauth/grok/refresh";
           let payload = {};
           try { payload = JSON.parse((await readBody(req, 2048)) || "{}"); } catch {
             sendJson(res, 400, { error: "El cuerpo debe ser JSON válido." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
+          }
+          if (isGrok) {
+            if (payload?.provider !== undefined && payload.provider !== "grok" && payload.provider !== "grok_oauth" && payload.provider !== "grok_api") {
+              sendJson(res, 400, { error: "Proveedor OAuth no compatible." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
+            }
+            const refreshed = await jsonRequest(`${backend.config.url}/mykos-control/grok/refresh`, { provider: "grok_oauth" }, 30_000, { "X-MyKOS-Control-Token": cfg.control.token });
+            const status = refreshed.status >= 400 ? refreshed.status : 503;
+            if (refreshed.status >= 400 || !isObject(refreshed.body)) {
+              sendJson(res, status, { ok: false, error: String(refreshed.body?.error || "No se pudo refrescar Grok."), models: 0 }); recordApiResult(status, { owner: "mykos-gateway" }); return true;
+            }
+            sendJson(res, 200, refreshed.body); recordApiResult(200, { owner: "mykos-gateway" }); return true;
           }
           if (isMeta) {
             if (payload?.provider !== undefined && payload.provider !== "meta" && payload.provider !== "meta_ai_oauth") {
@@ -2867,9 +2879,9 @@ export default {
           }
           sendJson(res, 200, refreshed.body); recordApiResult(200, { owner: "mykos-gateway" }); return true;
         }
-        if (req.method === "POST" && ["/api/oauth/openai/start", "/api/oauth/claude/start", "/api/oauth/openrouter/start", "/api/oauth/meta/start"].includes(apiPath)) {
+        if (req.method === "POST" && ["/api/oauth/openai/start", "/api/oauth/claude/start", "/api/oauth/openrouter/start", "/api/oauth/meta/start", "/api/oauth/grok/start"].includes(apiPath)) {
           const name = apiPath.split("/")[3];
-          const provider = ({ openai: "openai_codex_oauth", claude: "anthropic_oauth", openrouter: "openrouter", meta: "meta_ai_oauth" })[name];
+          const provider = ({ openai: "openai_codex_oauth", claude: "anthropic_oauth", openrouter: "openrouter", meta: "meta_ai_oauth", grok: "grok_oauth" })[name];
           let payload = {};
           try { payload = JSON.parse((await readBody(req, 2048)) || "{}"); } catch {
             sendJson(res, 400, { error: "El cuerpo debe ser JSON válido." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
@@ -2890,11 +2902,11 @@ export default {
           const status = await proxyRequest(req, res, backend.config.url, null, `/mykos-control/oauth/openrouter/callback${apiUrl.search}`, { "x-mykos-control-token": cfg.control.token });
           recordApiResult(status, { owner: "mykos-gateway", internal_path: "/mykos-control/oauth/openrouter/callback" }); return true;
         }
-        if (req.method === "POST" && ["/api/oauth/openai/logout", "/api/oauth/claude/logout", "/api/oauth/openrouter/logout", "/api/oauth/meta/logout", "/api/providers/nvidia/logout", "/api/providers/kimi/logout", "/api/providers/gemini/logout", "/api/providers/mistral/logout", "/api/providers/anthropic/logout", "/api/providers/antigravity/logout"].includes(apiPath)) {
+        if (req.method === "POST" && ["/api/oauth/openai/logout", "/api/oauth/claude/logout", "/api/oauth/openrouter/logout", "/api/oauth/meta/logout", "/api/oauth/grok/logout", "/api/providers/nvidia/logout", "/api/providers/kimi/logout", "/api/providers/gemini/logout", "/api/providers/mistral/logout", "/api/providers/anthropic/logout", "/api/providers/antigravity/logout", "/api/providers/grok/logout"].includes(apiPath)) {
           const match = apiPath.match(/^\/api\/(oauth|providers)\/([^/]+)\/logout$/);
           const group = match?.[1] || "";
           const name = match?.[2] || "";
-          const provider = ({ openai: "openai_codex_oauth", claude: "anthropic_oauth", openrouter: "openrouter", meta: "meta_ai_oauth", nvidia: "nvidia_api", kimi: "kimi_api", gemini: "gemini_api", mistral: "mistral_api", anthropic: "anthropic_api", antigravity: "antigravity_cli" })[name];
+          const provider = ({ openai: "openai_codex_oauth", claude: "anthropic_oauth", openrouter: "openrouter", meta: "meta_ai_oauth", grok: group === "oauth" ? "grok_oauth" : "grok_api", nvidia: "nvidia_api", kimi: "kimi_api", gemini: "gemini_api", mistral: "mistral_api", anthropic: "anthropic_api", antigravity: "antigravity_cli" })[name];
           let payload = {};
           try { payload = JSON.parse((await readBody(req, 2048)) || "{}"); } catch {
             sendJson(res, 400, { error: "El cuerpo debe ser JSON válido." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
@@ -2909,7 +2921,7 @@ export default {
           }
           sendJson(res, 200, loggedOut.body); recordApiResult(200, { owner: "mykos-gateway" }); return true;
         }
-        if (req.method === "POST" && /^\/api\/providers\/(nvidia|kimi|gemini|mistral|anthropic|antigravity)\/refresh$/.test(apiPath)) {
+        if (req.method === "POST" && /^\/api\/providers\/(nvidia|kimi|gemini|mistral|anthropic|antigravity|grok)\/refresh$/.test(apiPath)) {
           const match = apiPath.match(/^\/api\/providers\/([^/]+)\/refresh$/);
           const provider = match?.[1] || "";
           const expectedProvider = provider === "antigravity" ? "antigravity_cli" : `${provider}_api`;
@@ -2927,7 +2939,7 @@ export default {
           }
           sendJson(res, 200, refreshed.body); recordApiResult(200, { owner: "mykos-gateway" }); return true;
         }
-        if (req.method === "POST" && /^\/api\/providers\/(nvidia|kimi|gemini|mistral|anthropic|antigravity)\/connect$/.test(apiPath)) {
+        if (req.method === "POST" && /^\/api\/providers\/(nvidia|kimi|gemini|mistral|anthropic|antigravity|grok)\/connect$/.test(apiPath)) {
           const match = apiPath.match(/^\/api\/providers\/([^/]+)\/connect$/);
           const provider = match?.[1] || "";
           const expectedProvider = provider === "antigravity" ? "antigravity_cli" : `${provider}_api`;
@@ -2947,7 +2959,7 @@ export default {
           } else {
             const apiKey = typeof payload?.api_key === "string" ? payload.api_key.trim() : "";
             if (!apiKey) {
-              const names = { nvidia: "NVIDIA", gemini: "Google AI Studio (Gemini)", kimi: "Kimi", mistral: "Mistral", anthropic: "Anthropic" };
+              const names = { nvidia: "NVIDIA", gemini: "Google AI Studio (Gemini)", kimi: "Kimi", mistral: "Mistral", anthropic: "Anthropic", grok: "xAI (Grok)" };
               sendJson(res, 400, { ok: false, error: `Introduce una clave personal de ${names[provider] || provider}.` }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
             }
             forwardPayload.api_key = apiKey;

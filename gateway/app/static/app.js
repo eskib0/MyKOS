@@ -211,6 +211,15 @@ const elements = {
   oauthMetaRefresh: document.querySelector("#oauth-meta-refresh"),
   oauthMetaStatus: document.querySelector("#oauth-meta-status"),
   oauthMetaModels: document.querySelector("#oauth-meta-models"),
+  grokRefresh: document.querySelector("#grok-refresh"),
+  grokStatus: document.querySelector("#grok-status"),
+  grokOauthConnect: document.querySelector("#grok-oauth-connect"),
+  grokApiToggle: document.querySelector("#grok-api-toggle"),
+  grokLogout: document.querySelector("#grok-logout"),
+  grokKeyRow: document.querySelector("#grok-key-row"),
+  grokApiKey: document.querySelector("#grok-api-key"),
+  grokApiSave: document.querySelector("#grok-api-save"),
+  grokModels: document.querySelector("#grok-models"),
   nvidiaApiRefresh: document.querySelector("#nvidia-api-refresh"),
   nvidiaApiConnect: document.querySelector("#nvidia-api-connect"),
   nvidiaApiLogout: document.querySelector("#nvidia-api-logout"),
@@ -2384,6 +2393,7 @@ function renderOAuthStatus(data = {}) {
   renderClaudeOAuthStatus();
   renderOpenRouterOAuthStatus();
   renderMetaOAuthStatus();
+  renderGrokStatus();
   renderMistralApiStatus();
   renderAntigravityCliStatus();
   const openai = providers.find((item) => item.id === "openai_codex_oauth") || {};
@@ -2523,6 +2533,57 @@ function renderMetaOAuthStatus() {
     elements.oauthMeta.disabled = false;
     elements.oauthMetaLogout.hidden = true;
     elements.oauthMetaModels.textContent = "Vincula Meta AI (https://www.meta.ai/) por OAuth para usar Llama 4 Fast y Reasoning en el chat.";
+  }
+}
+
+function renderGrokStatus() {
+  if (!elements.grokStatus) return;
+  const models = state.models.filter((item) => item.provider === "grok_oauth" || item.provider === "grok_api");
+  const oauth = state.oauthProviders.find((item) => item.id === "grok_oauth") || {};
+  const login = oauth.login || {};
+  const connected = Boolean(oauth.authenticated) || models.some((item) => item.chat_capable && item.auth_status === "autenticado");
+
+  if (connected) {
+    const method = oauth.auth_method || (models[0]?.provider === "grok_oauth" ? "Grok OAuth (xAI)" : "Grok API Key");
+    elements.grokStatus.textContent = `Grok (xAI) conectado mediante ${method}. ${models.length} modelos disponibles.`;
+    elements.grokOauthConnect.textContent = "Actualizar modelos";
+    elements.grokOauthConnect.disabled = false;
+    elements.grokLogout.hidden = false;
+    elements.grokApiToggle.hidden = true;
+    elements.grokKeyRow.hidden = true;
+    elements.grokModels.textContent = models.length
+      ? models.map((item) => item.label || item.name).join(" · ")
+      : "Los modelos de Grok aparecerán en el selector principal de Modelo.";
+  } else if (login.status === "running") {
+    elements.grokStatus.replaceChildren();
+    const textNode = document.createTextNode("Autoriza MyKOS en xAI. ");
+    elements.grokStatus.appendChild(textNode);
+    if (login.user_code) {
+      const codeSpan = document.createElement("span");
+      codeSpan.textContent = `Código: ${login.user_code}`;
+      codeSpan.style.fontWeight = "bold";
+      elements.grokStatus.appendChild(codeSpan);
+    }
+    if (login.verification_uri_complete) {
+      const link = document.createElement("a");
+      link.href = login.verification_uri_complete;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.className = "oauth-login-link";
+      link.textContent = " · Abrir página de aprobación en xAI";
+      elements.grokStatus.appendChild(link);
+    }
+    elements.grokOauthConnect.textContent = "Esperando aprobación…";
+    elements.grokOauthConnect.disabled = true;
+    elements.grokLogout.hidden = true;
+    elements.grokModels.textContent = "Pulsa en el enlace de aprobación en xAI para autorizar MyKOS.";
+  } else {
+    elements.grokStatus.textContent = login.error || oauth.error || "Grok todavía no está conectado en MyKOS.";
+    elements.grokOauthConnect.textContent = "Conectar xAI OAuth";
+    elements.grokOauthConnect.disabled = false;
+    elements.grokLogout.hidden = true;
+    elements.grokApiToggle.hidden = false;
+    elements.grokModels.textContent = "Conecta con tu cuenta de xAI o introduce tu clave personal de xAI (xai-…).";
   }
 }
 
@@ -2874,6 +2935,82 @@ elements.oauthMetaRefresh?.addEventListener("click", async () => {
     await loadModels();
   } catch (error) {
     elements.oauthMetaStatus.textContent = error.message;
+  }
+});
+
+async function startGrokAuth() {
+  if (!elements.grokOauthConnect) return;
+  elements.grokOauthConnect.disabled = true;
+  try {
+    const connected = state.models.some((item) => (item.provider === "grok_oauth" || item.provider === "grok_api") && item.auth_status === "autenticado");
+    if (connected) {
+      await api("/api/oauth/grok/refresh", { method: "POST", body: JSON.stringify({ provider: "grok_oauth" }) });
+      await loadModels();
+      return;
+    }
+    elements.grokStatus.textContent = "Iniciando autorización con xAI (Grok)…";
+    const res = await api("/api/oauth/grok/start", { method: "POST", body: JSON.stringify({ provider: "grok_oauth" }) });
+    if (res?.verification_uri_complete) {
+      window.open(res.verification_uri_complete, "_blank", "width=600,height=720");
+    }
+    await loadOAuthStatus();
+    const poll = async () => {
+      await loadOAuthStatus();
+      const status = await api("/api/oauth/status").catch(() => ({}));
+      const grok = (status.providers || []).find((item) => item.id === "grok_oauth");
+      if (grok?.authenticated) {
+        await loadModels();
+      } else if (grok?.login?.status === "running") {
+        window.setTimeout(poll, 3000);
+      } else {
+        await loadModels();
+      }
+    };
+    window.setTimeout(poll, 2500);
+  } catch (error) {
+    elements.grokStatus.textContent = error.message;
+    elements.grokOauthConnect.disabled = false;
+  }
+}
+
+elements.grokOauthConnect?.addEventListener("click", startGrokAuth);
+elements.grokLogout?.addEventListener("click", () => logoutOAuth("grok", elements.grokStatus, elements.grokLogout));
+elements.grokRefresh?.addEventListener("click", async () => {
+  try {
+    await api("/api/oauth/grok/refresh", { method: "POST", body: JSON.stringify({ provider: "grok_oauth" }) });
+    await loadModels();
+  } catch (error) {
+    elements.grokStatus.textContent = error.message;
+  }
+});
+elements.grokApiToggle?.addEventListener("click", () => {
+  if (!elements.grokKeyRow) return;
+  elements.grokKeyRow.hidden = !elements.grokKeyRow.hidden;
+  if (!elements.grokKeyRow.hidden && elements.grokApiKey) {
+    elements.grokApiKey.focus();
+  }
+});
+elements.grokApiSave?.addEventListener("click", async () => {
+  const key = elements.grokApiKey?.value?.trim();
+  if (!key) {
+    elements.grokStatus.textContent = "Introduce una clave válida de xAI (xai-…).";
+    return;
+  }
+  elements.grokApiSave.disabled = true;
+  try {
+    elements.grokStatus.textContent = "Guardando credencial de Grok…";
+    await api("/api/providers/grok/connect", {
+      method: "POST",
+      body: JSON.stringify({ provider: "grok_api", api_key: key }),
+    });
+    elements.grokKeyRow.hidden = true;
+    if (elements.grokApiKey) elements.grokApiKey.value = "";
+    await loadModels();
+    await loadOAuthStatus();
+  } catch (error) {
+    elements.grokStatus.textContent = error.message;
+  } finally {
+    elements.grokApiSave.disabled = false;
   }
 });
 elements.nvidiaApiConnect?.addEventListener("click", async () => {
