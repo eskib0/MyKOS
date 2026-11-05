@@ -100,6 +100,42 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
         risk, reason = analyze_action_risk({"kind": "write_file", "root": "workspace", "path": "notas.txt"})
         self.assertEqual(risk, "normal")
 
+    def test_modular_tools_package_integrity(self):
+        """Verifica que tools sea un paquete modularizado con sus 11 sub-módulos accesibles."""
+        import tools
+        from tools import (
+            base,
+            documents,
+            filesystem,
+            git_tools,
+            memory,
+            ollama,
+            schemas,
+            shell,
+            system,
+            web,
+        )
+
+        # 1. Comprobar que el paquete se carga desde una carpeta con __init__.py
+        tools_path = Path(tools.__file__)
+        self.assertEqual(tools_path.name, "__init__.py")
+        self.assertTrue(tools_path.parent.is_dir())
+
+        # 2. Comprobar que los despachadores principales están presentes y son invocables
+        self.assertTrue(callable(tools.execute_tool))
+        self.assertTrue(callable(tools.execute_approved_action))
+        self.assertTrue(callable(tools.prepare_approval_action))
+
+        # 3. Comprobar catálogo de herramientas y esquemas
+        catalog = tools.tool_catalog()
+        self.assertIsInstance(catalog, list)
+        self.assertGreater(len(catalog), 10)
+
+        # 4. Comprobar ejecución de consulta segura en sólo lectura
+        status = tools.execute_tool("get_local_status", {})
+        self.assertTrue(status.get("ok"))
+        self.assertIn("platform", status)
+
 
 if __name__ == "__main__":
     unittest.main()

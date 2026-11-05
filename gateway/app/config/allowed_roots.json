@@ -7,7 +7,7 @@
     },
     {
       "name": "mykos",
-      "path": ".",
+      "path": "../..",
       "description": "Código fuente e infraestructura de MyKOS"
     }
   ]
