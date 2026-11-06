@@ -389,13 +389,21 @@ def _is_path_key(key: str) -> bool:
     )
 
 
-def _is_path_like_value(val: str) -> bool:
+def _is_url(val: str) -> bool:
+    s = val.strip().lower()
+    return s.startswith(("http://", "https://", "ftp://", "ws://", "wss://"))
+
+
+def _is_explicit_path_syntax(val: str) -> bool:
+    """Detecta sintaxis explícita de ruta en sistema de archivos (absoluta, home, relativa explícita o UNC)."""
     s = val.strip()
-    if not s:
+    if not s or _is_url(s):
         return False
-    if s.startswith(("/", "~", "./", "../")) or (len(s) >= 3 and s[1:3] == ":\\" or s.startswith("\\\\")):
+    if s.startswith(("/", "~", "./", "../")):
         return True
-    if "/" in s or "\\" in s:
+    if len(s) >= 3 and (s[1:3] == ":\\" or s[1:3] == ":/"):
+        return True
+    if s.startswith(("\\\\", "//")):
         return True
     return False
 
@@ -407,10 +415,18 @@ def _sanitize_rea_args(args: Any) -> Any:
             if isinstance(v, str):
                 is_out = _is_output_key(k)
                 is_pk = _is_path_key(k)
-                is_pv = _is_path_like_value(v)
-                if is_out and (is_pk or is_pv):
-                    sanitized[k] = resolve_rea_output_target(v)
-                elif is_pk or is_pv:
+                is_explicit_path = _is_explicit_path_syntax(v)
+                if is_out:
+                    if is_pk or is_explicit_path:
+                        sanitized[k] = resolve_rea_output_target(v)
+                    else:
+                        sanitized[k] = v
+                elif is_pk:
+                    if not _is_url(v):
+                        sanitized[k] = resolve_rea_target(v)
+                    else:
+                        sanitized[k] = v
+                elif is_explicit_path:
                     sanitized[k] = resolve_rea_target(v)
                 else:
                     sanitized[k] = v

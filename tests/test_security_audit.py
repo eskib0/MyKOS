@@ -416,9 +416,23 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
             rea._sanitize_rea_args({"nested": {"config": {"file": "/root/.ssh/id_rsa"}}})
         self.assertIn("Acceso denegado", str(ctx.exception))
 
-        # 6. Parámetros legítimos sin rutas no deben verse afectados
-        clean = rea._sanitize_rea_args({"format": "json", "detail": "summary", "count": 10})
-        self.assertEqual(clean, {"format": "json", "detail": "summary", "count": 10})
+        # 6. Parámetros legítimos sin rutas o con barras no-ruta (query, pattern, url) NO deben verse afectados
+        clean = rea._sanitize_rea_args({
+            "format": "json",
+            "detail": "summary",
+            "count": 10,
+            "query": "console/log",
+            "pattern": "foo/bar",
+            "url": "https://example.com/documento",
+        })
+        self.assertEqual(clean, {
+            "format": "json",
+            "detail": "summary",
+            "count": 10,
+            "query": "console/log",
+            "pattern": "foo/bar",
+            "url": "https://example.com/documento",
+        })
 
     def test_qwen_fail_closed_on_unreachable_ollama(self):
         """Verifica que Qwen falle cerrado si se solicita un modelo local pero Ollama está inaccesible."""
@@ -474,15 +488,31 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
         mock_pid_file.is_file.return_value = True
         mock_pid_file.read_text.return_value = pid_data
 
+        # 1. Starttime difiere ("67890" != "12345") -> no debe matar
         with patch.object(core.activity, "LLAMA_PID_FILE", mock_pid_file), \
              patch.object(core.activity, "_process_starttime", return_value="67890"), \
              patch("os.kill") as mock_kill:
-
-            # Como el starttime difiere ("67890" != "12345"), os.kill no debe ser invocado
             core.activity.stop_llama_cpp_server()
             mock_kill.assert_not_called()
 
-        # Si el starttime coincide, verificamos que prosigue a verificar UID y cmdline
+        # 2. Fail-closed: si _process_starttime devuelve "" (error de lectura) -> no debe matar
+        with patch.object(core.activity, "LLAMA_PID_FILE", mock_pid_file), \
+             patch.object(core.activity, "_process_starttime", return_value=""), \
+             patch("os.kill") as mock_kill:
+            core.activity.stop_llama_cpp_server()
+            mock_kill.assert_not_called()
+
+        # 3. Fail-closed: si el archivo PID no tiene starttime (legacy o corrupto) -> no debe matar
+        legacy_pid_file = MagicMock()
+        legacy_pid_file.is_file.return_value = True
+        legacy_pid_file.read_text.return_value = str(test_pid)
+        with patch.object(core.activity, "LLAMA_PID_FILE", legacy_pid_file), \
+             patch.object(core.activity, "_process_starttime", return_value="12345"), \
+             patch("os.kill") as mock_kill:
+            core.activity.stop_llama_cpp_server()
+            mock_kill.assert_not_called()
+
+        # 4. Si el starttime coincide exactamente y UID/cmdline son válidos -> mata correctamente
         mock_pid_file2 = MagicMock()
         mock_pid_file2.is_file.return_value = True
         mock_pid_file2.read_text.return_value = pid_data
@@ -504,22 +534,21 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
             mock_kill.assert_called_once_with(test_pid, 15)
 
     def test_openrouter_oauth_callback_error_handling(self):
-        """Verifica que un error en el callback de OAuth (state inválido) no cause una excepción secundaria."""
+        """Verifica que un error en el callback de OAuth renderice la página sin lanzar excepciones secundarias (do_GET real)."""
         import server
         from unittest.mock import patch, MagicMock
 
         handler = server.MyKOSHandler.__new__(server.MyKOSHandler)
+        handler.command = "GET"
+        handler.path = "/mykos-control/oauth/openrouter/callback?code=bad_code&state=bad_state"
+        handler.headers = {"X-MyKOS-Control-Token": "test-control-token"}
         handler.send_openrouter_callback_page = MagicMock()
+        handler.parse_query = lambda q: {"code": ["bad_code"], "state": ["bad_state"]}
 
-        # Simulamos que complete_openrouter_oauth lanza RuntimeError por state inválido
-        with patch("server.complete_openrouter_oauth", side_effect=RuntimeError("State mismatch detected")):
-            # Ejecutamos el bloque de manejo de callback
-            try:
-                result = server.complete_openrouter_oauth(code="bad_code", state="bad_state")
-                handler.send_openrouter_callback_page("OK", success=True)
-            except RuntimeError as exc:
-                handler.send_openrouter_callback_page(str(exc), success=False)
-
+        with patch.object(server, "MYKOS_CONTROL_TOKEN", "test-control-token"), \
+             patch.object(handler, "worker_authorized", return_value=True), \
+             patch("server.complete_openrouter_oauth", side_effect=RuntimeError("State mismatch detected")):
+            handler.do_GET()
             handler.send_openrouter_callback_page.assert_called_once_with("State mismatch detected", success=False)
 
 

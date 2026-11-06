@@ -86,12 +86,11 @@ def stop_llama_cpp_server(model_path: str = "") -> None:
                 except (OSError, subprocess.TimeoutExpired):
                     pass
             # Comprobaciones estrictas de seguridad de proceso:
-            # 1. Verificación de PID reciclado mediante starttime
-            if expected_st:
-                current_st = _process_starttime(pid)
-                if current_st and current_st != expected_st:
-                    # El PID ha sido reasignado por el kernel a otro proceso completamente distinto
-                    continue
+            # 1. Fail-closed: exigimos starttime válido previo y actual, y que coincidan exactamente
+            current_st = _process_starttime(pid)
+            if not expected_st or not current_st or current_st != expected_st:
+                # No se pudo verificar la identidad temporal del proceso; fail-closed
+                continue
             # 2. Mismo UID de usuario
             # 3. El binario debe ser efectivamente llama-server / llama.cpp
             try:
