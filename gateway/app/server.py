@@ -61,6 +61,13 @@ from antigravity_cli import (
     enable_antigravity,
     is_antigravity_enabled,
 )
+from qwen_cli import (
+    disable_qwen,
+    enable_qwen,
+    is_qwen_enabled,
+    qwen_auth_status,
+    qwen_model_catalog,
+)
 from meta_ai import (
     logout_meta_ai_oauth,
     meta_ai_auth_status,
@@ -305,6 +312,9 @@ GATEWAY_DECISION_ROUTES = {
     ("POST", "/api/providers/antigravity/connect"),
     ("POST", "/api/providers/antigravity/logout"),
     ("POST", "/api/providers/antigravity/refresh"),
+    ("POST", "/api/providers/qwen/connect"),
+    ("POST", "/api/providers/qwen/logout"),
+    ("POST", "/api/providers/qwen/refresh"),
     ("POST", "/api/providers/grok/connect"),
     ("POST", "/api/providers/grok/logout"),
     ("POST", "/api/providers/grok/refresh"),
@@ -1576,6 +1586,7 @@ from core.providers import (
     openrouter_model_catalog,
     refresh_anthropic_models,
     refresh_antigravity_models,
+    refresh_qwen_models,
     refresh_gemini_models,
     refresh_grok_models,
     refresh_kimi_models,
@@ -1588,6 +1599,7 @@ from core.providers import (
     start_openrouter_login,
     _logout_anthropic,
     _logout_antigravity,
+    _logout_qwen,
     _logout_gemini,
     _logout_grok,
     _logout_kimi,
@@ -1644,6 +1656,8 @@ def get_model_catalog() -> tuple[list[dict[str, Any]], str]:
     models.extend(anthropic_catalog)
     antigravity_catalog, _antigravity_authenticated, _antigravity_error = antigravity_model_catalog()
     models.extend(antigravity_catalog)
+    qwen_catalog, _qwen_authenticated, _qwen_error = qwen_model_catalog()
+    models.extend(qwen_catalog)
     meta_ai_catalog, _meta_ai_authenticated, _meta_ai_error = meta_ai_model_catalog()
     models.extend(meta_ai_catalog)
     grok_catalog, _grok_authenticated, _grok_error = grok_model_catalog()
@@ -1770,6 +1784,8 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
             provider = "mistral_api"
         elif model_name.startswith("antigravity/"):
             provider = "antigravity_cli"
+        elif model_name.startswith("qwen-cli/"):
+            provider = "qwen_cli"
     if provider == "openai_codex_oauth":
         processing_scope = "remoto a través de OpenAI Codex usando una sesión OAuth propia de MyKOS"
         provider_note = (
@@ -1835,6 +1851,15 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
         processing_scope = "remoto a través de Antigravity CLI (agy) con la sesión Google aislada de MyKOS"
         provider_note = (
             "LÍMITE DEL PROVEEDOR: en esta petición Antigravity CLI solo admite conversación de texto y "
+            "no recibe herramientas de MyKOS. No declares que vas a ejecutar, abrir, guardar, buscar, ni solicitar "
+            "aprobación para una herramienta: no podrías invocarla. Si Usuario pide una acción sobre el equipo o archivos, "
+            "di con claridad y brevedad que este proveedor concreto no puede ejecutarla y que debe elegir un modelo de MyKOS "
+            "con herramientas. No le des comandos para que haga él una acción que te ha pedido ejecutar."
+        )
+    elif provider == "qwen_cli":
+        processing_scope = "remoto a través de Qwen Code CLI con el perfil seguro de MyKOS"
+        provider_note = (
+            "LÍMITE DEL PROVEEDOR: en esta petición Qwen Code CLI solo admite conversación de texto y "
             "no recibe herramientas de MyKOS. No declares que vas a ejecutar, abrir, guardar, buscar, ni solicitar "
             "aprobación para una herramienta: no podrías invocarla. Si Usuario pide una acción sobre el equipo o archivos, "
             "di con claridad y brevedad que este proveedor concreto no puede ejecutarla y que debe elegir un modelo de MyKOS "
@@ -2529,6 +2554,33 @@ def run_antigravity_until_result(
             "usage": result.get("usage", {}), "duration_seconds": result.get("duration_seconds")}
 
 
+def run_qwen_until_result(
+    model: str,
+    messages: list[dict[str, Any]],
+    conversation_id: str,
+    supports_vision: bool = False,
+    generation: dict[str, Any] | None = None,
+    activity_id: str | None = None,
+) -> dict[str, Any]:
+    if not model.startswith("qwen-cli/"):
+        raise RuntimeError(f"Modelo Qwen CLI no reconocido: {model}")
+    if supports_vision or has_message_images(messages):
+        raise RuntimeError("Qwen Code CLI en MyKOS solo admite texto por ahora.")
+    from qwen_cli import ask_qwen
+    update_activity(activity_id, status="working", phase="model", label="Trabajando…", detail=f"{model} · Qwen Code CLI.")
+    prompt = openrouter_prompt_from_messages(messages[-12:])
+    if len(prompt) > 12000:
+        prompt = prompt[-12000:]
+    result = ask_qwen(prompt, timeout_seconds=90, model=model.removeprefix("qwen-cli/"))
+    content = str(result.get("response", "")).strip()
+    if not content:
+        raise RuntimeError("Qwen Code CLI no devolvió texto.")
+    assistant_message = {"role": "assistant", "model": model, "content": content, "created_at": utc_now()}
+    save_assistant_message(conversation_id, assistant_message)
+    return {"message": assistant_message, "tools_used": [], "sources": [], "done": True,
+            "usage": result.get("usage", {}), "duration_seconds": result.get("duration_seconds")}
+
+
 def run_nvidia_until_result(
     model: str,
     messages: list[dict[str, Any]],
@@ -2800,6 +2852,7 @@ def run_model_until_result(
     gateway_controls_models = MYKOS_GATEWAY_ENABLED and bool(MYKOS_CONTROL_TOKEN)
     is_remote_model = (
         model.startswith("antigravity/")
+        or model.startswith("qwen-cli/")
         or model.startswith("meta-ai/")
         or model.startswith("nvidia/")
         or model.startswith("kimi/")
@@ -2836,6 +2889,11 @@ def run_model_until_result(
         stop_llama_cpp_server()
     if model.startswith("antigravity/"):
         return run_antigravity_until_result(
+            model, messages, conversation_id, supports_vision=supports_vision,
+            generation=generation, activity_id=activity_id,
+        )
+    if model.startswith("qwen-cli/"):
+        return run_qwen_until_result(
             model, messages, conversation_id, supports_vision=supports_vision,
             generation=generation, activity_id=activity_id,
         )
@@ -3428,6 +3486,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 providers.append({"id": "gemini_api", "label": "Gemini · API", **gemini_auth_status()})
                 providers.append({"id": "mistral_api", "label": "Mistral · API / Vibe", **mistral_auth_status()})
                 providers.append({"id": "antigravity_cli", "label": "Antigravity · CLI", **antigravity_auth_status()})
+                providers.append({"id": "qwen_cli", "label": "Qwen Code · CLI", **qwen_auth_status()})
                 providers.append({"id": "grok_oauth", "label": "Grok · xAI (OAuth / API)", **grok_auth_status()})
                 self.send_json(status)
                 return
@@ -3501,6 +3560,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 "/mykos-control/providers/mistral/refresh",
                 "/mykos-control/providers/anthropic/refresh",
                 "/mykos-control/providers/antigravity/refresh",
+                "/mykos-control/providers/qwen/refresh",
                 "/mykos-control/providers/grok/refresh",
             }:
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
@@ -3526,6 +3586,8 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                         res = refresh_anthropic_models()
                     elif provider == "grok":
                         res = refresh_grok_models()
+                    elif provider == "qwen":
+                        res = refresh_qwen_models()
                     else:
                         res = refresh_antigravity_models()
                     self.send_json(res)
@@ -3544,6 +3606,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 "/mykos-control/providers/mistral/logout",
                 "/mykos-control/providers/anthropic/logout",
                 "/mykos-control/providers/antigravity/logout",
+                "/mykos-control/providers/qwen/logout",
                 "/mykos-control/providers/grok/logout",
             }:
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
@@ -3562,6 +3625,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     "/mykos-control/providers/mistral/logout": ({"mistral", "mistral_api"}, lambda: _logout_mistral()),
                     "/mykos-control/providers/anthropic/logout": ({"anthropic", "anthropic_api"}, lambda: _logout_anthropic()),
                     "/mykos-control/providers/antigravity/logout": ({"antigravity", "antigravity_cli"}, lambda: _logout_antigravity()),
+                    "/mykos-control/providers/qwen/logout": ({"qwen", "qwen_cli"}, lambda: _logout_qwen()),
                     "/mykos-control/oauth/grok/logout": ({"grok", "grok_oauth", "grok_api"}, lambda: _logout_grok()),
                     "/mykos-control/providers/grok/logout": ({"grok", "grok_oauth", "grok_api"}, lambda: _logout_grok()),
                 }
@@ -3815,6 +3879,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 "/mykos-control/providers/mistral/connect",
                 "/mykos-control/providers/anthropic/connect",
                 "/mykos-control/providers/antigravity/connect",
+                "/mykos-control/providers/qwen/connect",
                 "/mykos-control/providers/grok/connect",
             }:
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
@@ -3828,6 +3893,10 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     return
                 if provider == "antigravity":
                     res = enable_antigravity()
+                    self.send_json(res)
+                    return
+                if provider == "qwen":
+                    res = enable_qwen()
                     self.send_json(res)
                     return
                 if provider == "mistral" and payload.get("link_vibe"):

@@ -79,7 +79,7 @@ const localNode = () => ({
   capabilities: ["chat", "files", "microphone", "tts"], platform: `${os.type()} ${os.release()}`, pid: process.pid,
   last_seen: utcNow(),
 });
-const REMOTE_MODEL_PREFIXES = ["antigravity/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "openrouter/", "openai-codex-oauth/", "gemini/", "anthropic/", "grok/"];
+const REMOTE_MODEL_PREFIXES = ["antigravity/", "qwen-cli/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "openrouter/", "openai-codex-oauth/", "gemini/", "anthropic/", "grok/"];
 const isRemoteModelName = (name) => REMOTE_MODEL_PREFIXES.some((prefix) => name.startsWith(prefix)) || name === "claude-sonnet-oauth";
 const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 const READY_TIMEOUT_MS = 90_000;
@@ -2549,7 +2549,7 @@ export default {
             };
 
             // — Despacho: local (runChatLoop) o remoto (remoteModel) —
-            const REMOTE_PREFIXES = ["antigravity/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "gemini/", "openrouter/", "openai-codex-oauth/", "anthropic/", "grok/"];
+            const REMOTE_PREFIXES = ["antigravity/", "qwen-cli/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "gemini/", "openrouter/", "openai-codex-oauth/", "anthropic/", "grok/"];
             const isRemote = REMOTE_PREFIXES.some((p) => model.startsWith(p)) || model === "claude-sonnet-oauth" || model === "gpt-live-1-codex";
 
             // — Contexto: mensajes de la conversación → array para el modelo —
@@ -2932,11 +2932,11 @@ export default {
           const status = await proxyRequest(req, res, backend.config.url, null, `/mykos-control/oauth/openrouter/callback${apiUrl.search}`, { "x-mykos-control-token": cfg.control.token });
           recordApiResult(status, { owner: "mykos-gateway", internal_path: "/mykos-control/oauth/openrouter/callback" }); return true;
         }
-        if (req.method === "POST" && ["/api/oauth/openai/logout", "/api/oauth/claude/logout", "/api/oauth/openrouter/logout", "/api/oauth/meta/logout", "/api/oauth/grok/logout", "/api/providers/nvidia/logout", "/api/providers/kimi/logout", "/api/providers/gemini/logout", "/api/providers/mistral/logout", "/api/providers/anthropic/logout", "/api/providers/antigravity/logout", "/api/providers/grok/logout"].includes(apiPath)) {
+        if (req.method === "POST" && ["/api/oauth/openai/logout", "/api/oauth/claude/logout", "/api/oauth/openrouter/logout", "/api/oauth/meta/logout", "/api/oauth/grok/logout", "/api/providers/nvidia/logout", "/api/providers/kimi/logout", "/api/providers/gemini/logout", "/api/providers/mistral/logout", "/api/providers/anthropic/logout", "/api/providers/antigravity/logout", "/api/providers/qwen/logout", "/api/providers/grok/logout"].includes(apiPath)) {
           const match = apiPath.match(/^\/api\/(oauth|providers)\/([^/]+)\/logout$/);
           const group = match?.[1] || "";
           const name = match?.[2] || "";
-          const provider = ({ openai: "openai_codex_oauth", claude: "anthropic_oauth", openrouter: "openrouter", meta: "meta_ai_oauth", grok: group === "oauth" ? "grok_oauth" : "grok_api", nvidia: "nvidia_api", kimi: "kimi_api", gemini: "gemini_api", mistral: "mistral_api", anthropic: "anthropic_api", antigravity: "antigravity_cli" })[name];
+          const provider = ({ openai: "openai_codex_oauth", claude: "anthropic_oauth", openrouter: "openrouter", meta: "meta_ai_oauth", grok: group === "oauth" ? "grok_oauth" : "grok_api", nvidia: "nvidia_api", kimi: "kimi_api", gemini: "gemini_api", mistral: "mistral_api", anthropic: "anthropic_api", antigravity: "antigravity_cli", qwen: "qwen_cli" })[name];
           let payload = {};
           try { payload = JSON.parse((await readBody(req, 2048)) || "{}"); } catch {
             sendJson(res, 400, { error: "El cuerpo debe ser JSON válido." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
@@ -2951,10 +2951,10 @@ export default {
           }
           sendJson(res, 200, loggedOut.body); recordApiResult(200, { owner: "mykos-gateway" }); return true;
         }
-        if (req.method === "POST" && /^\/api\/providers\/(nvidia|kimi|gemini|mistral|anthropic|antigravity|grok)\/refresh$/.test(apiPath)) {
+        if (req.method === "POST" && /^\/api\/providers\/(nvidia|kimi|gemini|mistral|anthropic|antigravity|qwen|grok)\/refresh$/.test(apiPath)) {
           const match = apiPath.match(/^\/api\/providers\/([^/]+)\/refresh$/);
           const provider = match?.[1] || "";
-          const expectedProvider = provider === "antigravity" ? "antigravity_cli" : `${provider}_api`;
+          const expectedProvider = (provider === "antigravity" || provider === "qwen") ? `${provider}_cli` : `${provider}_api`;
           let payload = {};
           try { payload = JSON.parse((await readBody(req, 2048)) || "{}"); } catch {
             sendJson(res, 400, { error: "El cuerpo debe ser JSON válido." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
@@ -2969,10 +2969,10 @@ export default {
           }
           sendJson(res, 200, refreshed.body); recordApiResult(200, { owner: "mykos-gateway" }); return true;
         }
-        if (req.method === "POST" && /^\/api\/providers\/(nvidia|kimi|gemini|mistral|anthropic|antigravity|grok)\/connect$/.test(apiPath)) {
+        if (req.method === "POST" && /^\/api\/providers\/(nvidia|kimi|gemini|mistral|anthropic|antigravity|qwen|grok)\/connect$/.test(apiPath)) {
           const match = apiPath.match(/^\/api\/providers\/([^/]+)\/connect$/);
           const provider = match?.[1] || "";
-          const expectedProvider = provider === "antigravity" ? "antigravity_cli" : `${provider}_api`;
+          const expectedProvider = (provider === "antigravity" || provider === "qwen") ? `${provider}_cli` : `${provider}_api`;
           let payload = {};
           try { payload = JSON.parse((await readBody(req, 2048)) || "{}"); } catch {
             sendJson(res, 400, { error: "El cuerpo debe ser JSON válido." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
@@ -2981,8 +2981,8 @@ export default {
             sendJson(res, 400, { error: "Proveedor no compatible." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
           }
           let forwardPayload = { provider: expectedProvider };
-          if (provider === "antigravity") {
-            // Antigravity se activa/desactiva sin exigir clave
+          if (provider === "antigravity" || provider === "qwen") {
+            // Antigravity y Qwen Code se activan/desactivan usando la configuración/sesión local del CLI
             forwardPayload.enabled = true;
           } else if (provider === "mistral" && payload?.link_vibe) {
             forwardPayload.link_vibe = true;

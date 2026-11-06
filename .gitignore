@@ -40,6 +40,7 @@ gateway/runtime/antigravity-home/.gemini/*
 !gateway/runtime/antigravity-home/.gemini/antigravity-cli
 gateway/runtime/antigravity-home/.gemini/antigravity-cli/*
 !gateway/runtime/antigravity-home/.gemini/antigravity-cli/settings.json
+gateway/runtime/qwen-home/
 gateway/optional/codex/bin
 gateway/optional/codex/package-lock.json
 apps/biblioteca/

@@ -6,6 +6,7 @@ from unittest.mock import patch
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 import antigravity_cli
+import qwen_cli
 
 class SafetyTests(unittest.TestCase):
     def test_spawn_uses_isolated_profile(self):
@@ -16,6 +17,34 @@ class SafetyTests(unittest.TestCase):
             environment = run.call_args.kwargs['env']
             self.assertEqual(environment['HOME'], str(antigravity_cli.SAFE_HOME))
             self.assertTrue(antigravity_cli.DENIED_TOOLS.issubset(set(__import__('json').loads(antigravity_cli.SAFE_SETTINGS.read_text())['permissions']['deny'])))
+
+    def test_qwen_spawn_uses_isolated_profile(self):
+        with patch.object(qwen_cli.subprocess, 'run') as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = '[{"type":"result","subtype":"success","is_error":false,"result":"OK","usage":{},"duration_ms":1000}]'
+            qwen_cli.ask_qwen('Synthetic chat')
+            environment = run.call_args.kwargs['env']
+            self.assertEqual(environment['HOME'], str(qwen_cli.SAFE_HOME))
+            settings = __import__('json').loads(qwen_cli.SAFE_SETTINGS.read_text(encoding='utf-8'))
+            for tool in qwen_cli.DENIED_TOOLS:
+                self.assertFalse(settings['tools'][tool]['enabled'])
+
+    def test_qwen_validation(self):
+        for prompt, timeout in [('', 60), ('x' * 12001, 60), ('x', 0), ('x', 301)]:
+            with self.assertRaises(ValueError):
+                qwen_cli.ask_qwen(prompt, timeout)
+
+    def test_qwen_python_dispatch_is_remote_and_tool_free(self):
+        source = (ROOT / 'server.py').read_text()
+        cli_source = (ROOT / 'qwen_cli.py').read_text()
+        self.assertIn('model.startswith("qwen-cli/")', source)
+        self.assertIn('return run_qwen_until_result(', source)
+        self.assertIn('"tools_capable": False', cli_source)
+
+    def test_qwen_gateway_dispatches_as_remote(self):
+        source = (ROOT / 'gateway-plugin/mykos-ui/index.js').read_text()
+        route = source[source.index('if (req.method === "POST" && apiPath === "/api/chat")'):]
+        self.assertIn('"qwen-cli/"', route[:route.index('result = await worker.remoteModel')])
 
     def test_validation(self):
         for prompt, timeout in [('', 60), ('x' * 12001, 60), ('x', 0), ('x', 301)]:

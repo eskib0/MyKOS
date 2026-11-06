@@ -274,6 +274,21 @@ export const POLICY_TABLE = [
     fields: { provider: { type: "string", enum: ["antigravity", "antigravity_cli"], max: 64 } },
   },
   {
+    method: "POST", path: "/api/providers/qwen/connect", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
+    fields: { provider: { type: "string", enum: ["qwen", "qwen_cli"], max: 64 } },
+  },
+  {
+    method: "POST", path: "/api/providers/qwen/logout", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
+    fields: { provider: { type: "string", enum: ["qwen", "qwen_cli"], max: 64 } },
+  },
+  {
+    method: "POST", path: "/api/providers/qwen/refresh", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 12 },
+    fields: { provider: { type: "string", enum: ["qwen", "qwen_cli"], max: 64 } },
+  },
+  {
     method: "POST", path: "/api/providers/grok/connect", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
     fields: {

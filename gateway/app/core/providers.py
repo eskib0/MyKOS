@@ -8,6 +8,7 @@ from typing import Any
 
 from anthropic_api import anthropic_auth_status, anthropic_model_catalog, clear_anthropic_api_key
 from antigravity_cli import antigravity_auth_status, antigravity_model_catalog, disable_antigravity
+from qwen_cli import disable_qwen, qwen_auth_status, qwen_model_catalog
 from gemini import clear_gemini_api_key, gemini_auth_status, gemini_models
 from grok import clear_grok_credentials, grok_auth_status, grok_models, start_grok_oauth
 from kimi import clear_kimi_api_key, kimi_auth_status, kimi_models
@@ -379,6 +380,15 @@ def refresh_antigravity_models() -> dict[str, Any]:
 
 def _logout_antigravity() -> dict[str, Any]:
     return disable_antigravity()
+
+
+def refresh_qwen_models() -> dict[str, Any]:
+    models, authenticated, error = qwen_model_catalog(force=True)
+    return {"ok": True, "provider": "qwen_cli", "authenticated": authenticated, "models": len(models), "error": error}
+
+
+def _logout_qwen() -> dict[str, Any]:
+    return disable_qwen()
 
 
 def start_openrouter_login() -> dict[str, Any]:

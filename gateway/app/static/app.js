@@ -257,6 +257,10 @@ const elements = {
   antigravityCliToggle: document.querySelector("#antigravity-cli-toggle"),
   antigravityCliStatus: document.querySelector("#antigravity-cli-status"),
   antigravityCliModels: document.querySelector("#antigravity-cli-models"),
+  qwenCliRefresh: document.querySelector("#qwen-cli-refresh"),
+  qwenCliToggle: document.querySelector("#qwen-cli-toggle"),
+  qwenCliStatus: document.querySelector("#qwen-cli-status"),
+  qwenCliModels: document.querySelector("#qwen-cli-models"),
   toolsMeta: document.querySelector("#tools-meta"),
   memoryMeta: document.querySelector("#memory-meta"),
   modelTuningToggle: document.querySelector("#model-tuning-toggle"),
@@ -462,6 +466,7 @@ function mountModelsPage() {
     document.querySelector(".gemini-api-card"),
     document.querySelector(".mistral-api-card"),
     document.querySelector(".antigravity-cli-card"),
+    document.querySelector(".qwen-cli-card"),
     ...document.querySelectorAll(".provider-manager"),
     document.querySelector(".model-tuning"),
     document.querySelector(".benchmark-manager"),
@@ -2396,6 +2401,7 @@ function renderOAuthStatus(data = {}) {
   renderGrokStatus();
   renderMistralApiStatus();
   renderAntigravityCliStatus();
+  renderQwenCliStatus();
   const openai = providers.find((item) => item.id === "openai_codex_oauth") || {};
   const login = providers.find((item) => item.id === "openai_codex_oauth_login") || {};
   if (openai.authenticated) {
@@ -2667,6 +2673,24 @@ function renderAntigravityCliStatus() {
   }
 }
 
+function renderQwenCliStatus() {
+  if (!elements.qwenCliStatus) return;
+  const models = state.models.filter((item) => item.provider === "qwen_cli");
+  const auth = state.oauthProviders.find((item) => item.id === "qwen_cli") || {};
+  const enabled = Boolean(auth.enabled || models.length > 0);
+  elements.qwenCliStatus.textContent = enabled
+    ? `Qwen Code CLI activo. ${models.length} modelos disponibles.`
+    : (auth.error || "Qwen Code CLI está desactivado en MyKOS.");
+  if (elements.qwenCliModels) {
+    elements.qwenCliModels.textContent = models.length
+      ? models.map((m) => m.label || m.name).join(" · ")
+      : "Al activarlo, se exponen los modelos gestionados por el CLI oficial de Qwen Code.";
+  }
+  if (elements.qwenCliToggle) {
+    elements.qwenCliToggle.textContent = enabled ? "Desactivar Qwen Code" : "Activar Qwen Code";
+  }
+}
+
 function providerLabel(provider, models) {
   const labels = {
     strata: "Strata · GPU CUDA",
@@ -2680,6 +2704,7 @@ function providerLabel(provider, models) {
     gemini_api: "Gemini · API",
     mistral_api: "Mistral · API / Vibe",
     antigravity_cli: "Antigravity CLI · Google",
+    qwen_cli: "Qwen Code · CLI",
     meta_ai_oauth: "Meta AI · OAuth",
   };
   return labels[provider] || models[0]?.provider_label || provider || "Proveedor";
@@ -3223,6 +3248,34 @@ elements.antigravityCliRefresh?.addEventListener("click", async () => {
   }
 });
 
+elements.qwenCliToggle?.addEventListener("click", async () => {
+  const enabled = state.models.some((item) => item.provider === "qwen_cli");
+  elements.qwenCliToggle.disabled = true;
+  try {
+    const action = enabled ? "logout" : "connect";
+    await api(`/api/providers/qwen/${action}`, {
+      method: "POST",
+      body: JSON.stringify({ provider: "qwen_cli" }),
+    });
+    await loadModels();
+  } catch (error) {
+    elements.qwenCliStatus.textContent = error.message;
+  } finally {
+    elements.qwenCliToggle.disabled = false;
+  }
+});
+elements.qwenCliRefresh?.addEventListener("click", async () => {
+  elements.qwenCliRefresh.disabled = true;
+  try {
+    await api("/api/providers/qwen/refresh", { method: "POST", body: JSON.stringify({ provider: "qwen_cli" }) });
+    await loadModels();
+  } catch (error) {
+    elements.qwenCliStatus.textContent = error.message;
+  } finally {
+    elements.qwenCliRefresh.disabled = false;
+  }
+});
+
 async function loadModels() {
   try {
     const data = await api("/api/status");
@@ -3283,6 +3336,7 @@ async function loadModels() {
     renderGeminiApiStatus();
     renderMistralApiStatus();
     renderAntigravityCliStatus();
+    renderQwenCliStatus();
     await loadContextMeter();
     await loadOAuthStatus();
   } catch (error) {
