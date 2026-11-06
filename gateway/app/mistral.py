@@ -16,7 +16,11 @@ from nvidia import _decode_key, _encode_key
 
 ROOT = Path(__file__).resolve().parent
 MISTRAL_CREDENTIALS_DIR = Path(os.environ.get("MYKOS_CREDENTIALS_DIR", str(ROOT / "data" / "oauth"))).expanduser() / "mistral"
-MISTRAL_CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
+MISTRAL_CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+try:
+    os.chmod(MISTRAL_CREDENTIALS_DIR, 0o700)
+except OSError:
+    pass
 FILE = MISTRAL_CREDENTIALS_DIR / "credentials.json"
 BASE = os.environ.get("MYKOS_MISTRAL_API_URL", "https://api.mistral.ai/v1").rstrip("/")
 

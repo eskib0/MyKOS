@@ -72,6 +72,55 @@ const STATIC_PREFIX = "/static/";
 const API_PREFIX = "/api/";
 const ACTIVE_BACKEND = Symbol.for("mykos.mykos-ui.active-backend");
 const POLICY_REGISTRY = Symbol.for("mykos.mykos-ui.policy-limiters");
+const WEB_SESSION_REGISTRY = Symbol.for("mykos.mykos-ui.web-session-token");
+const WEB_SESSION_TOKEN = (globalThis[WEB_SESSION_REGISTRY] ??= randomBytes(32).toString("hex"));
+
+function getCookie(req, name) {
+  const header = req.headers?.cookie;
+  if (!header || typeof header !== "string") return "";
+  const parts = header.split(";");
+  for (const part of parts) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === name) return v.join("=");
+  }
+  return "";
+}
+
+function isWebAuthorized(req, sessionToken, controlToken) {
+  // 1. Cookie de sesión del navegador (SameSite=Strict, HttpOnly)
+  const cookieVal = getCookie(req, "mykos_session");
+  if (cookieVal && cookieVal.length === sessionToken.length) {
+    try {
+      if (timingSafeEqual(Buffer.from(cookieVal, "utf8"), Buffer.from(sessionToken, "utf8"))) {
+        return true;
+      }
+    } catch {}
+  }
+
+  // 2. Cabecera explícita X-MyKOS-Session
+  const headerVal = String(req.headers?.["x-mykos-session"] ?? "").trim();
+  if (headerVal && headerVal.length === sessionToken.length) {
+    try {
+      if (timingSafeEqual(Buffer.from(headerVal, "utf8"), Buffer.from(sessionToken, "utf8"))) {
+        return true;
+      }
+    } catch {}
+  }
+
+  // 3. Cabecera interna X-MyKOS-Control-Token (para pruebas y sondas del sistema)
+  if (controlToken) {
+    const ctrlVal = String(req.headers?.["x-mykos-control-token"] ?? "").trim();
+    if (ctrlVal && ctrlVal.length === controlToken.length) {
+      try {
+        if (timingSafeEqual(Buffer.from(ctrlVal, "utf8"), Buffer.from(controlToken, "utf8"))) {
+          return true;
+        }
+      } catch {}
+    }
+  }
+
+  return false;
+}
 
 const MAX_JSON_API_BYTES = 2_000_000; // el mismo límite que read_json() en server.py
 const localNode = () => ({
@@ -2186,13 +2235,14 @@ export default {
       },
     });
 
-    // Página principal.
+    // Página principal: emite cookie de sesión local con SameSite=Strict y HttpOnly
     api.registerHttpRoute({
       path: "/",
       auth: "plugin",
       match: "exact",
       handler: async (req, res) => {
         if (!onlyGetHead(req, res)) return true;
+        res.setHeader("Set-Cookie", `mykos_session=${WEB_SESSION_TOKEN}; Path=/; HttpOnly; SameSite=Strict`);
         await sendFile(req, res, path.join(cfg.staticRoot, "index.html"));
         return true;
       },
@@ -2231,6 +2281,10 @@ export default {
       handler: async (req, res) => {
         if (!req.headers.origin || !isOwnRequest(req, cfg.extraOrigins)) {
           sendJson(res, 403, { ok: false, error: "Petición bloqueada." });
+          return true;
+        }
+        if (!isWebAuthorized(req, WEB_SESSION_TOKEN, cfg.control?.token)) {
+          sendJson(res, 401, { ok: false, error: "unauthorized", message: "Sesión no autorizada para la terminal web." });
           return true;
         }
         if (req.method !== "POST") {
@@ -2331,6 +2385,18 @@ export default {
         }
         const apiUrl = new URL(req.url ?? "/", "http://127.0.0.1");
         const apiPath = apiUrl.pathname;
+
+        // Comprobación de sesión web: /api/health queda exenta para checks de salud y supervisión
+        if (apiPath !== "/api/health") {
+          if (!isWebAuthorized(req, WEB_SESSION_TOKEN, cfg.control?.token)) {
+            sendJson(res, 401, {
+              ok: false,
+              error: "unauthorized",
+              message: "Acceso no autorizado: abre MyKOS en tu navegador para autenticar la sesión.",
+            });
+            return true;
+          }
+        }
         // Lo que se clasifica es exactamente lo que se reenvía (ruta ya normalizada), para que el trabajador vea la
         // misma ruta que el Gateway ha comprobado.
         const workerPath = `${apiPath}${apiUrl.search}`;

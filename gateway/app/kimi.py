@@ -10,7 +10,11 @@ from nvidia import _decode_key, _encode_key
 
 ROOT = Path(__file__).resolve().parent
 HOME = Path(os.environ.get("MYKOS_CREDENTIALS_DIR", str(ROOT / "data" / "oauth"))).expanduser() / "kimi"
-HOME.mkdir(parents=True, exist_ok=True)
+HOME.mkdir(parents=True, exist_ok=True, mode=0o700)
+try:
+    os.chmod(HOME, 0o700)
+except OSError:
+    pass
 FILE = HOME / "credentials.json"
 # Endpoint OpenAI-compatible documentado por Kimi Open Platform.
 BASE = os.environ.get("MYKOS_KIMI_API_URL", "https://api.moonshot.ai/v1").rstrip("/")

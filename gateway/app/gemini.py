@@ -19,7 +19,11 @@ elif _GATEWAY_CREDS.exists():
     HOME = _GATEWAY_CREDS / "gemini"
 else:
     HOME = ROOT / "data" / "oauth" / "gemini"
-HOME.mkdir(parents=True, exist_ok=True)
+HOME.mkdir(parents=True, exist_ok=True, mode=0o700)
+try:
+    os.chmod(HOME, 0o700)
+except OSError:
+    pass
 FILE = HOME / "credentials.json"
 BASE = os.environ.get("MYKOS_GEMINI_API_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
 

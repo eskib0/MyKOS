@@ -22,7 +22,11 @@ elif _GATEWAY_CREDS.exists():
     HOME = _GATEWAY_CREDS / "anthropic"
 else:
     HOME = ROOT / "data" / "oauth" / "anthropic"
-HOME.mkdir(parents=True, exist_ok=True)
+HOME.mkdir(parents=True, exist_ok=True, mode=0o700)
+try:
+    os.chmod(HOME, 0o700)
+except OSError:
+    pass
 FILE = HOME / "credentials.json"
 BASE = os.environ.get("MYKOS_ANTHROPIC_API_URL", "https://api.anthropic.com/v1").rstrip("/")
 ANTHROPIC_VERSION = "2023-06-01"
