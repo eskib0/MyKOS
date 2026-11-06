@@ -88,7 +88,7 @@ exit 0
 EOF
 chmod 755 "$STAGE_DIR/DEBIAN/postrm"
 
-# 5. Copiar ficheros del proyecto a /opt/mykos
+# 5. Copiar ficheros del proyecto a /opt/mykos (excluyendo datos de usuario, secretos y cachés)
 echo "▶ Copiando archivos del núcleo a /opt/mykos..."
 rsync -a --exclude='.git' \
          --exclude='.gitignore' \
@@ -99,6 +99,17 @@ rsync -a --exclude='.git' \
          --exclude='node_modules' \
          --exclude='gateway-state' \
          --exclude='*.log' \
+         --exclude='data/oauth' \
+         --exclude='data/conversations.json' \
+         --exclude='data/*.db*' \
+         --exclude='data/media' \
+         --exclude='gateway/runtime/state' \
+         --exclude='gateway/runtime/antigravity-home' \
+         --exclude='gateway/runtime/qwen-home' \
+         --exclude='*.key' \
+         --exclude='*.tmp' \
+         --exclude='.env*' \
+         --exclude='credentials.json' \
          "$MYKOS_ROOT/" "$STAGE_DIR/opt/mykos/"
 
 # 6. Instalar accesos directos e icono

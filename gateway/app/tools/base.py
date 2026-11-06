@@ -95,6 +95,11 @@ PRIVATE_PATH_ROOTS = tuple(path.resolve() for path in (
     PROJECT_ROOT / "data",
     Path.home() / ".mykos" / "gateway-state",
     Path.home() / "mykos-gateway-state",
+    Path.home() / ".ssh",
+    Path.home() / ".gnupg",
+    Path.home() / ".aws",
+    Path.home() / ".kube",
+    Path("/etc/ssl/private"),
 ))
 
 ALLOWED_TEXT_EXTENSIONS = {

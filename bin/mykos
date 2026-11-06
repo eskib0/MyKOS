@@ -129,6 +129,7 @@ cmd_start() {
   setsid node "$RUNTIME_MJS" gateway --port "$port" </dev/null >>"$GATEWAY_LOG" 2>&1 &
   local gw_pid=$!
   echo "$gw_pid" > "$PID_FILE"
+  chmod 600 "$PID_FILE" 2>/dev/null || true
 
   for _ in {1..30}; do
     if curl -fsS "http://127.0.0.1:$port/mykos-health" >/dev/null 2>&1; then
@@ -190,6 +191,7 @@ cmd_run() {
 
   mkdir -p "$(dirname "$GATEWAY_LOG")" "$(dirname "$BACKEND_LOG")"
   touch "$GATEWAY_LOG" "$BACKEND_LOG"
+  chmod 600 "$GATEWAY_LOG" "$BACKEND_LOG" 2>/dev/null || true
 
   local gw_pid=""
   local tail_pid=""
@@ -253,6 +255,7 @@ cmd_run() {
   node "$RUNTIME_MJS" gateway --port "$port" >>"$GATEWAY_LOG" 2>&1 &
   gw_pid=$!
   echo "$gw_pid" > "$PID_FILE"
+  chmod 600 "$PID_FILE" 2>/dev/null || true
 
   while kill -0 "$gw_pid" 2>/dev/null && kill -0 "$parent_pid" 2>/dev/null; do
     sleep 0.3 || break
