@@ -263,12 +263,12 @@ PORT = int(os.environ.get("MYKOS_PORT", "3211"))
 PUBLIC_PORT = int(os.environ.get("MYKOS_PUBLIC_PORT", "0") or 0) or PORT
 # Lo activa el Gateway al arrancar este proceso: sin interfaz propia y sin dejar motores cargados al cerrarse.
 BACKEND_ONLY = os.environ.get("MYKOS_BACKEND_ONLY", "").strip().casefold() in {"1", "true", "yes", "on"}
-# Puerta del trabajador: la activa el plugin del Gateway (MYKOS_WORKER_GUARD=1). Con ella, TODAS las rutas /api/* salvo
+# Puerta del trabajador: por seguridad por defecto está activa (falla cerrado). Con ella, TODAS las rutas /api/* salvo
 # /api/health exigen la cabecera X-MyKOS-Control-Token con el token del Gateway. Así una página web ajena o un programa
 # local no pueden saltarse las comprobaciones del Gateway (Host, Origin, tabla de rutas y auditoría) hablando
-# directamente con este puerto. Con la puerta activa y sin token, se rechaza todo: falla cerrado. Sin la variable
-# (arranque manual antiguo, o un Gateway anterior al plugin 0.6.0 que aún no envía el token) no cambia nada.
-WORKER_GUARD = os.environ.get("MYKOS_WORKER_GUARD", "").strip().casefold() in {"1", "true", "yes", "on"}
+# directamente con este puerto. Con la puerta activa y sin token, se rechaza todo: falla cerrado. Para desactivarla
+# explícitamente en desarrollo manual sin Gateway se requiere MYKOS_WORKER_GUARD=0.
+WORKER_GUARD = os.environ.get("MYKOS_WORKER_GUARD", "1").strip().casefold() not in {"0", "false", "no", "off"}
 # Servicios auxiliares (fase 3, cuarto corte): estas rutas no las decide este proceso. El Gateway valida la forma
 # exacta de la petición, aplica sus límites de carga y firma la decisión (cabecera X-MyKOS-Gateway-Decision, ligada al
 # método, a la ruta y al cuerpo exacto cuando el Gateway lo ha leído). Con la puerta activa, sin esa firma se rechaza:

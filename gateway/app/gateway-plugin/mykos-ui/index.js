@@ -583,35 +583,55 @@ async function handleSystemUpdatesApi(req, res, cfg, apiUrl) {
   if (req.method === "POST" && apiUrl.pathname === "/api/system/update") {
     if (isGit) {
       return new Promise((resolve) => {
-        exec("git fetch origin main && git reset --hard origin/main", { cwd: mykosRoot }, (err, stdout, stderr) => {
-          if (err) {
+        // H1 auditoría: comprobar primero si hay cambios locales sin commitear para no destruir trabajo
+        exec("git status --porcelain", { cwd: mykosRoot }, (statusErr, statusOut) => {
+          if (statusErr) {
             sendJson(res, 500, {
               ok: false,
-              error: `Error al actualizar código desde Git: ${stderr || err.message}`,
+              error: `Error al comprobar estado del repositorio: ${statusErr.message}`,
             });
             return resolve(true);
           }
 
-          sendJson(res, 200, {
-            ok: true,
-            message: "Actualización descargada e instalada con éxito. Reiniciando MyKOS...",
-            restarting: true,
-            output: stdout ? stdout.trim() : "",
-          });
+          if (statusOut && statusOut.trim()) {
+            sendJson(res, 409, {
+              ok: false,
+              error: "Actualización cancelada: tienes cambios locales sin guardar en el repositorio. Haz 'git commit' o 'git stash' antes de actualizar.",
+            });
+            return resolve(true);
+          }
 
-          // Programar reinicio limpio tras responder al cliente
-          setTimeout(() => {
-            const restartScript = path.join(mykosRoot, "bin", "mykos");
-            if (existsSync(restartScript) && process.platform !== "win32") {
-              spawn("/bin/bash", ["-c", `sleep 1 && "${restartScript}" restart`], {
-                detached: true,
-                stdio: "ignore",
-              }).unref();
+          // Árbol limpio: actualizar con avance rápido seguro (--ff-only)
+          exec("git pull --ff-only origin main", { cwd: mykosRoot }, (err, stdout, stderr) => {
+            if (err) {
+              sendJson(res, 500, {
+                ok: false,
+                error: `Error al actualizar código desde Git: ${stderr || err.message}`,
+              });
+              return resolve(true);
             }
-            process.exit(0);
-          }, 1200);
 
-          resolve(true);
+            sendJson(res, 200, {
+              ok: true,
+              message: "Actualización descargada e instalada con éxito. Reiniciando MyKOS...",
+              restarting: true,
+              output: stdout ? stdout.trim() : "",
+            });
+
+            // Programar reinicio limpio tras responder al cliente
+            setTimeout(() => {
+              const restartScript = path.join(mykosRoot, "bin", "mykos");
+              if (existsSync(restartScript) && process.platform !== "win32") {
+                spawn("/bin/bash", ["-c", `sleep 1 && "${restartScript}" restart`], {
+                  detached: true,
+                  stdio: "ignore",
+                }).unref();
+              }
+              process.exit(0);
+            }, 1200);
+
+            resolve(true);
+          });
         });
       });
     }

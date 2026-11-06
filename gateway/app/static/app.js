@@ -2311,7 +2311,17 @@ function addBubble(role, content, isError = false, sources = [], createdAt = "",
       text.appendChild(document.createTextNode(content.slice(lastIndex, match.index)));
     }
     const src = match[2];
-    if (/\.(?:mp4|webm)$/i.test(src)) {
+    const isRemote = /^https?:\/\//i.test(src);
+    if (isRemote) {
+      // H3 auditoría: no cargar automáticamente recursos remotos para evitar exfiltración por inyección indirecta
+      const link = document.createElement("a");
+      link.className = "chat-external-media-link";
+      link.href = src;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = `🔗 [Ver medio externo: ${match[1] || "enlace"}]`;
+      text.appendChild(link);
+    } else if (/\.(?:mp4|webm)$/i.test(src)) {
       const vid = document.createElement("video");
       vid.className = "chat-inline-video";
       vid.src = src;
