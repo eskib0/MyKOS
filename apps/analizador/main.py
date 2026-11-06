@@ -1642,36 +1642,46 @@ class MainWindow(QMainWindow):
             return
 
         idx = self.stack.currentIndex()
+        def _safe_row(cells: list) -> list:
+            out = []
+            for c in cells:
+                if isinstance(c, str) and c.startswith(("=", "+", "-", "@", "\t", "\r")):
+                    out.append(f"'{c}")
+                else:
+                    out.append(c)
+            return out
+
         try:
             with open(dest, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 if idx == 2:
                     writer.writerow(["Nombre", "Tamaño (Bytes)", "Tamaño", "Categoría", "Ruta"])
                     for item in self.all_files[: self.spin_top.value()]:
-                        writer.writerow([item["name"], item["size"], human(item["size"]), get_category(item["name"]), item["path"]])
+                        writer.writerow(_safe_row([item["name"], item["size"], human(item["size"]), get_category(item["name"]), item["path"]]))
                 elif idx == 4 and self.dup_groups:
                     writer.writerow(["Hash SHA-256", "Tamaño (Bytes)", "Tamaño", "Nombre", "Ruta"])
                     for sz, fhash, files in self.dup_groups:
                         for item in files:
-                            writer.writerow([fhash, sz, human(sz), item["name"], item["path"]])
+                            writer.writerow(_safe_row([fhash, sz, human(sz), item["name"], item["path"]]))
                 elif idx in (5, 6, 7):
                     page = (self.page_images, self.page_videos, self.page_audio)[idx - 5]
                     writer.writerow(["Nombre", "Tamaño (Bytes)", "Tamaño", "Carpeta", "Ruta"])
                     for item in page._filtered_list():
-                        writer.writerow([item["name"], item["size"], human(item["size"]), os.path.dirname(item["path"]), item["path"]])
+                        writer.writerow(_safe_row([item["name"], item["size"], human(item["size"]), os.path.dirname(item["path"]), item["path"]]))
                 else:
                     writer.writerow(["Nombre", "Tipo", "Categoría", "Tamaño (Bytes)", "Tamaño", "Ruta"])
-                    self._write_node_csv(writer, self.root_data)
+                    self._write_node_csv(writer, self.root_data, _safe_row)
             QMessageBox.information(self, "Exportación completada", f"Datos guardados en:\n{dest}")
         except OSError as e:
             QMessageBox.critical(self, "Error al exportar", str(e))
 
-    def _write_node_csv(self, writer, node: dict):
+    def _write_node_csv(self, writer, node: dict, safe_row_fn=None):
         tipo = "Carpeta" if node["is_dir"] else "Archivo"
         cat = "-" if node["is_dir"] else get_category(node["name"])
-        writer.writerow([node["name"], tipo, cat, node["size"], human(node["size"]), node["path"]])
+        row = [node["name"], tipo, cat, node["size"], human(node["size"]), node["path"]]
+        writer.writerow(safe_row_fn(row) if safe_row_fn else row)
         for c in sorted(node["children"], key=lambda x: -x["size"]):
-            self._write_node_csv(writer, c)
+            self._write_node_csv(writer, c, safe_row_fn)
 
 
 if __name__ == "__main__":

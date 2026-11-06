@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # MyKOS CLI (Windows PowerShell) — Herramienta unificada para el ecosistema MyKOS
 # ==============================================================================
 $ErrorActionPreference = "Stop"
@@ -264,8 +264,18 @@ function Invoke-MykosUpdate {
             return
         }
         Write-Host "🚀 ¡Nueva versión disponible: $remoteCommit!" -ForegroundColor Yellow
-        Write-Host "▶ Aplicando actualización en caliente..." -ForegroundColor Cyan
-        & git -C $MykosRoot reset --hard origin/main
+        $dirty = (& git -C $MykosRoot status --porcelain).Trim()
+        if ($dirty) {
+            Write-Host "❌ Abortando actualización: se han detectado cambios locales sin confirmar en $MykosRoot." -ForegroundColor Red
+            Write-Host "   Para evitar pérdida de datos, guarda o descarta tus cambios locales antes de actualizar." -ForegroundColor Yellow
+            return
+        }
+        Write-Host "▶ Aplicando actualización de forma segura (fast-forward)..." -ForegroundColor Cyan
+        & git -C $MykosRoot pull --ff-only origin main
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "❌ No se pudo aplicar la actualización con fast-forward (posible divergencia con origin/main)." -ForegroundColor Red
+            return
+        }
         $venvPy = Get-MykosPython
         if (Test-Path (Join-Path $GatewayDir "app\requirements.txt")) {
             Write-Host "▶ Verificando dependencias en Python..." -ForegroundColor Cyan

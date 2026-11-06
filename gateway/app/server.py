@@ -3336,9 +3336,10 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 return
             params = self.parse_query(query)
             code = params.get("code", [""])[0].strip()
+            state = params.get("state", [""])[0].strip()
             error = params.get("error_description", params.get("error", [""]))[0].strip()
             try:
-                result = complete_openrouter_oauth(code, error)
+                result = complete_openrouter_oauth(code, error, state)
                 success = result.get("status") == "completed"
                 message = "La sesión OAuth de OpenRouter está guardada en MyKOS." if success else str(result.get("error", "Autorización cancelada."))
                 self.send_openrouter_callback_page(message, success=success)

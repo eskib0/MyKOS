@@ -728,6 +728,16 @@ function resolveConfig(api) {
   const controlKey = `${projectDir}|${gatewayPort}`;
   const controlToken = configuredControlToken || controlRegistry.get(controlKey) || randomBytes(32).toString("hex");
   controlRegistry.set(controlKey, controlToken);
+  // Persistir controlToken en fichero local protegido (0600) para herramientas CLI autenticadas (bin/mykos)
+  try {
+    for (const targetDir of [gatewayStateDir, path.join(os.homedir(), ".mykos", "gateway-state")]) {
+      try {
+        mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+        const tokenFile = path.join(targetDir, "control.token");
+        writeFileSync(tokenFile, controlToken, { mode: 0o600, encoding: "utf8" });
+      } catch {}
+    }
+  } catch {}
   const modelRaw = rawControl.model && typeof rawControl.model === "object" ? rawControl.model : {};
   const voiceRaw = raw.voice && typeof raw.voice === "object" ? raw.voice : {};
   const realtimeRaw = raw.realtime && typeof raw.realtime === "object" ? raw.realtime : {};
@@ -2386,8 +2396,10 @@ export default {
         const apiUrl = new URL(req.url ?? "/", "http://127.0.0.1");
         const apiPath = apiUrl.pathname;
 
-        // Comprobación de sesión web: /api/health queda exenta para checks de salud y supervisión
-        if (apiPath !== "/api/health") {
+        // Comprobación de sesión web: /api/health y /api/oauth/openrouter/callback quedan exentas.
+        // El callback OAuth es una redirección externa del navegador (SameSite=Strict cookie no viaja en cross-site),
+        // y queda protegido de forma robusta por PKCE, el parámetro state criptográfico y el token interno del trabajador.
+        if (apiPath !== "/api/health" && apiPath !== "/api/oauth/openrouter/callback") {
           if (!isWebAuthorized(req, WEB_SESSION_TOKEN, cfg.control?.token)) {
             sendJson(res, 401, {
               ok: false,

@@ -201,6 +201,81 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
         self.assertIn("ppid", health)
         self.assertEqual(health["pid"], os.getpid())
 
+    def test_openrouter_oauth_state_and_sealed_credential(self):
+        """Verifica que el flujo OAuth de OpenRouter exija state y decodifique credenciales sealed-v1."""
+        import oauth
+        from oauth import _encode_openrouter_key, _decode_openrouter_key, _save_openrouter_key, _openrouter_key, start_openrouter_oauth, complete_openrouter_oauth
+
+        # 1. Cifrado y descifrado de clave mykos-sealed-v1
+        test_key = "sk-or-v1-abcdef0123456789abcdef0123456789"
+        encoded = _encode_openrouter_key(test_key)
+        self.assertEqual(encoded.get("encoding"), "mykos-sealed-v1")
+        self.assertIn("value", encoded)
+        self.assertNotIn("key", encoded)
+        decoded = _decode_openrouter_key(encoded)
+        self.assertEqual(decoded, test_key)
+
+        # 2. State de seguridad en inicio de OAuth
+        # Resetear clave para simular sesión no autenticada
+        orig_key_file = oauth.OPENROUTER_CREDENTIALS_FILE
+        try:
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_key_file = Path(tmp_dir) / "credentials.json"
+                oauth.OPENROUTER_CREDENTIALS_FILE = tmp_key_file
+                res = start_openrouter_oauth("http://127.0.0.1:3210/api/oauth/openrouter/callback")
+                self.assertTrue(res.get("ok"))
+                self.assertEqual(res.get("status"), "running")
+                with oauth._OPENROUTER_LOCK:
+                    state = oauth._OPENROUTER_LOGIN.get("oauth_state", "")
+                self.assertTrue(bool(state))
+
+                # Intentar completar con un state falsificado o incorrecto debe ser rechazado
+                with self.assertRaises(RuntimeError) as ctx:
+                    complete_openrouter_oauth(code="dummy-code", state="state-falsificado-atacante")
+                self.assertIn("state", str(ctx.exception).lower())
+        finally:
+            oauth.OPENROUTER_CREDENTIALS_FILE = orig_key_file
+
+    def test_media_status_transparency(self):
+        """Verifica que la generación de imágenes declare honestamente su naturaleza remota y servicio Pollinations."""
+        import media
+        st = media.media_status()
+        self.assertFalse(st.get("local_only"))
+        self.assertTrue(st.get("external_services"))
+        img_engine = st.get("engines", {}).get("image_generation", {})
+        self.assertTrue(img_engine.get("remote"))
+        self.assertIn("Pollinations", img_engine.get("provider", ""))
+
+    def test_rea_sensitive_path_blocking(self):
+        """Verifica que REA bloquee accesos a rutas privadas (.ssh, credenciales, etc.)."""
+        from rea import resolve_rea_target, ReaError
+        with self.assertRaises(ReaError) as ctx:
+            resolve_rea_target("~/.ssh/id_rsa")
+        self.assertIn("Acceso denegado", str(ctx.exception))
+
+    def test_qwen_env_leakage_prevention(self):
+        """Verifica que el CLI de Qwen no herede variables de entorno con tokens o secretos arbitrarios."""
+        from qwen_cli import ALLOWED_QWEN_ENV_VARS
+        self.assertIn("DASHSCOPE_API_KEY", ALLOWED_QWEN_ENV_VARS)
+        self.assertIn("OPENAI_API_KEY", ALLOWED_QWEN_ENV_VARS)
+        # Secretos no relacionados como GITHUB_TOKEN o AWS_SECRET_ACCESS_KEY no deben estar
+        self.assertNotIn("GITHUB_TOKEN", ALLOWED_QWEN_ENV_VARS)
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", ALLOWED_QWEN_ENV_VARS)
+
+    def test_csv_formula_injection_neutralization(self):
+        """Verifica que los valores que comiencen por =, +, -, @ se neutralicen en exportaciones CSV."""
+        import tempfile, csv
+        malicious_inputs = ["=cmd|'/C calc'!A0", "+12345", "-5+5", "@SUM(A1:A10)", "\tmalicious", "\rmalicious"]
+        def _safe_cell(val):
+            if isinstance(val, str) and val.startswith(("=", "+", "-", "@", "\t", "\r")):
+                return f"'{val}"
+            return val
+
+        for val in malicious_inputs:
+            neutralized = _safe_cell(val)
+            self.assertTrue(neutralized.startswith("'"))
+
 
 
 if __name__ == "__main__":

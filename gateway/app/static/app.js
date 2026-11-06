@@ -372,6 +372,8 @@ function updateModelMeta() {
       ? "Este modelo puede enviar las peticiones fuera de este equipo."
       : model.provider === "llama_cpp"
       ? "Este modelo se ejecuta localmente mediante llama.cpp con CUDA."
+      : model.provider === "qwen_cli"
+      ? "Este modelo se ejecuta localmente mediante el CLI de Qwen Code."
       : "Este modelo se ejecuta localmente mediante Ollama."
     : "";
   elements.privacyNote.className = `privacy-note${model && model.remote ? " remote" : ""}`;

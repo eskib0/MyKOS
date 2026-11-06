@@ -1067,7 +1067,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "generate_image",
-            "description": "Prepara la generación de una imagen digital en alta definición mediante difusión fotorrealista (FLUX) a partir de una descripción detallada en texto (prompt). Requiere aprobación explícita; guarda el resultado en el almacén multimedia local de MyKOS.",
+            "description": "Prepara la generación de una imagen digital en alta definición mediante difusión FLUX (servicio en la nube Pollinations.ai) a partir de una descripción en texto (prompt). Requiere aprobación explícita; la descripción se transmite a dicho servicio y el resultado se guarda en el almacén multimedia local de MyKOS.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1527,8 +1527,8 @@ def tool_catalog() -> list[dict[str, str]]:
         },
         {
             "name": "generate_image",
-            "description": "Prepara la generación de una imagen digital en alta definición a partir de un prompt.",
-            "scope": "Generación multimedia · requiere aprobación",
+            "description": "Prepara la generación de una imagen digital en alta definición a partir de un prompt (Pollinations.ai).",
+            "scope": "Servicio externo (Pollinations.ai) · requiere aprobación",
         },
         {
             "name": "generate_video",

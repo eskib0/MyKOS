@@ -125,17 +125,20 @@ def media_status() -> dict[str, Any]:
     return {
         "ok": True,
         "platform": platform.platform(),
-        "local_only": True,
+        "local_only": False,
         "engines": {
             "text_to_speech": _text_to_speech_status(),
             "image_generation": {
                 "available": True,
-                "engine": "FLUX Diffusion (flux, flux-realism, flux-anime, turbo)",
+                "engine": "FLUX Diffusion · Nube (Pollinations.ai)",
                 "default_model": "flux",
+                "remote": True,
+                "provider": "Pollinations.ai",
             },
             "video_generation": {
                 "available": bool(ffmpeg),
-                "engine": "FFmpeg + FLUX Motion (mp4)",
+                "engine": "FFmpeg + FLUX Motion (mp4) · Pollinations.ai",
+                "remote": True,
             },
             "ffmpeg": {"available": bool(ffmpeg), "executable": ffmpeg},
             "ffprobe": {"available": bool(ffprobe), "executable": ffprobe},
@@ -149,8 +152,9 @@ def media_status() -> dict[str, Any]:
             "image_reading": {"available": True, "engine": "Pillow/OCR/visión existente"},
         },
         "media_directory": str(MEDIA_DIR),
-        "external_services": False,
-        "note": "La transcripción requiere un modelo Whisper local ya disponible; no se descarga automáticamente.",
+        "external_services": True,
+        "external_service_notice": "La generación de imágenes utiliza el servicio externo Pollinations.ai (FLUX); la descripción en texto se transmite a sus servidores.",
+        "note": "La transcripción y síntesis de voz se ejecutan en local; la generación de imagen consulta el servicio externo Pollinations.ai.",
     }
 
 
@@ -572,7 +576,9 @@ def generate_image_approved(action: dict[str, Any]) -> dict[str, Any]:
         for attempt in range(2):
             try:
                 with urllib.request.urlopen(req, timeout=40) as resp:
-                    image_bytes = resp.read()
+                    image_bytes = resp.read(15 * 1024 * 1024 + 1)
+                if image_bytes and len(image_bytes) > 15 * 1024 * 1024:
+                    raise RuntimeError("La imagen recibida supera el límite de seguridad de 15 MB.")
                 if image_bytes and len(image_bytes) >= 1000:
                     break
             except urllib.error.HTTPError as exc:

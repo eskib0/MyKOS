@@ -119,6 +119,7 @@ cmd_start() {
   if [[ -x "$HOME/.mykos/venv/bin/python" ]] && [[ -z "${MYKOS_BACKEND_PYTHON:-}" ]]; then
     export MYKOS_BACKEND_PYTHON="$HOME/.mykos/venv/bin/python"
   fi
+  export MYKOS_GATEWAY_STATE_DIR="$STATE_DIR"
 
   if [[ "$fg" -eq 1 ]]; then
     print_logo "MyKOS Gateway · Modo Primer Plano (http://127.0.0.1:$port)"
@@ -188,6 +189,7 @@ cmd_run() {
   if [[ -x "$HOME/.mykos/venv/bin/python" ]] && [[ -z "${MYKOS_BACKEND_PYTHON:-}" ]]; then
     export MYKOS_BACKEND_PYTHON="$HOME/.mykos/venv/bin/python"
   fi
+  export MYKOS_GATEWAY_STATE_DIR="$STATE_DIR"
 
   mkdir -p "$(dirname "$GATEWAY_LOG")" "$(dirname "$BACKEND_LOG")"
   touch "$GATEWAY_LOG" "$BACKEND_LOG"
@@ -727,9 +729,22 @@ cmd_realtime() {
       port="$(resolve_port)"
       local mode="local"
       [[ "$sub" == "on" ]] && mode="cloud"
+      local token=""
+      if [[ -f "$STATE_DIR/control.token" ]]; then
+        token="$(cat "$STATE_DIR/control.token" 2>/dev/null || true)"
+      elif [[ -f "$HOME/.mykos/gateway-state/control.token" ]]; then
+        token="$(cat "$HOME/.mykos/gateway-state/control.token" 2>/dev/null || true)"
+      elif [[ -f "$HOME/.mykos/control.token" ]]; then
+        token="$(cat "$HOME/.mykos/control.token" 2>/dev/null || true)"
+      fi
+      local auth_hdr=()
+      if [[ -n "$token" ]]; then
+        auth_hdr=(-H "X-MyKOS-Control-Token: $token")
+      fi
       if curl -fsS -X POST "http://127.0.0.1:$port/api/voice/mode" \
         -H "Origin: http://127.0.0.1:$port" \
         -H "Content-Type: application/json" \
+        "${auth_hdr[@]}" \
         -d "{\"mode\":\"$mode\"}" >/dev/null 2>&1; then
         echo "✅ Modo de voz cambiado a «$mode»."
       else
@@ -905,8 +920,19 @@ cmd_update() {
     fi
 
     echo -e "${C_YELLOW}🚀 ¡Nueva versión disponible: $remote_commit!${C_RESET}"
-    echo -e "${C_CYAN}▶ Aplicando actualización en caliente...${C_RESET}"
-    git -C "$MYKOS_ROOT" reset --hard origin/main
+    local dirty
+    dirty="$(git -C "$MYKOS_ROOT" status --porcelain 2>/dev/null || true)"
+    if [[ -n "$dirty" ]]; then
+      echo -e "${C_RED}❌ Abortando actualización: se han detectado cambios locales sin confirmar en $MYKOS_ROOT.${C_RESET}"
+      echo -e "${C_YELLOW}   Para evitar pérdida de datos, guarda o descarta tus cambios locales antes de actualizar.${C_RESET}"
+      return 1
+    fi
+
+    echo -e "${C_CYAN}▶ Aplicando actualización de forma segura (fast-forward)...${C_RESET}"
+    if ! git -C "$MYKOS_ROOT" pull --ff-only origin main; then
+      echo -e "${C_RED}❌ No se pudo aplicar la actualización con fast-forward (posible divergencia con origin/main).${C_RESET}"
+      return 1
+    fi
 
     if [[ -x "$HOME/.mykos/venv/bin/python" ]] && [[ -f "$MYKOS_ROOT/gateway/app/requirements.txt" ]]; then
       echo -e "${C_CYAN}▶ Verificando dependencias en Python...${C_RESET}"

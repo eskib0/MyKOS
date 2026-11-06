@@ -177,11 +177,67 @@ def qwen_auth_status() -> dict[str, Any]:
     }
 
 
-def _discover_qwen_models() -> list[tuple[str, str, str]]:
-    discovered = list(DEFAULT_QWEN_MODELS)
-    seen: set[str] = {"qwen-code-default"}
+ALLOWED_QWEN_ENV_VARS = {
+    "DASHSCOPE_API_KEY",
+    "BAILIAN_CODING_PLAN_API_KEY",
+    "QWEN_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OLLAMA_API_KEY",
+    "OLLAMA_HOST",
+}
 
-    # 1. Modelo activo en ~/.qwen/settings.json
+
+def _is_local_endpoint(url: str) -> bool:
+    if not url:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url)
+        hostname = (parsed.hostname or "").lower()
+        return hostname in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
+    except Exception:
+        return False
+
+
+def _get_qwen_configured_endpoint() -> tuple[str, bool]:
+    """Lee ~/.qwen/settings.json y determina el baseUrl configurado y si es local."""
+    try:
+        user_cfg = Path.home() / ".qwen" / "settings.json"
+        if user_cfg.is_file():
+            data = json.loads(user_cfg.read_text(encoding="utf-8"))
+            base_url = str(
+                data.get("model", {}).get("baseUrl")
+                or data.get("security", {}).get("auth", {}).get("baseUrl")
+                or ""
+            ).strip()
+            if base_url:
+                return base_url, _is_local_endpoint(base_url)
+    except Exception:
+        pass
+    return "", False
+
+
+def _discover_qwen_models() -> list[dict[str, Any]]:
+    endpoint_url, is_endpoint_local = _get_qwen_configured_endpoint()
+    discovered: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    # 1. Modelo predeterminado de Qwen Code
+    default_host = "local (Ollama / endpoint local)" if is_endpoint_local else (endpoint_url or "Alibaba Cloud / Remoto")
+    default_label_prov = "Qwen Code · Local" if is_endpoint_local else "Qwen Code · Remoto"
+    default_auth = "CLI Qwen Code local" if is_endpoint_local else "DashScope / Configuración CLI"
+    discovered.append({
+        "id": "qwen-code-default",
+        "label": "Qwen Code · CLI (Predeterminado)",
+        "family": "Qwen",
+        "remote": not is_endpoint_local,
+        "remote_host": default_host,
+        "provider_label": default_label_prov,
+        "auth_method": default_auth,
+    })
+    seen.add("qwen-code-default")
+
+    # 2. Modelo activo en ~/.qwen/settings.json
     try:
         user_cfg = Path.home() / ".qwen" / "settings.json"
         if user_cfg.is_file():
@@ -189,12 +245,20 @@ def _discover_qwen_models() -> list[tuple[str, str, str]]:
             active_model = str(data.get("model", {}).get("name", "")).strip()
             if active_model and active_model not in seen:
                 family = "Qwen Coder" if "coder" in active_model.lower() else "Qwen"
-                discovered.append((active_model, f"Qwen Code · {active_model}", family))
+                discovered.append({
+                    "id": active_model,
+                    "label": f"Qwen Code · {active_model}",
+                    "family": family,
+                    "remote": not is_endpoint_local,
+                    "remote_host": default_host,
+                    "provider_label": default_label_prov,
+                    "auth_method": default_auth,
+                })
                 seen.add(active_model)
     except Exception:
         pass
 
-    # 2. Modelos locales instalados en Ollama
+    # 3. Modelos locales instalados en Ollama
     try:
         req = urllib.request.Request("http://127.0.0.1:11434/api/tags")
         with urllib.request.urlopen(req, timeout=1.5) as resp:
@@ -203,12 +267,20 @@ def _discover_qwen_models() -> list[tuple[str, str, str]]:
                 name = str(m.get("name", "")).strip()
                 if "qwen" in name.lower() and name not in seen:
                     family = "Qwen Coder" if "coder" in name.lower() else "Qwen"
-                    discovered.append((name, f"Qwen · {name} (Ollama)", family))
+                    discovered.append({
+                        "id": name,
+                        "label": f"Qwen · {name} (Ollama)",
+                        "family": family,
+                        "remote": False,
+                        "remote_host": "local (Ollama / 127.0.0.1:11434)",
+                        "provider_label": "Qwen Code · Local (Ollama)",
+                        "auth_method": "Ollama local",
+                    })
                     seen.add(name)
     except Exception:
         pass
 
-    # 3. Modelos de nube solo si se dispone de clave de DashScope / Alibaba
+    # 4. Modelos de nube solo si se dispone de clave de DashScope / Alibaba
     has_dashscope = bool(
         os.environ.get("DASHSCOPE_API_KEY", "").strip()
         or os.environ.get("BAILIAN_CODING_PLAN_API_KEY", "").strip()
@@ -216,7 +288,15 @@ def _discover_qwen_models() -> list[tuple[str, str, str]]:
     if has_dashscope:
         for c_id, c_label, c_fam in CLOUD_QWEN_MODELS:
             if c_id not in seen:
-                discovered.append((c_id, c_label, c_fam))
+                discovered.append({
+                    "id": c_id,
+                    "label": c_label,
+                    "family": c_fam,
+                    "remote": True,
+                    "remote_host": "Alibaba Cloud DashScope",
+                    "provider_label": "Qwen · Nube (DashScope API)",
+                    "auth_method": "DashScope API Key",
+                })
                 seen.add(c_id)
 
     return discovered
@@ -237,19 +317,18 @@ def qwen_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool,
             return list(cached), True, ""
 
     raw_models = _discover_qwen_models()
-    cloud_ids = {m[0] for m in CLOUD_QWEN_MODELS}
     models: list[dict[str, Any]] = []
-    for model_name, model_label, family in raw_models:
-        is_cloud = model_name in cloud_ids
+    for m in raw_models:
+        is_cloud = bool(m["remote"])
         models.append(
             {
-                "name": f"qwen-cli/{model_name}",
-                "label": model_label,
+                "name": f"qwen-cli/{m['id']}",
+                "label": m["label"],
                 "provider": "qwen_cli",
-                "provider_label": "Qwen · Nube (DashScope API)" if is_cloud else "Qwen Code · Local (Ollama)",
+                "provider_label": m["provider_label"],
                 "size": 0,
                 "parameter_size": "",
-                "family": family,
+                "family": m["family"],
                 "quantization": "",
                 "modified_at": "",
                 "capabilities": ["chat", "completion"],
@@ -259,9 +338,9 @@ def qwen_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool,
                 "tools_capable": False,
                 "context_length": 32768,
                 "remote": is_cloud,
-                "remote_host": "Alibaba Cloud DashScope" if is_cloud else "local (Ollama / GPU)",
+                "remote_host": m["remote_host"],
                 "benchmark_capable": not is_cloud,
-                "auth_method": "DashScope API Key" if is_cloud else "CLI Qwen Code local",
+                "auth_method": m["auth_method"],
                 "auth_status": "autenticado",
                 "auth_error": "",
             }
@@ -338,7 +417,7 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "") -> dict[s
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
     }
     for key, val in os.environ.items():
-        if any(token in key for token in ("KEY", "TOKEN", "QWEN", "DASHSCOPE", "OPENAI", "OLLAMA")):
+        if key in ALLOWED_QWEN_ENV_VARS or (key.startswith("QWEN_") and not key.startswith("QWEN_SECRET")):
             child_environment[key] = val
 
     options: dict[str, Any] = {

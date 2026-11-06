@@ -262,9 +262,20 @@ def resolve_rea_target(target: str) -> str:
     raw = (target or "").strip()
     if not raw:
         raise ReaError("Debes indicar el nombre del programa o la ruta del archivo a revisar con REA.")
-    expanded = Path(raw).expanduser()
+    expanded = Path(raw).expanduser().resolve()
+    # Protección de seguridad: bloquear rutas privadas, secretos y almacén de credenciales
+    try:
+        from tools.base import _is_private_path
+        if _is_private_path(expanded):
+            raise ReaError(f"Acceso denegado: «{expanded}» pertenece a una ruta privada protegida.")
+    except ImportError:
+        pass
+    for part in expanded.parts:
+        if part.casefold() in {".ssh", ".gnupg", ".aws", ".kube", "credentials", "oauth", "secrets"}:
+            raise ReaError(f"Acceso denegado: «{expanded}» contiene componentes de ruta restringidos.")
+
     if expanded.exists():
-        return str(expanded.resolve())
+        return str(expanded)
     search_path = os.environ.get("PATH", "")
     extra_dirs = [
         str(Path.home() / ".local" / "bin"),

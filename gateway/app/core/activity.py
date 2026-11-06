@@ -38,12 +38,28 @@ def _configured_llama_cpp_pids(model_path: str = "") -> set[int]:
     except (OSError, subprocess.SubprocessError):
         return set()
     pids: set[int] = set()
+    current_uid = os.getuid() if hasattr(os, "getuid") else None
     for line in (completed.stdout or "").splitlines():
         try:
             pid = int(line.strip())
-            if pid != os.getpid():
-                pids.add(pid)
-        except ValueError:
+            if pid == os.getpid():
+                continue
+            # Comprobaciones de seguridad para no matar procesos ajenos:
+            # 1. El UID del proceso debe pertenecer al usuario actual.
+            # 2. El comando en ejecución debe corresponder realmente a llama-server o llama.cpp.
+            if current_uid is not None:
+                proc_path = f"/proc/{pid}"
+                if os.path.exists(proc_path):
+                    if os.stat(proc_path).st_uid != current_uid:
+                        continue
+                    cmdline_file = f"/proc/{pid}/cmdline"
+                    if os.path.isfile(cmdline_file):
+                        with open(cmdline_file, "rb") as f:
+                            raw_cmd = f.read().replace(b"\x00", b" ").decode("utf-8", errors="replace").lower()
+                        if "llama-server" not in raw_cmd and "llama.cpp" not in raw_cmd:
+                            continue
+            pids.add(pid)
+        except (ValueError, OSError):
             continue
     return pids
 

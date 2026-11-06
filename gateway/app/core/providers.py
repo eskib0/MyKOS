@@ -392,7 +392,7 @@ def _logout_qwen() -> dict[str, Any]:
 
 
 def start_openrouter_login() -> dict[str, Any]:
-    callback_url = f"http://localhost:{PUBLIC_PORT}/api/oauth/openrouter/callback"
+    callback_url = f"http://127.0.0.1:{PUBLIC_PORT}/api/oauth/openrouter/callback"
     return start_openrouter_oauth(callback_url)
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -340,12 +341,12 @@ def _openrouter_key() -> str:
         return ""
     if not isinstance(data, dict):
         return ""
-    # "dpapi" en Windows; "plain-local" es lo que _encode_openrouter_key escribe en Linux/macOS.
-    if str(data.get("encoding", "")).strip().casefold() in {"dpapi", "plain-local"}:
-        return _decode_openrouter_key(data)
+    # Decodificar con el gestor común (_decode_openrouter_key soporta mykos-sealed-v1, plain-local y dpapi)
+    decoded = _decode_openrouter_key(data)
+    if decoded:
+        return decoded
 
-    # Migrate the previous plaintext OAuth credential on first use.  If the
-    # migration cannot be protected, do not keep using the raw on-disk value.
+    # Migración de credenciales antiguas en texto plano con propiedad "key"
     legacy_key = str(data.get("key", "")).strip()
     if legacy_key:
         _save_openrouter_key(legacy_key)
@@ -398,12 +399,14 @@ def start_openrouter_oauth(callback_url: str) -> dict[str, Any]:
     if _openrouter_key():
         return {"ok": True, **_openrouter_public_login_state(), "status": "completed", "authenticated": True}
     verifier = secrets.token_urlsafe(64)
+    oauth_state = secrets.token_urlsafe(32)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
     query = urllib.parse.urlencode(
         {
             "callback_url": callback_url,
             "code_challenge": challenge,
             "code_challenge_method": "S256",
+            "state": oauth_state,
             "key_label": "MyKOS",
         }
     )
@@ -415,21 +418,26 @@ def start_openrouter_oauth(callback_url: str) -> dict[str, Any]:
             started_at=time.time(),
             login_url=login_url,
             code_verifier=verifier,
+            oauth_state=oauth_state,
             error="",
         )
     return {"ok": True, **_openrouter_public_login_state()}
 
 
-def complete_openrouter_oauth(code: str = "", error: str = "") -> dict[str, Any]:
+def complete_openrouter_oauth(code: str = "", error: str = "", state: str = "") -> dict[str, Any]:
     with _OPENROUTER_LOCK:
         verifier = str(_OPENROUTER_LOGIN.get("code_verifier", ""))
+        expected_state = str(_OPENROUTER_LOGIN.get("oauth_state", ""))
         running = _OPENROUTER_LOGIN.get("status") == "running"
     if error:
         with _OPENROUTER_LOCK:
-            _OPENROUTER_LOGIN.update(status="error", error=error, code_verifier="")
+            _OPENROUTER_LOGIN.update(status="error", error=error, code_verifier="", oauth_state="")
         return _openrouter_public_login_state()
     if not running or not verifier:
         raise RuntimeError("No hay un inicio de sesión OpenRouter pendiente en MyKOS.")
+    if expected_state and state:
+        if not hmac.compare_digest(state.encode("utf-8"), expected_state.encode("utf-8")):
+            raise RuntimeError("El parámetro state de OAuth no coincide; posible petición falsificada.")
     if not str(code).strip():
         raise RuntimeError("OpenRouter no devolvió el código de autorización.")
     body = json.dumps(
@@ -447,9 +455,9 @@ def complete_openrouter_oauth(code: str = "", error: str = "") -> dict[str, Any]
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+            payload = json.loads(response.read(1_000_000).decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        detail = exc.read(50_000).decode("utf-8", errors="replace")[:500]
         raise RuntimeError(f"OpenRouter rechazó la autorización ({exc.code}): {detail}") from exc
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"No se pudo completar el OAuth de OpenRouter: {exc}") from exc
