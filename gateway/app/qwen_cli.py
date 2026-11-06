@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -34,13 +35,14 @@ CONFIG_DIR = Path(
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 DEFAULT_QWEN_MODELS: list[tuple[str, str, str]] = [
-    ("qwen-code-default", "Qwen Code CLI (Predeterminado)", "Qwen"),
-    ("qwen2.5-coder-32b", "Qwen 2.5 Coder 32B", "Qwen Coder"),
-    ("qwen2.5-coder-7b", "Qwen 2.5 Coder 7B", "Qwen Coder"),
-    ("qwen3-coder-plus", "Qwen 3 Coder Plus", "Qwen Coder"),
-    ("qwen-max", "Qwen Max", "Qwen"),
-    ("qwen-plus", "Qwen Plus", "Qwen"),
-    ("qwen-turbo", "Qwen Turbo", "Qwen"),
+    ("qwen-code-default", "Qwen Code · CLI (Predeterminado)", "Qwen"),
+]
+
+CLOUD_QWEN_MODELS: list[tuple[str, str, str]] = [
+    ("qwen-turbo", "Qwen Turbo · Nube (DashScope)", "Qwen"),
+    ("qwen-plus", "Qwen Plus · Nube (DashScope)", "Qwen"),
+    ("qwen-max", "Qwen Max · Nube (DashScope)", "Qwen"),
+    ("qwen3-coder-plus", "Qwen 3 Coder Plus · Nube (DashScope)", "Qwen Coder"),
 ]
 
 QWEN_LOCK = threading.Lock()
@@ -177,16 +179,46 @@ def qwen_auth_status() -> dict[str, Any]:
 
 def _discover_qwen_models() -> list[tuple[str, str, str]]:
     discovered = list(DEFAULT_QWEN_MODELS)
+    seen: set[str] = {"qwen-code-default"}
+
+    # 1. Modelo activo en ~/.qwen/settings.json
     try:
         user_cfg = Path.home() / ".qwen" / "settings.json"
         if user_cfg.is_file():
             data = json.loads(user_cfg.read_text(encoding="utf-8"))
             active_model = str(data.get("model", {}).get("name", "")).strip()
-            if active_model and not any(m[0] == active_model for m in discovered):
+            if active_model and active_model not in seen:
                 family = "Qwen Coder" if "coder" in active_model.lower() else "Qwen"
-                discovered.insert(1, (active_model, f"Qwen Code · {active_model}", family))
+                discovered.append((active_model, f"Qwen Code · {active_model}", family))
+                seen.add(active_model)
     except Exception:
         pass
+
+    # 2. Modelos locales instalados en Ollama
+    try:
+        req = urllib.request.Request("http://127.0.0.1:11434/api/tags")
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            for m in data.get("models", []):
+                name = str(m.get("name", "")).strip()
+                if "qwen" in name.lower() and name not in seen:
+                    family = "Qwen Coder" if "coder" in name.lower() else "Qwen"
+                    discovered.append((name, f"Qwen · {name} (Ollama)", family))
+                    seen.add(name)
+    except Exception:
+        pass
+
+    # 3. Modelos de nube solo si se dispone de clave de DashScope / Alibaba
+    has_dashscope = bool(
+        os.environ.get("DASHSCOPE_API_KEY", "").strip()
+        or os.environ.get("BAILIAN_CODING_PLAN_API_KEY", "").strip()
+    )
+    if has_dashscope:
+        for c_id, c_label, c_fam in CLOUD_QWEN_MODELS:
+            if c_id not in seen:
+                discovered.append((c_id, c_label, c_fam))
+                seen.add(c_id)
+
     return discovered
 
 
@@ -205,14 +237,16 @@ def qwen_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool,
             return list(cached), True, ""
 
     raw_models = _discover_qwen_models()
+    cloud_ids = {m[0] for m in CLOUD_QWEN_MODELS}
     models: list[dict[str, Any]] = []
     for model_name, model_label, family in raw_models:
+        is_cloud = model_name in cloud_ids
         models.append(
             {
                 "name": f"qwen-cli/{model_name}",
                 "label": model_label,
                 "provider": "qwen_cli",
-                "provider_label": "Qwen Code · CLI",
+                "provider_label": "Qwen · Nube (DashScope API)" if is_cloud else "Qwen Code · Local (Ollama)",
                 "size": 0,
                 "parameter_size": "",
                 "family": family,
@@ -224,10 +258,10 @@ def qwen_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool,
                 "thinking_capable": True,
                 "tools_capable": False,
                 "context_length": 32768,
-                "remote": True,
-                "remote_host": "qwen CLI oficial en perfil aislado",
-                "benchmark_capable": False,
-                "auth_method": "sesión / configuración Qwen Code CLI",
+                "remote": is_cloud,
+                "remote_host": "Alibaba Cloud DashScope" if is_cloud else "local (Ollama / GPU)",
+                "benchmark_capable": not is_cloud,
+                "auth_method": "DashScope API Key" if is_cloud else "CLI Qwen Code local",
                 "auth_status": "autenticado",
                 "auth_error": "",
             }
