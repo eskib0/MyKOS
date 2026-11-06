@@ -166,8 +166,9 @@ def run_model_benchmark(
             "sample": response_text[:240],
             "generated_at": utc_now_fn(),
         }
+    ollama_model = model.removeprefix("qwen-cli/") if isinstance(model, str) else model
     payload = {
-        "model": model,
+        "model": ollama_model,
         "messages": [{"role": "user", "content": BENCHMARK_PROMPT}],
         "stream": False,
         "think": generation.get("think", False),

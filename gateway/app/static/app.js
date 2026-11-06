@@ -3631,10 +3631,10 @@ function renderApprovals() {
       target.textContent = `Síntesis de voz: ${approval.voice || "voz por defecto"} · ${approval.filename || "audio.wav"}`;
     } else if (approval.kind === "generate_image") {
       const modelTag = approval.model ? ` · ${approval.model}` : " · flux";
-      target.textContent = `Generar imagen (${approval.aspect_ratio || "1:1"}${modelTag}): ${approval.prompt || "sin descripción"}`;
+      target.textContent = `Generar imagen con Pollinations.ai (${approval.aspect_ratio || "1:1"}${modelTag}): ${approval.prompt || "sin descripción"}`;
     } else if (approval.kind === "generate_video") {
       const motionTag = approval.motion ? ` · ${approval.motion}` : " · cinemático";
-      target.textContent = `Generar vídeo (${approval.aspect_ratio || "1:1"}${motionTag}): ${approval.prompt || "sin descripción"}`;
+      target.textContent = `Generar vídeo con Pollinations.ai (${approval.aspect_ratio || "1:1"}${motionTag}): ${approval.prompt || "sin descripción"}`;
     } else if (approval.kind === "pair_node") {
       target.textContent = `Emparejar nodo: ${approval.name || "sin nombre"} (${approval.node_kind || "node"})`;
     } else if (approval.kind === "revoke_node") {
@@ -3686,6 +3686,10 @@ function renderApprovals() {
       preview.textContent = approval.prompt || "";
     } else if (approval.kind === "text_to_speech") {
       preview.textContent = approval.text || "";
+    } else if (approval.kind === "generate_image") {
+      preview.textContent = `⚠️ Servicio externo en la nube: se enviará la descripción en texto a Pollinations.ai (FLUX) para generar la imagen.\n\nDescripción: ${approval.prompt || ""}`;
+    } else if (approval.kind === "generate_video") {
+      preview.textContent = `⚠️ Servicio externo en la nube: se enviará la descripción en texto a Pollinations.ai (FLUX Motion) para generar el vídeo.\n\nDescripción: ${approval.prompt || ""}`;
     } else if (approval.kind === "pair_node") {
       preview.textContent = `Capacidades: ${(approval.capabilities || []).join(", ") || "ninguna"}`;
     } else if (approval.kind === "revoke_node") {

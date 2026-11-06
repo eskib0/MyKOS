@@ -1466,6 +1466,14 @@ def ensure_llama_cpp_server() -> None:
             stderr=subprocess.DEVNULL,
             creationflags=creationflags,
         )
+        try:
+            from core.activity import LLAMA_PID_FILE
+            LLAMA_PID_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            LLAMA_PID_FILE.write_text(str(LLAMA_CPP_PROCESS.pid), encoding="utf-8")
+            try: os.chmod(LLAMA_PID_FILE, 0o600)
+            except OSError: pass
+        except Exception:
+            pass
         deadline = time.monotonic() + LLAMA_CPP_START_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
             if LLAMA_CPP_PROCESS.poll() is not None:

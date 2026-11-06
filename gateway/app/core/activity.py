@@ -8,6 +8,7 @@ import subprocess
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Callable
 
 ACTIVE_ACTIVITIES: dict[str, Any] = {}
@@ -18,62 +19,37 @@ LLAMA_CPP_PROCESS_LOCK = threading.Lock()
 LLAMA_CPP_PROCESS: subprocess.Popen[Any] | None = None
 
 
-def _configured_llama_cpp_pids(model_path: str = "") -> set[int]:
-    """Busca el proceso llama.cpp configurado incluso después de reiniciar MyKOS."""
-    if not model_path:
-        return set()
-    pgrep = shutil.which("pgrep")
-    if not pgrep:
-        return set()
-    try:
-        completed = subprocess.run(
-            [pgrep, "-f", str(model_path)],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return set()
-    pids: set[int] = set()
-    current_uid = os.getuid() if hasattr(os, "getuid") else None
-    for line in (completed.stdout or "").splitlines():
-        try:
-            pid = int(line.strip())
-            if pid == os.getpid():
-                continue
-            # Comprobaciones de seguridad para no matar procesos ajenos:
-            # 1. El UID del proceso debe pertenecer al usuario actual.
-            # 2. El comando en ejecución debe corresponder realmente a llama-server o llama.cpp.
-            if current_uid is not None:
-                proc_path = f"/proc/{pid}"
-                if os.path.exists(proc_path):
-                    if os.stat(proc_path).st_uid != current_uid:
-                        continue
-                    cmdline_file = f"/proc/{pid}/cmdline"
-                    if os.path.isfile(cmdline_file):
-                        with open(cmdline_file, "rb") as f:
-                            raw_cmd = f.read().replace(b"\x00", b" ").decode("utf-8", errors="replace").lower()
-                        if "llama-server" not in raw_cmd and "llama.cpp" not in raw_cmd:
-                            continue
-            pids.add(pid)
-        except (ValueError, OSError):
-            continue
-    return pids
+LLAMA_PID_FILE = Path(
+    os.environ.get(
+        "MYKOS_GATEWAY_STATE_DIR",
+        str(Path.home() / ".mykos" / "gateway-state")
+    )
+) / "llama-server.pid"
 
 
 def stop_llama_cpp_server(model_path: str = "") -> None:
-    """Libera el modelo CUDA configurado antes de usar otro proveedor."""
+    """Libera el modelo CUDA configurado terminando únicamente la instancia lanzada por MyKOS."""
     global LLAMA_CPP_PROCESS
     with LLAMA_CPP_PROCESS_LOCK:
         tracked = LLAMA_CPP_PROCESS
         LLAMA_CPP_PROCESS = None
-        pids = _configured_llama_cpp_pids(model_path)
+        target_pids: set[int] = set()
+
         if tracked is not None and tracked.poll() is None:
-            pids.add(int(tracked.pid))
-        for pid in pids:
+            target_pids.add(int(tracked.pid))
+
+        # Recuperar PID del archivo de estado propio de MyKOS
+        if LLAMA_PID_FILE.is_file():
+            try:
+                saved_pid = int(LLAMA_PID_FILE.read_text(encoding="utf-8").strip())
+                if saved_pid != os.getpid():
+                    target_pids.add(saved_pid)
+                LLAMA_PID_FILE.unlink(missing_ok=True)
+            except (OSError, ValueError):
+                pass
+
+        current_uid = os.getuid() if hasattr(os, "getuid") else None
+        for pid in target_pids:
             if tracked is not None and pid == int(tracked.pid):
                 try:
                     tracked.terminate()
@@ -81,7 +57,21 @@ def stop_llama_cpp_server(model_path: str = "") -> None:
                     continue
                 except (OSError, subprocess.TimeoutExpired):
                     pass
+            # Comprobaciones estrictas de seguridad de proceso:
+            # 1. Mismo UID de usuario
+            # 2. El binario debe ser efectivamente llama-server / llama.cpp
             try:
+                if current_uid is not None:
+                    proc_path = f"/proc/{pid}"
+                    if os.path.exists(proc_path):
+                        if os.stat(proc_path).st_uid != current_uid:
+                            continue
+                        cmdline_file = f"/proc/{pid}/cmdline"
+                        if os.path.isfile(cmdline_file):
+                            with open(cmdline_file, "rb") as f:
+                                raw_cmd = f.read().replace(b"\x00", b" ").decode("utf-8", errors="replace").lower()
+                            if "llama-server" not in raw_cmd and "llama.cpp" not in raw_cmd:
+                                continue
                 os.kill(pid, 15)
             except OSError:
                 continue

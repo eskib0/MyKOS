@@ -429,15 +429,20 @@ def complete_openrouter_oauth(code: str = "", error: str = "", state: str = "") 
         verifier = str(_OPENROUTER_LOGIN.get("code_verifier", ""))
         expected_state = str(_OPENROUTER_LOGIN.get("oauth_state", ""))
         running = _OPENROUTER_LOGIN.get("status") == "running"
+
+    if not running or not verifier or not expected_state:
+        raise RuntimeError("No hay un inicio de sesión OpenRouter pendiente en MyKOS.")
+
+    # El parámetro state es OBLIGATORIO y debe coincidir de forma estricta (prevención de CSRF / confusión)
+    clean_state = str(state or "").strip()
+    if not clean_state or not hmac.compare_digest(clean_state.encode("utf-8"), expected_state.encode("utf-8")):
+        raise RuntimeError("El parámetro state de OAuth es inválido o no coincide; posible petición falsificada.")
+
     if error:
         with _OPENROUTER_LOCK:
-            _OPENROUTER_LOGIN.update(status="error", error=error, code_verifier="", oauth_state="")
+            _OPENROUTER_LOGIN.update(status="error", error=str(error), code_verifier="", oauth_state="")
         return _openrouter_public_login_state()
-    if not running or not verifier:
-        raise RuntimeError("No hay un inicio de sesión OpenRouter pendiente en MyKOS.")
-    if expected_state and state:
-        if not hmac.compare_digest(state.encode("utf-8"), expected_state.encode("utf-8")):
-            raise RuntimeError("El parámetro state de OAuth no coincide; posible petición falsificada.")
+
     if not str(code).strip():
         raise RuntimeError("OpenRouter no devolvió el código de autorización.")
     body = json.dumps(

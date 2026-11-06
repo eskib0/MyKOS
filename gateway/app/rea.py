@@ -257,13 +257,56 @@ def rea_list_tools(query: str = "", limit: int = 35) -> dict[str, Any]:
     }
 
 
+SYSTEM_BIN_DIRS = (
+    Path("/usr/bin"),
+    Path("/bin"),
+    Path("/usr/local/bin"),
+    Path("/usr/sbin"),
+    Path("/sbin"),
+    (Path.home() / ".local" / "bin").resolve(),
+)
+
+
+def _is_within_allowed_roots(path: Path) -> bool:
+    try:
+        from tools.base import _load_allowed_roots
+        roots = _load_allowed_roots()
+        resolved = path.resolve()
+        for r in roots:
+            try:
+                resolved.relative_to(r["path"])
+                return True
+            except (ValueError, OSError):
+                continue
+    except Exception:
+        pass
+    return False
+
+
+def _is_system_binary(path: Path) -> bool:
+    try:
+        resolved = path.resolve()
+        for b_dir in SYSTEM_BIN_DIRS:
+            try:
+                resolved.relative_to(b_dir)
+                if os.access(resolved, os.X_OK) and not resolved.is_dir():
+                    return True
+            except (ValueError, OSError):
+                continue
+    except Exception:
+        pass
+    return False
+
+
 def resolve_rea_target(target: str) -> str:
-    """Resuelve un nombre de programa (ej. «ollama», «vibe», «ls») o una ruta a su ruta absoluta real."""
+    """Resuelve un nombre de programa o ruta autorizada para análisis REA."""
     raw = (target or "").strip()
     if not raw:
         raise ReaError("Debes indicar el nombre del programa o la ruta del archivo a revisar con REA.")
+
     expanded = Path(raw).expanduser().resolve()
-    # Protección de seguridad: bloquear rutas privadas, secretos y almacén de credenciales
+
+    # 1. Bloqueo estricto de rutas privadas, claves y secretos
     try:
         from tools.base import _is_private_path
         if _is_private_path(expanded):
@@ -274,8 +317,15 @@ def resolve_rea_target(target: str) -> str:
         if part.casefold() in {".ssh", ".gnupg", ".aws", ".kube", "credentials", "oauth", "secrets"}:
             raise ReaError(f"Acceso denegado: «{expanded}» contiene componentes de ruta restringidos.")
 
+    # 2. Si la ruta existe en disco: debe residir dentro de las raíces autorizadas o ser un ejecutable del sistema
     if expanded.exists():
-        return str(expanded)
+        if _is_within_allowed_roots(expanded):
+            return str(expanded)
+        if _is_system_binary(expanded):
+            return str(expanded)
+        raise ReaError(f"Acceso denegado: «{expanded}» queda fuera de las raíces autorizadas del proyecto y no es un ejecutable del sistema.")
+
+    # 3. Si no existe como ruta directa, buscar en el PATH del sistema
     search_path = os.environ.get("PATH", "")
     extra_dirs = [
         str(Path.home() / ".local" / "bin"),
@@ -286,8 +336,29 @@ def resolve_rea_target(target: str) -> str:
     full_path = os.pathsep.join(extra_dirs + ([search_path] if search_path else []))
     found = shutil.which(raw, path=full_path)
     if found:
-        return str(Path(found).resolve())
-    raise ReaError(f"No se encontró el programa o archivo «{raw}» en la ruta indicada ni en el PATH del sistema.")
+        found_path = Path(found).resolve()
+        if _is_system_binary(found_path) or _is_within_allowed_roots(found_path):
+            return str(found_path)
+    raise ReaError(f"No se encontró el programa o archivo «{raw}» dentro del perímetro autorizado de MyKOS.")
+
+
+PATH_KEYS = {"path", "input_path", "file", "file_path", "binary_path", "target", "directory", "dir", "binary"}
+
+
+def _sanitize_rea_args(args: Any) -> Any:
+    if isinstance(args, dict):
+        sanitized = {}
+        for k, v in args.items():
+            if isinstance(v, str) and (k.lower() in PATH_KEYS or ("path" in k.lower() and ("/" in v or "\\" in v))):
+                sanitized[k] = resolve_rea_target(v)
+            elif isinstance(v, (dict, list)):
+                sanitized[k] = _sanitize_rea_args(v)
+            else:
+                sanitized[k] = v
+        return sanitized
+    elif isinstance(args, list):
+        return [_sanitize_rea_args(item) for item in args]
+    return args
 
 
 def rea_inspect_binary(path: str) -> dict[str, Any]:
@@ -339,4 +410,5 @@ def rea_call_tool(tool_name: str, arguments: dict[str, Any] | None = None, allow
         raise ReaError(
             f"La herramienta «{name}» realiza instrumentación dinámica en vivo y requiere aprobación explícita."
         )
-    return _SESSION.call_tool(name, arguments or {})
+    clean_args = _sanitize_rea_args(arguments or {})
+    return _SESSION.call_tool(name, clean_args)

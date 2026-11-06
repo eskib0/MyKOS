@@ -202,7 +202,7 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
         self.assertEqual(health["pid"], os.getpid())
 
     def test_openrouter_oauth_state_and_sealed_credential(self):
-        """Verifica que el flujo OAuth de OpenRouter exija state y decodifique credenciales sealed-v1."""
+        """Verifica que el flujo OAuth de OpenRouter exija state estrictamente (rechaza state='' o incorrecto)."""
         import oauth
         from oauth import _encode_openrouter_key, _decode_openrouter_key, _save_openrouter_key, _openrouter_key, start_openrouter_oauth, complete_openrouter_oauth
 
@@ -215,8 +215,7 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
         decoded = _decode_openrouter_key(encoded)
         self.assertEqual(decoded, test_key)
 
-        # 2. State de seguridad en inicio de OAuth
-        # Resetear clave para simular sesión no autenticada
+        # 2. Exigencia estricta de state en inicio y retorno de OAuth
         orig_key_file = oauth.OPENROUTER_CREDENTIALS_FILE
         try:
             import tempfile
@@ -227,13 +226,27 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
                 self.assertTrue(res.get("ok"))
                 self.assertEqual(res.get("status"), "running")
                 with oauth._OPENROUTER_LOCK:
-                    state = oauth._OPENROUTER_LOGIN.get("oauth_state", "")
-                self.assertTrue(bool(state))
+                    expected_state = oauth._OPENROUTER_LOGIN.get("oauth_state", "")
+                self.assertTrue(bool(expected_state))
 
-                # Intentar completar con un state falsificado o incorrecto debe ser rechazado
+                # Intentar completar con un state falsificado o incorrecto DEBE fallar
                 with self.assertRaises(RuntimeError) as ctx:
                     complete_openrouter_oauth(code="dummy-code", state="state-falsificado-atacante")
                 self.assertIn("state", str(ctx.exception).lower())
+
+                # Intentar completar con state="" (vacío) DEBE ser rechazado taxativamente
+                with self.assertRaises(RuntimeError) as ctx:
+                    complete_openrouter_oauth(code="dummy-code", state="")
+                self.assertIn("state", str(ctx.exception).lower())
+
+                # Un callback de error con state="" DEBE ser rechazado antes de alterar el estado
+                with self.assertRaises(RuntimeError) as ctx:
+                    complete_openrouter_oauth(error="user_denied", state="")
+                self.assertIn("state", str(ctx.exception).lower())
+
+                # Con state válido y error legítimo, el estado cambia a error sin excepción
+                err_res = complete_openrouter_oauth(error="access_denied", state=expected_state)
+                self.assertEqual(err_res.get("status"), "error")
         finally:
             oauth.OPENROUTER_CREDENTIALS_FILE = orig_key_file
 
@@ -247,34 +260,130 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
         self.assertTrue(img_engine.get("remote"))
         self.assertIn("Pollinations", img_engine.get("provider", ""))
 
-    def test_rea_sensitive_path_blocking(self):
-        """Verifica que REA bloquee accesos a rutas privadas (.ssh, credenciales, etc.)."""
-        from rea import resolve_rea_target, ReaError
+    def test_rea_file_perimeter_blocking(self):
+        """Verifica que REA bloquee accesos fuera del perímetro autorizado (/etc/passwd, .ssh, etc.)."""
+        from rea import resolve_rea_target, rea_call_tool, ReaError
+
+        # 1. Rutas privadas del sistema deben ser bloqueadas
         with self.assertRaises(ReaError) as ctx:
             resolve_rea_target("~/.ssh/id_rsa")
         self.assertIn("Acceso denegado", str(ctx.exception))
 
-    def test_qwen_env_leakage_prevention(self):
-        """Verifica que el CLI de Qwen no herede variables de entorno con tokens o secretos arbitrarios."""
-        from qwen_cli import ALLOWED_QWEN_ENV_VARS
-        self.assertIn("DASHSCOPE_API_KEY", ALLOWED_QWEN_ENV_VARS)
-        self.assertIn("OPENAI_API_KEY", ALLOWED_QWEN_ENV_VARS)
-        # Secretos no relacionados como GITHUB_TOKEN o AWS_SECRET_ACCESS_KEY no deben estar
-        self.assertNotIn("GITHUB_TOKEN", ALLOWED_QWEN_ENV_VARS)
-        self.assertNotIn("AWS_SECRET_ACCESS_KEY", ALLOWED_QWEN_ENV_VARS)
+        # 2. Rutas del sistema fuera de las raíces del proyecto (/etc/passwd) deben ser bloqueadas
+        with self.assertRaises(ReaError) as ctx:
+            resolve_rea_target("/etc/passwd")
+        self.assertIn("Acceso denegado", str(ctx.exception))
+
+        # 3. Invocar rea_call_tool con argumentos que apunten a /etc/passwd debe ser bloqueado
+        with self.assertRaises(ReaError) as ctx:
+            rea_call_tool("inspect_artifact", {"path": "/etc/passwd"})
+        self.assertIn("Acceso denegado", str(ctx.exception))
+
+        # 4. Binarios reconocidos en el PATH del sistema sí deben resolverse
+        import shutil
+        if shutil.which("ls"):
+            resolved = resolve_rea_target("ls")
+            self.assertTrue(Path(resolved).is_file())
+
+        # 5. Archivos dentro del propio proyecto sí deben resolverse
+        this_file = str(Path(__file__).resolve())
+        self.assertEqual(resolve_rea_target(this_file), this_file)
+
+    def test_qwen_subprocess_environment_and_routing(self):
+        """Verifica que el proceso Qwen no herede secretos del entorno y encamine Ollama al endpoint local."""
+        from unittest.mock import patch
+        import qwen_cli
+
+        with patch.object(qwen_cli.subprocess, "run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = '[{"type":"result","subtype":"success","is_error":false,"result":"OK"}]'
+
+            # Inyectar secretos en el entorno de prueba
+            orig_env = dict(os.environ)
+            os.environ["GITHUB_TOKEN"] = "ghp_super_secret_token"
+            os.environ["AWS_SECRET_ACCESS_KEY"] = "aws_super_secret_key"
+            os.environ["CUSTOM_SECRET_KEY"] = "my_custom_key"
+            try:
+                # 1. Chat normal: comprobar purga estricta de variables
+                qwen_cli.ask_qwen("Prueba de aislamiento")
+                child_env = mock_run.call_args.kwargs["env"]
+                self.assertNotIn("GITHUB_TOKEN", child_env)
+                self.assertNotIn("AWS_SECRET_ACCESS_KEY", child_env)
+                self.assertNotIn("CUSTOM_SECRET_KEY", child_env)
+                self.assertIn("--max-tool-calls", mock_run.call_args.args[0])
+                self.assertIn("0", mock_run.call_args.args[0])
+
+                # 2. Modelo Ollama: comprobar enrutamiento explícito al endpoint local
+                with patch.object(qwen_cli, "_get_ollama_model_names", return_value={"qwen2.5-coder:7b"}):
+                    qwen_cli.ask_qwen("Prueba Ollama", model="qwen2.5-coder:7b")
+                    cmd = mock_run.call_args.args[0]
+                    self.assertIn("--openai-base-url", cmd)
+                    self.assertIn("http://127.0.0.1:11434/v1", cmd)
+                    self.assertIn("--auth-type", cmd)
+                    ollama_env = mock_run.call_args.kwargs["env"]
+                    self.assertEqual(ollama_env.get("OPENAI_BASE_URL"), "http://127.0.0.1:11434/v1")
+                    self.assertEqual(ollama_env.get("OLLAMA_HOST"), "http://127.0.0.1:11434")
+            finally:
+                os.environ.clear()
+                os.environ.update(orig_env)
+
+    def test_benchmark_qwen_cli_model_prefix(self):
+        """Verifica que el benchmark hacia Ollama limpie el prefijo qwen-cli/."""
+        import core.benchmark
+        from unittest.mock import MagicMock
+
+        mock_ollama_request = MagicMock()
+        mock_ollama_request.return_value = {
+            "message": {"content": "OK"},
+            "total_duration": 1_000_000_000,
+            "eval_count": 20,
+            "prompt_eval_count": 5,
+            "eval_duration": 800_000_000,
+            "prompt_eval_duration": 200_000_000,
+        }
+
+        # Ejecutar medición sobre un modelo con prefijo qwen-cli/
+        res = core.benchmark.run_model_benchmark(
+            model="qwen-cli/qwen2.5-coder:7b",
+            selected_model={"provider": "ollama"},
+            profile_id="fast",
+            normalise_settings_fn=lambda gen, sel: dict(gen),
+            ollama_request_fn=mock_ollama_request,
+            llama_cpp_chat_fn=MagicMock(),
+            strata_chat_fn=MagicMock(),
+            utc_now_fn=lambda: "2026-11-06T22:00:00Z",
+        )
+        self.assertTrue(res.get("ok"))
+        # El payload enviado a Ollama DEBE ser qwen2.5-coder:7b, sin el prefijo qwen-cli/
+        call_payload = mock_ollama_request.call_args.args[1]
+        self.assertEqual(call_payload["model"], "qwen2.5-coder:7b")
 
     def test_csv_formula_injection_neutralization(self):
-        """Verifica que los valores que comiencen por =, +, -, @ se neutralicen en exportaciones CSV."""
-        import tempfile, csv
+        """Verifica que la función real del analizador neutralice inyección de fórmulas CSV (=, +, -, @)."""
+        from unittest.mock import MagicMock
+        # Mocks para importar apps/analizador/main.py sin dependencia de display o PySide6
+        sys.modules.setdefault("PySide6", MagicMock())
+        sys.modules.setdefault("PySide6.QtCore", MagicMock())
+        sys.modules.setdefault("PySide6.QtGui", MagicMock())
+        sys.modules.setdefault("PySide6.QtWidgets", MagicMock())
+
+        analizador_dir = str(ROOT / "apps" / "analizador")
+        if analizador_dir not in sys.path:
+            sys.path.insert(0, analizador_dir)
+
+        import main as analizador_main
         malicious_inputs = ["=cmd|'/C calc'!A0", "+12345", "-5+5", "@SUM(A1:A10)", "\tmalicious", "\rmalicious"]
-        def _safe_cell(val):
-            if isinstance(val, str) and val.startswith(("=", "+", "-", "@", "\t", "\r")):
-                return f"'{val}"
-            return val
 
         for val in malicious_inputs:
-            neutralized = _safe_cell(val)
-            self.assertTrue(neutralized.startswith("'"))
+            neutralized = analizador_main.sanitize_csv_cell(val)
+            self.assertTrue(neutralized.startswith("'"), f"Falló en neutralizar: {val}")
+
+        row = ["=1+1", "Texto normal", 1234, "@EVIL()"]
+        clean_row = analizador_main.sanitize_csv_row(row)
+        self.assertEqual(clean_row[0], "'=1+1")
+        self.assertEqual(clean_row[1], "Texto normal")
+        self.assertEqual(clean_row[2], 1234)
+        self.assertEqual(clean_row[3], "'@EVIL()")
 
 
 

@@ -16,7 +16,7 @@
 //   3. register(api) se ejecuta más de una vez por arranque (registro temprano y runtime completo): sin efectos
 //      secundarios al registrar. Los procesos solo se lanzan desde el servicio, que se registra en modo "full".
 
-import { appendFileSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync, createReadStream } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync, createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import http from "node:http";
@@ -729,15 +729,19 @@ function resolveConfig(api) {
   const controlToken = configuredControlToken || controlRegistry.get(controlKey) || randomBytes(32).toString("hex");
   controlRegistry.set(controlKey, controlToken);
   // Persistir controlToken en fichero local protegido (0600) para herramientas CLI autenticadas (bin/mykos)
-  try {
-    for (const targetDir of [gatewayStateDir, path.join(os.homedir(), ".mykos", "gateway-state")]) {
-      try {
-        mkdirSync(targetDir, { recursive: true, mode: 0o700 });
-        const tokenFile = path.join(targetDir, "control.token");
-        writeFileSync(tokenFile, controlToken, { mode: 0o600, encoding: "utf8" });
-      } catch {}
+  for (const targetDir of [gatewayStateDir, path.join(os.homedir(), ".mykos", "gateway-state")]) {
+    try {
+      mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+      try { chmodSync(targetDir, 0o700); } catch {}
+      const tokenFile = path.join(targetDir, "control.token");
+      writeFileSync(tokenFile, controlToken, { mode: 0o600, encoding: "utf8" });
+      chmodSync(tokenFile, 0o600);
+    } catch (err) {
+      if (process.env.DEBUG_MYKOS) {
+        console.error(`mykos-ui: no se pudo escribir control.token en ${targetDir}:`, err.message);
+      }
     }
-  } catch {}
+  }
   const modelRaw = rawControl.model && typeof rawControl.model === "object" ? rawControl.model : {};
   const voiceRaw = raw.voice && typeof raw.voice === "object" ? raw.voice : {};
   const realtimeRaw = raw.realtime && typeof raw.realtime === "object" ? raw.realtime : {};

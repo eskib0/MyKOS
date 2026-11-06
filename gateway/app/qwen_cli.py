@@ -212,12 +212,24 @@ def _is_local_endpoint(url: str) -> bool:
         return False
 
 
-def _get_qwen_configured_endpoint() -> tuple[str, bool]:
-    """Lee ~/.qwen/settings.json y determina el baseUrl configurado y si es local."""
+def _get_qwen_configured_endpoint(model_name: str = "") -> tuple[str, bool]:
+    """Lee ~/.qwen/settings.json y determina el baseUrl configurado (revisando model, security y modelProviders)."""
     try:
         user_cfg = Path.home() / ".qwen" / "settings.json"
         if user_cfg.is_file():
             data = json.loads(user_cfg.read_text(encoding="utf-8"))
+            # 1. Comprobar modelProviders (proveedores personalizados como openai, ollama, gemini)
+            providers = data.get("modelProviders", {})
+            if isinstance(providers, dict):
+                for prov_list in providers.values():
+                    if isinstance(prov_list, list):
+                        for entry in prov_list:
+                            if isinstance(entry, dict):
+                                if not model_name or entry.get("id") == model_name or entry.get("name") == model_name:
+                                    b_url = str(entry.get("baseUrl") or "").strip()
+                                    if b_url:
+                                        return b_url, _is_local_endpoint(b_url)
+            # 2. Comprobar model.baseUrl o security.auth.baseUrl
             base_url = str(
                 data.get("model", {}).get("baseUrl")
                 or data.get("security", {}).get("auth", {}).get("baseUrl")
@@ -228,6 +240,17 @@ def _get_qwen_configured_endpoint() -> tuple[str, bool]:
     except Exception:
         pass
     return "", False
+
+
+def _get_ollama_model_names() -> set[str]:
+    """Obtiene los nombres de modelos realmente instalados en Ollama local."""
+    try:
+        req = urllib.request.Request("http://127.0.0.1:11434/api/tags")
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return {str(m.get("name", "")).strip() for m in data.get("models", []) if m.get("name")}
+    except Exception:
+        return set()
 
 
 def _discover_qwen_models() -> list[dict[str, Any]]:
@@ -247,6 +270,7 @@ def _discover_qwen_models() -> list[dict[str, Any]]:
         "remote_host": default_host,
         "provider_label": default_label_prov,
         "auth_method": default_auth,
+        "is_ollama": False,
     })
     seen.add("qwen-code-default")
 
@@ -258,40 +282,37 @@ def _discover_qwen_models() -> list[dict[str, Any]]:
             active_model = str(data.get("model", {}).get("name", "")).strip()
             if active_model and active_model not in seen:
                 family = "Qwen Coder" if "coder" in active_model.lower() else "Qwen"
+                active_endpoint, is_active_local = _get_qwen_configured_endpoint(active_model)
                 discovered.append({
                     "id": active_model,
                     "label": f"Qwen Code · {active_model}",
                     "family": family,
-                    "remote": not is_endpoint_local,
-                    "remote_host": default_host,
-                    "provider_label": default_label_prov,
-                    "auth_method": default_auth,
+                    "remote": not is_active_local,
+                    "remote_host": "local (Ollama / endpoint local)" if is_active_local else (active_endpoint or default_host),
+                    "provider_label": "Qwen Code · Local" if is_active_local else "Qwen Code · Remoto",
+                    "auth_method": "CLI Qwen Code local" if is_active_local else default_auth,
+                    "is_ollama": False,
                 })
                 seen.add(active_model)
     except Exception:
         pass
 
     # 3. Modelos locales instalados en Ollama
-    try:
-        req = urllib.request.Request("http://127.0.0.1:11434/api/tags")
-        with urllib.request.urlopen(req, timeout=1.5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            for m in data.get("models", []):
-                name = str(m.get("name", "")).strip()
-                if "qwen" in name.lower() and name not in seen:
-                    family = "Qwen Coder" if "coder" in name.lower() else "Qwen"
-                    discovered.append({
-                        "id": name,
-                        "label": f"Qwen · {name} (Ollama)",
-                        "family": family,
-                        "remote": False,
-                        "remote_host": "local (Ollama / 127.0.0.1:11434)",
-                        "provider_label": "Qwen Code · Local (Ollama)",
-                        "auth_method": "Ollama local",
-                    })
-                    seen.add(name)
-    except Exception:
-        pass
+    ollama_models = _get_ollama_model_names()
+    for name in ollama_models:
+        if "qwen" in name.lower() and name not in seen:
+            family = "Qwen Coder" if "coder" in name.lower() else "Qwen"
+            discovered.append({
+                "id": name,
+                "label": f"Qwen · {name} (Ollama)",
+                "family": family,
+                "remote": False,
+                "remote_host": "local (Ollama / 127.0.0.1:11434)",
+                "provider_label": "Qwen Code · Local (Ollama)",
+                "auth_method": "Ollama local",
+                "is_ollama": True,
+            })
+            seen.add(name)
 
     # 4. Modelos de nube solo si se dispone de clave de DashScope / Alibaba
     has_dashscope = bool(
@@ -309,6 +330,7 @@ def _discover_qwen_models() -> list[dict[str, Any]]:
                     "remote_host": "Alibaba Cloud DashScope",
                     "provider_label": "Qwen · Nube (DashScope API)",
                     "auth_method": "DashScope API Key",
+                    "is_ollama": False,
                 })
                 seen.add(c_id)
 
@@ -352,7 +374,7 @@ def qwen_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool,
                 "context_length": 32768,
                 "remote": is_cloud,
                 "remote_host": m["remote_host"],
-                "benchmark_capable": not is_cloud,
+                "benchmark_capable": bool(m.get("is_ollama", False)),
                 "auth_method": m["auth_method"],
                 "auth_status": "autenticado",
                 "auth_error": "",
@@ -414,6 +436,12 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "") -> dict[s
     if not executable:
         raise RuntimeError("No se encuentra el ejecutable qwen en este equipo.")
 
+    clean_model = (model or "").strip()
+    ollama_models = _get_ollama_model_names()
+    raw_name = clean_model.removeprefix("qwen-cli/")
+    is_ollama = clean_model in ollama_models or raw_name in ollama_models
+    endpoint_url, is_local = _get_qwen_configured_endpoint(clean_model or raw_name)
+
     command = [
         executable,
         "--output-format",
@@ -421,9 +449,8 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "") -> dict[s
         "--max-tool-calls",
         "0",
     ]
-    if model and model != "qwen-code-default":
-        command.extend(["-m", model])
-    command.extend(["-p", prompt])
+    if clean_model and clean_model != "qwen-code-default":
+        command.extend(["-m", raw_name if is_ollama else clean_model])
 
     child_environment = {
         "HOME": str(SAFE_HOME),
@@ -434,6 +461,19 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "") -> dict[s
     for key, val in os.environ.items():
         if key in ALLOWED_QWEN_ENV_VARS or (key.startswith("QWEN_") and not key.startswith("QWEN_SECRET")):
             child_environment[key] = val
+
+    # Enrutamiento explícito a endpoint local si el modelo reside en Ollama o tiene baseUrl local
+    if is_ollama:
+        command.extend(["--openai-base-url", "http://127.0.0.1:11434/v1", "--auth-type", "openai"])
+        child_environment["OPENAI_BASE_URL"] = "http://127.0.0.1:11434/v1"
+        child_environment["OPENAI_API_KEY"] = "ollama"
+        child_environment["OLLAMA_HOST"] = "http://127.0.0.1:11434"
+    elif is_local and endpoint_url:
+        command.extend(["--openai-base-url", endpoint_url, "--auth-type", "openai"])
+        child_environment["OPENAI_BASE_URL"] = endpoint_url
+        child_environment.setdefault("OPENAI_API_KEY", "local")
+
+    command.extend(["-p", prompt])
 
     options: dict[str, Any] = {
         "capture_output": True,

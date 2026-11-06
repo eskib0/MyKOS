@@ -72,6 +72,17 @@ def get_category(filename: str) -> str:
     return "Otros"
 
 
+def sanitize_csv_cell(val):
+    """Neutraliza inyección de fórmulas CSV (=, +, -, @, tab, retorno)."""
+    if isinstance(val, str) and val.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return f"'{val}"
+    return val
+
+
+def sanitize_csv_row(cells: list) -> list:
+    return [sanitize_csv_cell(c) for c in cells]
+
+
 class NumericTreeItem(QTreeWidgetItem):
     """Permite ordenar columnas numéricas usando UserRole."""
     def __lt__(self, other: QTreeWidgetItem) -> bool:
@@ -1642,35 +1653,26 @@ class MainWindow(QMainWindow):
             return
 
         idx = self.stack.currentIndex()
-        def _safe_row(cells: list) -> list:
-            out = []
-            for c in cells:
-                if isinstance(c, str) and c.startswith(("=", "+", "-", "@", "\t", "\r")):
-                    out.append(f"'{c}")
-                else:
-                    out.append(c)
-            return out
-
         try:
             with open(dest, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 if idx == 2:
                     writer.writerow(["Nombre", "Tamaño (Bytes)", "Tamaño", "Categoría", "Ruta"])
                     for item in self.all_files[: self.spin_top.value()]:
-                        writer.writerow(_safe_row([item["name"], item["size"], human(item["size"]), get_category(item["name"]), item["path"]]))
+                        writer.writerow(sanitize_csv_row([item["name"], item["size"], human(item["size"]), get_category(item["name"]), item["path"]]))
                 elif idx == 4 and self.dup_groups:
                     writer.writerow(["Hash SHA-256", "Tamaño (Bytes)", "Tamaño", "Nombre", "Ruta"])
                     for sz, fhash, files in self.dup_groups:
                         for item in files:
-                            writer.writerow(_safe_row([fhash, sz, human(sz), item["name"], item["path"]]))
+                            writer.writerow(sanitize_csv_row([fhash, sz, human(sz), item["name"], item["path"]]))
                 elif idx in (5, 6, 7):
                     page = (self.page_images, self.page_videos, self.page_audio)[idx - 5]
                     writer.writerow(["Nombre", "Tamaño (Bytes)", "Tamaño", "Carpeta", "Ruta"])
                     for item in page._filtered_list():
-                        writer.writerow(_safe_row([item["name"], item["size"], human(item["size"]), os.path.dirname(item["path"]), item["path"]]))
+                        writer.writerow(sanitize_csv_row([item["name"], item["size"], human(item["size"]), os.path.dirname(item["path"]), item["path"]]))
                 else:
                     writer.writerow(["Nombre", "Tipo", "Categoría", "Tamaño (Bytes)", "Tamaño", "Ruta"])
-                    self._write_node_csv(writer, self.root_data, _safe_row)
+                    self._write_node_csv(writer, self.root_data, sanitize_csv_row)
             QMessageBox.information(self, "Exportación completada", f"Datos guardados en:\n{dest}")
         except OSError as e:
             QMessageBox.critical(self, "Error al exportar", str(e))

@@ -1092,7 +1092,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "generate_video",
-            "description": "Prepara la generación de un vídeo cinemático digital en formato MP4 a partir de una descripción en texto (prompt) o de una imagen generada previamente. Requiere aprobación explícita; guarda el resultado en el almacén multimedia local de MyKOS.",
+            "description": "Prepara la generación de un vídeo cinemático digital en formato MP4 mediante FLUX Motion (servicio en la nube Pollinations.ai) a partir de una descripción en texto (prompt) o imagen. Requiere aprobación explícita; la descripción se transmite a dicho servicio y el resultado se guarda en el almacén multimedia local de MyKOS.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1532,8 +1532,8 @@ def tool_catalog() -> list[dict[str, str]]:
         },
         {
             "name": "generate_video",
-            "description": "Prepara la generación de un vídeo cinemático en MP4 a partir de un prompt o imagen.",
-            "scope": "Generación multimedia · requiere aprobación",
+            "description": "Prepara la generación de un vídeo cinemático en MP4 a partir de un prompt o imagen (Pollinations.ai).",
+            "scope": "Servicio externo (Pollinations.ai) · requiere aprobación",
         },
         {
             "name": "list_nodes",
