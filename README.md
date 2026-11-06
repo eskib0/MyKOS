@@ -8,6 +8,8 @@
 [![Git Clones](https://img.shields.io/badge/clones%20semanales-200%2B-blueviolet?style=flat-square&logo=git)](https://github.com/eskib0/MyKOS)
 [![Windows](https://img.shields.io/badge/Windows-MyKOS--Setup--2.0.0.exe-0078d4?style=flat-square&logo=windows)](https://github.com/eskib0/MyKOS/releases/latest/download/MyKOS-Setup-2.0.0.exe)
 [![Linux](https://img.shields.io/badge/Linux-mykos__2.0.0__amd64.deb-e95420?style=flat-square&logo=ubuntu)](https://github.com/eskib0/MyKOS/releases/latest/download/mykos_2.0.0_amd64.deb)
+[![Web Oficial](https://img.shields.io/badge/Web%20Oficial-eskib0.github.io%2Fmykos--web-10b981?style=flat-square&logo=googlechrome)](https://eskib0.github.io/mykos-web/)
+[![Demo Teaser](https://img.shields.io/badge/Demo%20Teaser-Ver%20V%C3%ADdeo%20%E2%96%B6-00e5ff?style=flat-square&logo=youtube)](https://eskib0.github.io/mykos-web/)
 
 ### ⚡ Descarga Rápida (Instaladores Oficiales v2.0.0)
 
