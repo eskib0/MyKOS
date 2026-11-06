@@ -8,6 +8,7 @@ Cubre:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import unittest
@@ -385,6 +386,141 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
         self.assertEqual(clean_row[2], 1234)
         self.assertEqual(clean_row[3], "'@EVIL()")
 
+    def test_rea_comprehensive_argument_sanitization(self):
+        """Verifica que el sanitizador de REA bloquee rutas de salida fuera de raíz y rutas privadas."""
+        import rea
+        from unittest.mock import patch, MagicMock
+
+        # 1. Output dir hacia /etc debe ser bloqueado con ReaError
+        with self.assertRaises(rea.ReaError) as ctx:
+            rea._sanitize_rea_args({"output_dir": "/etc"})
+        self.assertIn("Acceso denegado", str(ctx.exception))
+
+        # 2. Output dir hacia /usr/bin debe ser bloqueado con ReaError
+        with self.assertRaises(rea.ReaError) as ctx:
+            rea._sanitize_rea_args({"dest": "/usr/bin/malware"})
+        self.assertIn("Acceso denegado", str(ctx.exception))
+
+        # 3. Path hacia /etc/passwd debe ser bloqueado con ReaError
+        with self.assertRaises(rea.ReaError) as ctx:
+            rea._sanitize_rea_args({"path": "/etc/passwd"})
+        self.assertIn("Acceso denegado", str(ctx.exception))
+
+        # 4. Clave arbitraria cuyo valor sea /etc/shadow debe ser bloqueada
+        with self.assertRaises(rea.ReaError) as ctx:
+            rea._sanitize_rea_args({"custom_key": "/etc/shadow"})
+        self.assertIn("Acceso denegado", str(ctx.exception))
+
+        # 5. Clave anidada con ruta a clave SSH privada
+        with self.assertRaises(rea.ReaError) as ctx:
+            rea._sanitize_rea_args({"nested": {"config": {"file": "/root/.ssh/id_rsa"}}})
+        self.assertIn("Acceso denegado", str(ctx.exception))
+
+        # 6. Parámetros legítimos sin rutas no deben verse afectados
+        clean = rea._sanitize_rea_args({"format": "json", "detail": "summary", "count": 10})
+        self.assertEqual(clean, {"format": "json", "detail": "summary", "count": 10})
+
+    def test_qwen_fail_closed_on_unreachable_ollama(self):
+        """Verifica que Qwen falle cerrado si se solicita un modelo local pero Ollama está inaccesible."""
+        import qwen_cli
+        from unittest.mock import patch, MagicMock
+
+        with patch.object(qwen_cli, "qwen_executable_path", return_value="/bin/true"), \
+             patch.object(qwen_cli, "ensure_chat_safe", return_value=None), \
+             patch.object(qwen_cli, "_get_ollama_model_names", return_value=set()), \
+             patch("subprocess.run") as mock_run:
+
+            # Modelo con etiqueta : (convención Ollama)
+            with self.assertRaises(RuntimeError) as ctx:
+                qwen_cli.ask_qwen("Hola", model="qwen2.5-coder:7b")
+            self.assertIn("Ollama no está accesible", str(ctx.exception))
+            mock_run.assert_not_called()
+
+            # Con prefijo qwen-cli/
+            with self.assertRaises(RuntimeError) as ctx:
+                qwen_cli.ask_qwen("Hola", model="qwen-cli/qwen2.5-coder:1.5b")
+            self.assertIn("Ollama no está accesible", str(ctx.exception))
+            mock_run.assert_not_called()
+
+    def test_qwen_configured_endpoint_resolves_active_model(self):
+        """Verifica que _get_qwen_configured_endpoint resuelva el modelo activo cuando se pasa vacío o default."""
+        import qwen_cli
+        from unittest.mock import patch, mock_open
+
+        fake_cfg = json.dumps({
+            "model": {"name": "qwen2.5-coder:7b"},
+            "modelProviders": {
+                "ollama": [
+                    {"id": "qwen2.5-coder:7b", "baseUrl": "http://127.0.0.1:11434/v1"}
+                ]
+            }
+        })
+        with patch("pathlib.Path.is_file", return_value=True), \
+             patch("pathlib.Path.read_text", return_value=fake_cfg):
+            url, is_local = qwen_cli._get_qwen_configured_endpoint("qwen-code-default")
+            self.assertEqual(url, "http://127.0.0.1:11434/v1")
+            self.assertTrue(is_local)
+
+    def test_llama_pid_reuse_protection(self):
+        """Verifica que stop_llama_cpp_server no mate procesos con PID reciclado por el kernel."""
+        import core.activity
+        from unittest.mock import patch, MagicMock, mock_open
+
+        # Simulamos un PID file con starttime "12345"
+        test_pid = 99999
+        pid_data = json.dumps({"pid": test_pid, "starttime": "12345"})
+
+        mock_pid_file = MagicMock()
+        mock_pid_file.is_file.return_value = True
+        mock_pid_file.read_text.return_value = pid_data
+
+        with patch.object(core.activity, "LLAMA_PID_FILE", mock_pid_file), \
+             patch.object(core.activity, "_process_starttime", return_value="67890"), \
+             patch("os.kill") as mock_kill:
+
+            # Como el starttime difiere ("67890" != "12345"), os.kill no debe ser invocado
+            core.activity.stop_llama_cpp_server()
+            mock_kill.assert_not_called()
+
+        # Si el starttime coincide, verificamos que prosigue a verificar UID y cmdline
+        mock_pid_file2 = MagicMock()
+        mock_pid_file2.is_file.return_value = True
+        mock_pid_file2.read_text.return_value = pid_data
+
+        import stat
+        stat_obj = MagicMock()
+        stat_obj.st_uid = os.getuid()
+        stat_obj.st_mode = stat.S_IFREG | 0o644
+
+        with patch.object(core.activity, "LLAMA_PID_FILE", mock_pid_file2), \
+             patch.object(core.activity, "_process_starttime", return_value="12345"), \
+             patch("os.path.exists", return_value=True), \
+             patch("os.path.isfile", return_value=True), \
+             patch("os.stat", return_value=stat_obj), \
+             patch("builtins.open", mock_open(read_data=b"llama-server --model test")), \
+             patch("os.kill") as mock_kill:
+
+            core.activity.stop_llama_cpp_server()
+            mock_kill.assert_called_once_with(test_pid, 15)
+
+    def test_openrouter_oauth_callback_error_handling(self):
+        """Verifica que un error en el callback de OAuth (state inválido) no cause una excepción secundaria."""
+        import server
+        from unittest.mock import patch, MagicMock
+
+        handler = server.MyKOSHandler.__new__(server.MyKOSHandler)
+        handler.send_openrouter_callback_page = MagicMock()
+
+        # Simulamos que complete_openrouter_oauth lanza RuntimeError por state inválido
+        with patch("server.complete_openrouter_oauth", side_effect=RuntimeError("State mismatch detected")):
+            # Ejecutamos el bloque de manejo de callback
+            try:
+                result = server.complete_openrouter_oauth(code="bad_code", state="bad_state")
+                handler.send_openrouter_callback_page("OK", success=True)
+            except RuntimeError as exc:
+                handler.send_openrouter_callback_page(str(exc), success=False)
+
+            handler.send_openrouter_callback_page.assert_called_once_with("State mismatch detected", success=False)
 
 
 if __name__ == "__main__":

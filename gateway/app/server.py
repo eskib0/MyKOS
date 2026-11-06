@@ -1467,9 +1467,12 @@ def ensure_llama_cpp_server() -> None:
             creationflags=creationflags,
         )
         try:
-            from core.activity import LLAMA_PID_FILE
+            from core.activity import LLAMA_PID_FILE, _process_starttime
             LLAMA_PID_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            LLAMA_PID_FILE.write_text(str(LLAMA_CPP_PROCESS.pid), encoding="utf-8")
+            pid = int(LLAMA_CPP_PROCESS.pid)
+            st = _process_starttime(pid)
+            payload = json.dumps({"pid": pid, "starttime": st}, ensure_ascii=False)
+            LLAMA_PID_FILE.write_text(payload, encoding="utf-8")
             try: os.chmod(LLAMA_PID_FILE, 0o600)
             except OSError: pass
         except Exception:
@@ -3352,8 +3355,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 message = "La sesión OAuth de OpenRouter está guardada en MyKOS." if success else str(result.get("error", "Autorización cancelada."))
                 self.send_openrouter_callback_page(message, success=success)
             except RuntimeError as exc:
-                result = complete_openrouter_oauth(error=str(exc))
-                self.send_openrouter_callback_page(str(result.get("error", str(exc))), success=False)
+                self.send_openrouter_callback_page(str(exc), success=False)
             return
         if path.startswith("/static/"):
             relative_path = path.removeprefix("/static/")

@@ -2,6 +2,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -27,29 +28,56 @@ LLAMA_PID_FILE = Path(
 ) / "llama-server.pid"
 
 
+def _process_starttime(pid: int) -> str:
+    """Obtiene el identificador temporal único (starttime ticks) del proceso en Linux para evitar colisiones por reciclaje de PID."""
+    try:
+        stat_path = f"/proc/{pid}/stat"
+        if os.path.isfile(stat_path):
+            with open(stat_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            rparen = content.rfind(")")
+            if rparen != -1:
+                remainder = content[rparen + 1:].split()
+                if len(remainder) > 19:
+                    return remainder[19]
+    except (OSError, IndexError):
+        pass
+    return ""
+
+
 def stop_llama_cpp_server(model_path: str = "") -> None:
     """Libera el modelo CUDA configurado terminando únicamente la instancia lanzada por MyKOS."""
     global LLAMA_CPP_PROCESS
     with LLAMA_CPP_PROCESS_LOCK:
         tracked = LLAMA_CPP_PROCESS
         LLAMA_CPP_PROCESS = None
-        target_pids: set[int] = set()
+        target_pids: dict[int, str] = {}  # pid -> expected_starttime
 
         if tracked is not None and tracked.poll() is None:
-            target_pids.add(int(tracked.pid))
+            t_pid = int(tracked.pid)
+            target_pids[t_pid] = _process_starttime(t_pid)
 
-        # Recuperar PID del archivo de estado propio de MyKOS
+        # Recuperar PID del archivo de estado propio de MyKOS con su starttime
         if LLAMA_PID_FILE.is_file():
             try:
-                saved_pid = int(LLAMA_PID_FILE.read_text(encoding="utf-8").strip())
-                if saved_pid != os.getpid():
-                    target_pids.add(saved_pid)
+                raw_text = LLAMA_PID_FILE.read_text(encoding="utf-8").strip()
+                saved_pid = 0
+                saved_starttime = ""
+                if raw_text.startswith("{"):
+                    data = json.loads(raw_text)
+                    if isinstance(data, dict):
+                        saved_pid = int(data.get("pid", 0))
+                        saved_starttime = str(data.get("starttime", "")).strip()
+                elif raw_text:
+                    saved_pid = int(raw_text)
+                if saved_pid and saved_pid != os.getpid():
+                    target_pids[saved_pid] = saved_starttime
                 LLAMA_PID_FILE.unlink(missing_ok=True)
             except (OSError, ValueError):
                 pass
 
         current_uid = os.getuid() if hasattr(os, "getuid") else None
-        for pid in target_pids:
+        for pid, expected_st in target_pids.items():
             if tracked is not None and pid == int(tracked.pid):
                 try:
                     tracked.terminate()
@@ -58,8 +86,14 @@ def stop_llama_cpp_server(model_path: str = "") -> None:
                 except (OSError, subprocess.TimeoutExpired):
                     pass
             # Comprobaciones estrictas de seguridad de proceso:
-            # 1. Mismo UID de usuario
-            # 2. El binario debe ser efectivamente llama-server / llama.cpp
+            # 1. Verificación de PID reciclado mediante starttime
+            if expected_st:
+                current_st = _process_starttime(pid)
+                if current_st and current_st != expected_st:
+                    # El PID ha sido reasignado por el kernel a otro proceso completamente distinto
+                    continue
+            # 2. Mismo UID de usuario
+            # 3. El binario debe ser efectivamente llama-server / llama.cpp
             try:
                 if current_uid is not None:
                     proc_path = f"/proc/{pid}"

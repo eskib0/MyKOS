@@ -342,15 +342,78 @@ def resolve_rea_target(target: str) -> str:
     raise ReaError(f"No se encontró el programa o archivo «{raw}» dentro del perímetro autorizado de MyKOS.")
 
 
-PATH_KEYS = {"path", "input_path", "file", "file_path", "binary_path", "target", "directory", "dir", "binary"}
+def resolve_rea_output_target(target: str) -> str:
+    """Valida que una ruta de salida o exportación resida estrictamente dentro de las raíces autorizadas del proyecto."""
+    raw = (target or "").strip()
+    if not raw:
+        raise ReaError("Debes indicar una ruta de destino válida.")
+    expanded = Path(raw).expanduser().resolve()
+    try:
+        from tools.base import _is_private_path
+        if _is_private_path(expanded):
+            raise ReaError(f"Acceso denegado: «{expanded}» pertenece a una ruta privada protegida.")
+    except ImportError:
+        pass
+    for part in expanded.parts:
+        if part.casefold() in {".ssh", ".gnupg", ".aws", ".kube", "credentials", "oauth", "secrets"}:
+            raise ReaError(f"Acceso denegado: «{expanded}» contiene componentes de ruta restringidos.")
+    if not _is_within_allowed_roots(expanded):
+        raise ReaError(f"Acceso denegado: el destino «{expanded}» queda fuera de las raíces autorizadas del proyecto.")
+    return str(expanded)
+
+
+PATH_KEYS = {
+    "path", "input_path", "output_path", "file_path", "binary_path",
+    "target", "file", "binary", "dir", "directory", "folder", "root",
+    "output_dir", "out_dir", "destination", "dest", "source", "src",
+    "input", "output", "archive", "archive_path", "bundle", "script_path"
+}
+
+OUTPUT_KEYS = {
+    "output", "output_path", "output_dir", "out_dir", "destination",
+    "dest", "export", "export_dir", "extract_to", "extract_dir", "save_path"
+}
+
+
+def _is_output_key(key: str) -> bool:
+    k = key.lower().strip()
+    return k in OUTPUT_KEYS or any(p in k for p in ("output", "destination", "dest", "export", "extract_to"))
+
+
+def _is_path_key(key: str) -> bool:
+    k = key.lower().strip()
+    if k in PATH_KEYS:
+        return True
+    return any(k.endswith(suf) for suf in ("_path", "_dir", "_file", "_target", "_folder", "_root")) or any(
+        k.startswith(pref) for pref in ("path_", "dir_", "file_")
+    )
+
+
+def _is_path_like_value(val: str) -> bool:
+    s = val.strip()
+    if not s:
+        return False
+    if s.startswith(("/", "~", "./", "../")) or (len(s) >= 3 and s[1:3] == ":\\" or s.startswith("\\\\")):
+        return True
+    if "/" in s or "\\" in s:
+        return True
+    return False
 
 
 def _sanitize_rea_args(args: Any) -> Any:
     if isinstance(args, dict):
         sanitized = {}
         for k, v in args.items():
-            if isinstance(v, str) and (k.lower() in PATH_KEYS or ("path" in k.lower() and ("/" in v or "\\" in v))):
-                sanitized[k] = resolve_rea_target(v)
+            if isinstance(v, str):
+                is_out = _is_output_key(k)
+                is_pk = _is_path_key(k)
+                is_pv = _is_path_like_value(v)
+                if is_out and (is_pk or is_pv):
+                    sanitized[k] = resolve_rea_output_target(v)
+                elif is_pk or is_pv:
+                    sanitized[k] = resolve_rea_target(v)
+                else:
+                    sanitized[k] = v
             elif isinstance(v, (dict, list)):
                 sanitized[k] = _sanitize_rea_args(v)
             else:

@@ -218,6 +218,9 @@ def _get_qwen_configured_endpoint(model_name: str = "") -> tuple[str, bool]:
         user_cfg = Path.home() / ".qwen" / "settings.json"
         if user_cfg.is_file():
             data = json.loads(user_cfg.read_text(encoding="utf-8"))
+            lookup_model = (model_name or "").strip().removeprefix("qwen-cli/")
+            if not lookup_model or lookup_model == "qwen-code-default":
+                lookup_model = str(data.get("model", {}).get("name") or "").strip().removeprefix("qwen-cli/")
             # 1. Comprobar modelProviders (proveedores personalizados como openai, ollama, gemini)
             providers = data.get("modelProviders", {})
             if isinstance(providers, dict):
@@ -225,7 +228,9 @@ def _get_qwen_configured_endpoint(model_name: str = "") -> tuple[str, bool]:
                     if isinstance(prov_list, list):
                         for entry in prov_list:
                             if isinstance(entry, dict):
-                                if not model_name or entry.get("id") == model_name or entry.get("name") == model_name:
+                                e_id = str(entry.get("id") or "").strip().removeprefix("qwen-cli/")
+                                e_name = str(entry.get("name") or "").strip().removeprefix("qwen-cli/")
+                                if not lookup_model or e_id == lookup_model or e_name == lookup_model:
                                     b_url = str(entry.get("baseUrl") or "").strip()
                                     if b_url:
                                         return b_url, _is_local_endpoint(b_url)
@@ -240,6 +245,20 @@ def _get_qwen_configured_endpoint(model_name: str = "") -> tuple[str, bool]:
     except Exception:
         pass
     return "", False
+
+
+def _is_known_ollama_model(name: str) -> bool:
+    if not name or name == "qwen-code-default":
+        return False
+    clean = name.removeprefix("qwen-cli/").strip()
+    with QWEN_LOCK:
+        for m in QWEN_CACHE.get("models", []):
+            m_id = m.get("name", "").removeprefix("qwen-cli/").strip()
+            if m_id == clean or m.get("name") == name:
+                return not m.get("remote", True) or bool(m.get("benchmark_capable", False))
+    if ":" in clean and not any(clean.startswith(p) for p in ("http:", "https:", "file:")):
+        return True
+    return False
 
 
 def _get_ollama_model_names() -> set[str]:
@@ -437,10 +456,14 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "") -> dict[s
         raise RuntimeError("No se encuentra el ejecutable qwen en este equipo.")
 
     clean_model = (model or "").strip()
-    ollama_models = _get_ollama_model_names()
     raw_name = clean_model.removeprefix("qwen-cli/")
-    is_ollama = clean_model in ollama_models or raw_name in ollama_models
+    ollama_models = _get_ollama_model_names()
+    is_ollama = bool(raw_name and (clean_model in ollama_models or raw_name in ollama_models))
     endpoint_url, is_local = _get_qwen_configured_endpoint(clean_model or raw_name)
+
+    # Fail closed si el modelo era local de Ollama pero Ollama no responde
+    if _is_known_ollama_model(clean_model or raw_name) and not is_ollama:
+        raise RuntimeError("El modelo local de Ollama no está accesible. No se enviará a la nube por seguridad.")
 
     command = [
         executable,
@@ -449,8 +472,8 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "") -> dict[s
         "--max-tool-calls",
         "0",
     ]
-    if clean_model and clean_model != "qwen-code-default":
-        command.extend(["-m", raw_name if is_ollama else clean_model])
+    if raw_name and raw_name != "qwen-code-default":
+        command.extend(["-m", raw_name])
 
     child_environment = {
         "HOME": str(SAFE_HOME),
