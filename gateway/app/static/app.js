@@ -2265,7 +2265,8 @@ function renderSourceCards(sources) {
     }
     const link = document.createElement("a");
     link.className = "source-card-link";
-    link.href = source.url;
+    const rawUrl = String(source.url || "").trim();
+    link.href = /^https?:\/\//i.test(rawUrl) ? rawUrl : "#";
     link.target = "_blank";
     link.rel = "noopener noreferrer";
     link.textContent = "Abrir fuente ↗";

@@ -74,7 +74,13 @@ def setup_safe_environment() -> None:
     user_settings_file = Path.home() / ".qwen" / "settings.json"
     safe_data: dict[str, Any] = {
         "$version": 4,
-        "tools": {tool: {"enabled": False} for tool in DENIED_TOOLS},
+        "permissions": {
+            "deny": ["shell", "run_shell_command", "bash", "execute", "write_file", "edit_file", "listDirectory", "webSearch", "todoWrite", "*"],
+        },
+        "tools": {
+            "disabled": ["shell", "run_shell_command", "bash", "execute", "write_file", "edit_file", "listDirectory", "webSearch", "todoWrite"],
+            **{tool: {"enabled": False} for tool in DENIED_TOOLS},
+        },
     }
     if user_settings_file.is_file():
         try:
@@ -86,11 +92,15 @@ def setup_safe_environment() -> None:
         except (OSError, ValueError, TypeError):
             pass
 
-    # Aseguramos que DENIED_TOOLS estén explícitamente desactivadas
+    # Aseguramos que DENIED_TOOLS y permisos restrictivos se apliquen siempre
     tools_block = safe_data.setdefault("tools", {})
     if isinstance(tools_block, dict):
         for tool in DENIED_TOOLS:
             tools_block[tool] = {"enabled": False}
+        tools_block["disabled"] = ["shell", "run_shell_command", "bash", "execute", "write_file", "edit_file", "listDirectory", "webSearch", "todoWrite"]
+    perms_block = safe_data.setdefault("permissions", {})
+    if isinstance(perms_block, dict):
+        perms_block["deny"] = ["shell", "run_shell_command", "bash", "execute", "write_file", "edit_file", "listDirectory", "webSearch", "todoWrite", "*"]
 
     temp_file = SAFE_SETTINGS.with_suffix(".tmp")
     temp_file.write_text(json.dumps(safe_data, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -114,6 +124,9 @@ def ensure_chat_safe() -> None:
             tool_data = tools_cfg.get(tool)
             if not isinstance(tool_data, dict) or tool_data.get("enabled", True):
                 raise RuntimeError(f"La herramienta {tool} está activa en el perfil de Qwen.")
+        perms = settings.get("permissions", {})
+        if not isinstance(perms, dict) or not set(DENIED_TOOLS).issubset(set(perms.get("deny", []))):
+            setup_safe_environment()
     except (OSError, ValueError, TypeError) as exc:
         raise RuntimeError("No se puede verificar el perfil aislado de Qwen.") from exc
 
@@ -405,6 +418,8 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "") -> dict[s
         executable,
         "--output-format",
         "json",
+        "--max-tool-calls",
+        "0",
     ]
     if model and model != "qwen-code-default":
         command.extend(["-m", model])
