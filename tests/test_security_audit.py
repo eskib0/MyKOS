@@ -790,11 +790,38 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
 
             ctrl._ensure()
             cmd = mock_popen.call_args[0][0]
+            self.assertTrue(any("--host-resolver-rules=" in arg for arg in cmd))
             self.assertTrue(any("--host-rules=" in arg for arg in cmd))
             self.assertIn("--disable-features=ServiceWorker,SharedWorker", cmd)
             self.assertIn("--disable-service-workers", cmd)
             self.assertIn("--disable-shared-workers", cmd)
             ctrl.close()
+
+    def test_browser_intercepted_request_preserves_flattened_session_id(self):
+        """Verifica que _handle_intercepted_request reenvíe sessionId cuando Target.setAutoAttach usa flatten=True."""
+        import browser
+        from unittest.mock import MagicMock, patch
+
+        ws = object.__new__(browser._WebSocket)
+        ws.next_id = 10
+        sent_frames: list[tuple[int, bytes]] = []
+        ws._send_frame = lambda opcode, data: sent_frames.append((opcode, data))  # type: ignore[method-assign]
+
+        with patch("browser._validate_public_url", side_effect=browser.BrowserError("blocked")):
+            ws._handle_intercepted_request({
+                "method": "Fetch.requestPaused",
+                "sessionId": "child-target-session-42",
+                "params": {
+                    "requestId": "req-99",
+                    "request": {"url": "http://127.0.0.1:11434/api/tags"},
+                },
+            })
+
+        self.assertEqual(len(sent_frames), 1)
+        payload = json.loads(sent_frames[0][1].decode("utf-8"))
+        self.assertEqual(payload.get("method"), "Fetch.failRequest")
+        self.assertEqual(payload.get("sessionId"), "child-target-session-42")
+        self.assertEqual(payload.get("params", {}).get("requestId"), "req-99")
 
 
 if __name__ == "__main__":

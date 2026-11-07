@@ -2252,13 +2252,17 @@ export default {
       },
     });
 
-    // Página principal: emite cookie de sesión local con SameSite=Strict y HttpOnly
+    // Página principal: emite cookie de sesión local con SameSite=Strict y HttpOnly (solo ante petición propia local)
     api.registerHttpRoute({
       path: "/",
       auth: "plugin",
       match: "exact",
       handler: async (req, res) => {
         if (!onlyGetHead(req, res)) return true;
+        if (!isOwnRequest(req, cfg.extraOrigins)) {
+          sendJson(res, 403, { ok: false, error: "forbidden", message: "La interfaz de MyKOS solo acepta peticiones locales." });
+          return true;
+        }
         res.setHeader("Set-Cookie", `mykos_session=${WEB_SESSION_TOKEN}; Path=/; HttpOnly; SameSite=Strict`);
         await sendFile(req, res, path.join(cfg.staticRoot, "index.html"));
         return true;
@@ -2403,10 +2407,11 @@ export default {
         const apiUrl = new URL(req.url ?? "/", "http://127.0.0.1");
         const apiPath = apiUrl.pathname;
 
-        // Comprobación de sesión web: /api/health y /api/oauth/openrouter/callback quedan exentas.
+        // Comprobación de sesión web: /api/health, /api/oauth/openrouter/callback y /api/nodes/heartbeat quedan exentas.
         // El callback OAuth es una redirección externa del navegador (SameSite=Strict cookie no viaja en cross-site),
         // y queda protegido de forma robusta por PKCE, el parámetro state criptográfico y el token interno del trabajador.
-        if (apiPath !== "/api/health" && apiPath !== "/api/oauth/openrouter/callback") {
+        // El latido de nodo (/api/nodes/heartbeat) utiliza su propio token X-MyKOS-Node-Token exigido por policy.js y nodes.py.
+        if (apiPath !== "/api/health" && apiPath !== "/api/oauth/openrouter/callback" && apiPath !== "/api/nodes/heartbeat") {
           if (!isWebAuthorized(req, WEB_SESSION_TOKEN, cfg.control?.token)) {
             sendJson(res, 401, {
               ok: false,

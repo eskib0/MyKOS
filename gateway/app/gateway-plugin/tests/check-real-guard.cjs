@@ -17,6 +17,8 @@ const { execFileSync } = require("child_process");
 const PUB = 3210;
 const BE = 3211;
 const journalFile = path.join(os.homedir(), ".mykos", "gateway-state", "mykos", "control-journal.jsonl");
+const controlTokenFile = path.join(os.homedir(), ".mykos", "gateway-state", "mykos", "control.token");
+const controlToken = fs.existsSync(controlTokenFile) ? fs.readFileSync(controlTokenFile, "utf8").trim() : "";
 const results = [];
 const check = (name, ok, detail = "") => results.push({ name, ok: Boolean(ok), detail });
 const info = (name, detail) => results.push({ name, ok: true, info: true, detail });
@@ -24,6 +26,7 @@ const info = (name, detail) => results.push({ name, ok: true, info: true, detail
 function request({ method = "GET", path: p, port = PUB, host, headers = {}, body }) {
   return new Promise((resolve) => {
     const h = {};
+    if (port === PUB && controlToken) h["x-mykos-control-token"] = controlToken;
     for (const [k, v] of Object.entries(headers)) h[k.toLowerCase()] = v;
     if (host !== undefined) h.host = host;
     if (body !== undefined) h["content-length"] = Buffer.byteLength(body);

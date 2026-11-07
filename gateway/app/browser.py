@@ -208,11 +208,14 @@ class _WebSocket:
         except BrowserError:
             allowed = False
         command_method = "Fetch.continueRequest" if fetch_paused else "Network.continueInterceptedRequest"
-        command = {
+        command: dict[str, Any] = {
             "id": self.next_id,
             "method": command_method,
             "params": {"requestId" if fetch_paused else "interceptionId": interception_id},
         }
+        session_id = str(message.get("sessionId", "")).strip()
+        if session_id:
+            command["sessionId"] = session_id
         self.next_id += 1
         if not allowed:
             if fetch_paused:
@@ -309,6 +312,7 @@ class _BrowserController:
             "--disable-features=ServiceWorker,SharedWorker",
             "--disable-service-workers",
             "--disable-shared-workers",
+            f"--host-resolver-rules={host_rules}",
             f"--host-rules={host_rules}",
             "--remote-debugging-address=127.0.0.1",
             f"--remote-debugging-port={self.port}",

@@ -1594,8 +1594,9 @@ class MainWindow(QMainWindow):
         self.open_path(folder)
 
     def delete_path(self, path: str):
-        is_dir = os.path.isdir(path)
-        kind = "la carpeta y todo su contenido" if is_dir else "el archivo"
+        is_symlink = os.path.islink(path)
+        is_dir = os.path.isdir(path) and not is_symlink
+        kind = "la carpeta y todo su contenido" if is_dir else ("el enlace simbólico" if is_symlink else "el archivo")
         reply = QMessageBox.question(
             self,
             "Confirmar eliminación",
@@ -1609,7 +1610,7 @@ class MainWindow(QMainWindow):
             if is_dir:
                 shutil.rmtree(path)
             else:
-                os.remove(path)
+                os.unlink(path)
         except OSError as e:
             QMessageBox.critical(self, "Error al eliminar", str(e))
             return

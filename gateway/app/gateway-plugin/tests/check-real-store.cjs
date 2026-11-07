@@ -13,6 +13,8 @@ const { execFileSync } = require("child_process");
 const PUB = 3210;
 const repo = path.resolve(__dirname, "..", "..");
 const storeDocsDir = path.join(os.homedir(), ".mykos", "gateway-state", "mykos", "docs");
+const controlTokenFile = path.join(os.homedir(), ".mykos", "gateway-state", "mykos", "control.token");
+const controlToken = fs.existsSync(controlTokenFile) ? fs.readFileSync(controlTokenFile, "utf8").trim() : "";
 const results = [];
 const check = (name, ok, detail = "") => results.push({ name, ok: Boolean(ok), detail });
 const info = (name, detail) => results.push({ name, ok: true, info: true, detail });
@@ -20,7 +22,7 @@ const info = (name, detail) => results.push({ name, ok: true, info: true, detail
 function request(method, p, payload) {
   return new Promise((resolve) => {
     const body = payload === undefined ? undefined : JSON.stringify(payload);
-    const headers = { Origin: `http://127.0.0.1:${PUB}`, ...(body ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } : {}) };
+    const headers = { Origin: `http://127.0.0.1:${PUB}`, ...(controlToken ? { "X-MyKOS-Control-Token": controlToken } : {}), ...(body ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } : {}) };
     const r = http.request({ host: "127.0.0.1", port: PUB, path: p, method, headers, agent: false, timeout: 30000 }, (res) => {
       const c = [];
       res.on("data", (d) => c.push(d));

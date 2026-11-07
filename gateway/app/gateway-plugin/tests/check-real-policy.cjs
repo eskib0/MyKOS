@@ -10,6 +10,8 @@ const path = require("path");
 
 const port = Number(process.argv[2] || 3210);
 const journalFile = path.join(os.homedir(), ".mykos", "gateway-state", "mykos", "control-journal.jsonl");
+const controlTokenFile = path.join(os.homedir(), ".mykos", "gateway-state", "mykos", "control.token");
+const controlToken = fs.existsSync(controlTokenFile) ? fs.readFileSync(controlTokenFile, "utf8").trim() : "";
 const workerLog = path.resolve(__dirname, "..", "..", "data", "mykos-backend.log");
 
 const results = [];
@@ -18,6 +20,7 @@ const check = (name, ok, detail = "") => results.push({ name, ok: Boolean(ok), d
 function request({ method = "GET", path: p, headers = {}, body, port: target = port, timeoutMs = 20000 }) {
   return new Promise((resolve) => {
     const h = {};
+    if (target === port && controlToken) h["x-mykos-control-token"] = controlToken;
     for (const [k, v] of Object.entries(headers)) h[k.toLowerCase()] = v;
     if (body !== undefined && h["content-length"] === undefined) h["content-length"] = Buffer.byteLength(body);
     const chunks = [];
