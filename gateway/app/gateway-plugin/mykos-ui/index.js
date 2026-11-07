@@ -1773,10 +1773,13 @@ function callPath(pathname) {
   return null;
 }
 
-async function handleCallApi(req, res, route, registry, voiceEngine) {
+async function handleCallApi(req, res, route, registry, voiceEngine, modelController) {
   try {
     if (route.kind === "create") {
       if (req.method !== "POST") return false;
+      if (modelController && typeof modelController.unloadOllama === "function") {
+        await modelController.unloadOllama().catch(() => {});
+      }
       const declared = Number(req.headers["content-length"]);
       if (Number.isFinite(declared) && declared > 16 * 1024) {
         sendJson(res, 413, { error: "El cuerpo de la llamada no puede pasar de 16 KB." });
@@ -2464,7 +2467,7 @@ export default {
         const call = callPath(apiPath);
         if (call) {
           const statusBefore = res.statusCode;
-          const handled = await handleCallApi(req, res, call, callRegistry, voiceEngine);
+          const handled = await handleCallApi(req, res, call, callRegistry, voiceEngine, modelController);
           if (handled) {
             recordApiResult(res.statusCode || statusBefore || 200, { owner: "mykos-gateway" });
             return true;

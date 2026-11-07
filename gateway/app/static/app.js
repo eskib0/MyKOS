@@ -2377,6 +2377,7 @@ function addBubble(role, content, isError = false, sources = [], createdAt = "",
   row.appendChild(bubble);
   elements.messages.appendChild(row);
   elements.messages.scrollTop = elements.messages.scrollHeight;
+  return row;
 }
 
 function showWelcome() {
@@ -5124,8 +5125,25 @@ async function sendLocalVoiceMessage(message, signal) {
     let playbackStopped = false;
     let playbackError = null;
     let streamedPhrases = 0;
+    let assistantBubbleRow = null;
+    let accumulatedText = "";
     const enqueuePhrase = (piece) => {
       streamedPhrases += 1;
+      const phraseText = String(piece?.phrase || "").trim();
+      if (phraseText) {
+        if (!assistantBubbleRow) {
+          accumulatedText = phraseText;
+          assistantBubbleRow = addBubble("assistant", accumulatedText, false, [], new Date().toISOString(), "", elements.model?.value || "");
+        } else {
+          accumulatedText += " " + phraseText;
+          const textEl = assistantBubbleRow.querySelector(".message-text");
+          if (textEl) {
+            textEl.textContent = accumulatedText;
+            elements.messages.scrollTop = elements.messages.scrollHeight;
+          }
+        }
+        callTranscriptLine("assistant", phraseText);
+      }
       let prepared = null;
       if (piece?.audio?.audio) {
         try {
@@ -5154,15 +5172,25 @@ async function sendLocalVoiceMessage(message, signal) {
       enqueuePhrase
     );
     const answer = String(data.text || "").trim();
-    callTranscriptLine("assistant", unwrapJsonAnswer(answer));
+    if (answer) {
+      const cleanAnswer = unwrapJsonAnswer(answer);
+      if (!assistantBubbleRow) {
+        addBubble("assistant", cleanAnswer, false, [], new Date().toISOString(), "", elements.model?.value || "");
+        callTranscriptLine("assistant", cleanAnswer);
+      } else {
+        const textEl = assistantBubbleRow.querySelector(".message-text");
+        if (textEl) textEl.textContent = cleanAnswer;
+      }
+    }
     if (data.pending_action) await loadApprovals();
-    await loadConversations(); await loadConversation(); await loadApprovals();
+    await loadConversations(); await loadApprovals();
     if (streamedPhrases > 0) {
       // Esperar a que terminen de reproducirse las frases en cola
       await playChain;
     } else if (!data.pending_action && data.audio?.length) {
       await playVoiceAudio(data.audio);
     }
+    await loadConversation();
     if (playbackError) throw playbackError;
   } finally {
     state.busy = false;
