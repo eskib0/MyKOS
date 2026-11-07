@@ -270,6 +270,34 @@ class _BrowserController:
         executable = self._find_executable()
         self.port = self._free_port()
         self.profile = Path(tempfile.mkdtemp(prefix="mykos-browser-"))
+        host_rules = ", ".join([
+            "MAP localhost ~NOTFOUND",
+            "MAP *.localhost ~NOTFOUND",
+            "MAP 127.* ~NOTFOUND",
+            "MAP 10.* ~NOTFOUND",
+            "MAP 192.168.* ~NOTFOUND",
+            "MAP 172.16.* ~NOTFOUND",
+            "MAP 172.17.* ~NOTFOUND",
+            "MAP 172.18.* ~NOTFOUND",
+            "MAP 172.19.* ~NOTFOUND",
+            "MAP 172.20.* ~NOTFOUND",
+            "MAP 172.21.* ~NOTFOUND",
+            "MAP 172.22.* ~NOTFOUND",
+            "MAP 172.23.* ~NOTFOUND",
+            "MAP 172.24.* ~NOTFOUND",
+            "MAP 172.25.* ~NOTFOUND",
+            "MAP 172.26.* ~NOTFOUND",
+            "MAP 172.27.* ~NOTFOUND",
+            "MAP 172.28.* ~NOTFOUND",
+            "MAP 172.29.* ~NOTFOUND",
+            "MAP 172.30.* ~NOTFOUND",
+            "MAP 172.31.* ~NOTFOUND",
+            "MAP 169.254.* ~NOTFOUND",
+            "MAP 0.0.0.0 ~NOTFOUND",
+            "MAP [::1] ~NOTFOUND",
+            "MAP *.local ~NOTFOUND",
+            "MAP *.internal ~NOTFOUND",
+        ])
         command = [
             executable,
             "--headless=new",
@@ -278,6 +306,10 @@ class _BrowserController:
             "--no-default-browser-check",
             "--disable-extensions",
             "--disable-background-networking",
+            "--disable-features=ServiceWorker,SharedWorker",
+            "--disable-service-workers",
+            "--disable-shared-workers",
+            f"--host-rules={host_rules}",
             "--remote-debugging-address=127.0.0.1",
             f"--remote-debugging-port={self.port}",
             f"--user-data-dir={self.profile}",
@@ -359,7 +391,37 @@ class _BrowserController:
             try:
                 ws.call("Page.enable")
                 ws.call("Runtime.enable")
+                ws.call("Target.setAutoAttach", {"autoAttach": True, "waitForDebuggerOnStart": False, "flatten": True})
                 ws.call("Fetch.enable", {"patterns": [{"urlPattern": "*", "requestStage": "Request"}]})
+                ws.call("Page.addScriptToEvaluateOnNewDocument", {
+                    "source": """
+(() => {
+  const OriginalWS = window.WebSocket;
+  if (!OriginalWS) return;
+  function isPrivate(h) {
+    if (!h) return true;
+    const clean = h.toLowerCase().replace(/:\\d+$/, '');
+    if (clean === 'localhost' || clean.endsWith('.localhost') || clean.endsWith('.local') || clean.endsWith('.internal')) return true;
+    if (/^(127\\.|10\\.|192\\.168\\.|172\\.(1[6-9]|2\\d|3[01])\\.|169\\.254\\.|0\\.)/.test(clean)) return true;
+    if (clean === '::1' || clean.startsWith('fe80:') || clean.startsWith('fc') || clean.startsWith('fd')) return true;
+    return false;
+  }
+  window.WebSocket = function(url, protocols) {
+    try {
+      const parsed = new URL(url);
+      if (isPrivate(parsed.hostname)) {
+        throw new DOMException("BlockedByClient: Access to internal network is restricted", "SecurityError");
+      }
+    } catch(e) {
+      if (e.name === "SecurityError") throw e;
+      throw new DOMException("Invalid or restricted URL", "SecurityError");
+    }
+    return new OriginalWS(url, protocols);
+  };
+  window.WebSocket.prototype = OriginalWS.prototype;
+})();
+"""
+                })
                 ws.call("Page.navigate", {"url": url})
                 deadline = time.monotonic() + 12
                 while time.monotonic() < deadline:

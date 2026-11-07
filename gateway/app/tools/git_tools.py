@@ -33,7 +33,17 @@ def _run_git(root_path: Path, arguments: list[str], *, timeout: int = 20, env: d
         if env:
             process_env.update(env)
         return subprocess.run(
-            [git, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "diff.external=", "--literal-pathspecs", *arguments],
+            [
+                git,
+                "-c", "core.fsmonitor=false",
+                "-c", "core.hooksPath=/dev/null",
+                "-c", "diff.external=",
+                "-c", "log.showSignature=false",
+                "-c", "commit.gpgsign=false",
+                "-c", "gpg.program=false",
+                "--literal-pathspecs",
+                *arguments,
+            ],
             cwd=str(root_path),
             capture_output=True,
             text=True,
@@ -248,6 +258,7 @@ def _git_log(arguments: dict[str, Any]) -> dict[str, Any]:
         "--pretty=format:%H%x09%ad%x09%an%x09%s",
         "--no-decorate",
         "--no-color",
+        "--no-show-signature",
         "--",
         *paths,
     ]

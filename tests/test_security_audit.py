@@ -731,6 +731,71 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
             dir_mode = stat.S_IMODE(up_dir.stat().st_mode)
             self.assertEqual(dir_mode, 0o700)
 
+    def test_git_log_disables_gpg_signature(self):
+        """Verifica que _git_log pase --no-show-signature y desactive gpg.program para evitar RCE en commits firmados."""
+        import tools.git_tools
+        import subprocess
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as td:
+            repo_dir = Path(td)
+            subprocess.run(["git", "init"], cwd=repo_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Auditor"], cwd=repo_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "auditor@example.com"], cwd=repo_dir, check=True, capture_output=True)
+            f = repo_dir / "file.txt"
+            f.write_text("content\n")
+            subprocess.run(["git", "add", "file.txt"], cwd=repo_dir, check=True, capture_output=True)
+
+            # Crear commit con cabecera gpgsig
+            tree = subprocess.check_output(["git", "write-tree"], cwd=repo_dir).strip().decode()
+            commit_data = (
+                f"tree {tree}\n"
+                "author Auditor <auditor@example.com> 1700000000 +0000\n"
+                "committer Auditor <auditor@example.com> 1700000000 +0000\n"
+                "gpgsig -----BEGIN PGP SIGNATURE-----\n dummy\n -----END PGP SIGNATURE-----\n\n"
+                "Signed commit test"
+            )
+            commit_sha = subprocess.check_output(
+                ["git", "hash-object", "-t", "commit", "-w", "--stdin"],
+                cwd=repo_dir,
+                input=commit_data.encode(),
+            ).strip().decode()
+            subprocess.run(["git", "update-ref", "refs/heads/master", commit_sha], cwd=repo_dir, check=True, capture_output=True)
+
+            marker = repo_dir / "pwned_gpg_marker.txt"
+            script = repo_dir / "mygpg.sh"
+            script.write_text(f"#!/bin/sh\ntouch {marker}\nexit 0\n")
+            script.chmod(0o755)
+            subprocess.run(["git", "config", "log.showSignature", "true"], cwd=repo_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "gpg.program", str(script)], cwd=repo_dir, check=True, capture_output=True)
+
+            with patch("tools.git_tools._git_repository", return_value=("workspace", repo_dir)):
+                log_result = tools.git_tools._git_log({"root": "workspace"})
+                self.assertTrue(log_result.get("ok"))
+                self.assertFalse(marker.exists(), "¡El comando gpg.program se ejecutó durante git_log!")
+
+    def test_browser_isolated_sandbox_flags(self):
+        """Verifica que el controlador del navegador lance Chromium con host-rules y sin ServiceWorkers."""
+        import browser
+        from unittest.mock import patch, MagicMock
+
+        ctrl = browser._BrowserController()
+        with patch.object(ctrl, "_find_executable", return_value="/usr/bin/chromium"), \
+             patch.object(ctrl, "_free_port", return_value=9999), \
+             patch("subprocess.Popen") as mock_popen, \
+             patch.object(ctrl, "_targets", return_value=[{"type": "page"}]):
+            mock_proc = MagicMock()
+            mock_proc.poll.return_value = None
+            mock_popen.return_value = mock_proc
+
+            ctrl._ensure()
+            cmd = mock_popen.call_args[0][0]
+            self.assertTrue(any("--host-rules=" in arg for arg in cmd))
+            self.assertIn("--disable-features=ServiceWorker,SharedWorker", cmd)
+            self.assertIn("--disable-service-workers", cmd)
+            self.assertIn("--disable-shared-workers", cmd)
+            ctrl.close()
+
 
 if __name__ == "__main__":
     unittest.main()
