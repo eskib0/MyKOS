@@ -75,6 +75,8 @@ def local_status() -> dict[str, Any]:
         for _path in WORKSPACE.rglob("*"):
             if _path.is_file():
                 workspace_files += 1
+                if workspace_files >= 10_000:
+                    break
     checks = [
         {"id": "mykos_root", "label": "Raíz de MyKOS", "status": "ok", "detail": str(ROOT)},
         {"id": "workspace", "label": "Workspace independiente", "status": "ok" if WORKSPACE.is_dir() else "error", "detail": f"{workspace_files} archivos" if WORKSPACE.is_dir() else "No encontrado"},

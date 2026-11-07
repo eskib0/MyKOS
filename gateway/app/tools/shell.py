@@ -120,7 +120,7 @@ def _execute_run_shell_posix(
     environment = {
         k: v
         for k, v in os.environ.items()
-        if (not re.search(r"(TOKEN|KEY|SECRET|PASSWORD|AUTH)", k, re.IGNORECASE))
+        if (not re.search(r"(TOKEN|KEY|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIAL|DSN|DATABASE_URL|_URL$|PRIVATE)", k, re.IGNORECASE))
         or k in {"SSH_AUTH_SOCK", "GPG_AGENT_INFO"}
     }
     environment.update(_desktop_session_environment())
@@ -190,7 +190,7 @@ def _execute_run_shell_windows(
     environment = {
         k: v
         for k, v in os.environ.items()
-        if (not re.search(r"(TOKEN|KEY|SECRET|PASSWORD|AUTH)", k, re.IGNORECASE))
+        if (not re.search(r"(TOKEN|KEY|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIAL|DSN|DATABASE_URL|_URL$|PRIVATE)", k, re.IGNORECASE))
         or k in {"SSH_AUTH_SOCK", "GPG_AGENT_INFO"}
     }
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:

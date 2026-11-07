@@ -61,7 +61,7 @@ def _clean_subproc_env() -> dict[str, str]:
     """Sanea el entorno para que paquetes npm o scripts externos no hereden tokens ni claves maestras."""
     return {
         k: v for k, v in os.environ.items()
-        if not re.search(r"(TOKEN|KEY|SECRET|PASSWORD|AUTH)", k, re.IGNORECASE)
+        if not re.search(r"(TOKEN|KEY|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIAL|DSN|DATABASE_URL|_URL$|PRIVATE)", k, re.IGNORECASE)
     }
 
 

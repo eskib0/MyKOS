@@ -28,19 +28,30 @@ def _run_git(root_path: Path, arguments: list[str], *, timeout: int = 20, env: d
     if not git:
         raise ToolError("Git no está instalado o no está disponible en PATH.")
     try:
-        process_env = os.environ.copy()
+        process_env = {
+            k: v
+            for k, v in os.environ.items()
+            if (not re.search(r"(TOKEN|KEY|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIAL|DSN|DATABASE_URL|_URL$|PRIVATE)", k, re.IGNORECASE))
+            or k in {"SSH_AUTH_SOCK", "GPG_AGENT_INFO"}
+        }
         process_env["GIT_TERMINAL_PROMPT"] = "0"
         if env:
             process_env.update(env)
+        safe_flags = [
+            "-c", "core.fsmonitor=false",
+            "-c", "core.hooksPath=/dev/null",
+            "-c", "diff.external=",
+            "-c", "log.showSignature=false",
+            "-c", "commit.gpgsign=false",
+            "-c", "gpg.program=false",
+        ]
+        first_cmd = arguments[0] if arguments else ""
+        if first_cmd not in {"fetch", "pull", "push", "clone"}:
+            safe_flags.extend(["-c", "credential.helper="])
         return subprocess.run(
             [
                 git,
-                "-c", "core.fsmonitor=false",
-                "-c", "core.hooksPath=/dev/null",
-                "-c", "diff.external=",
-                "-c", "log.showSignature=false",
-                "-c", "commit.gpgsign=false",
-                "-c", "gpg.program=false",
+                *safe_flags,
                 "--literal-pathspecs",
                 *arguments,
             ],

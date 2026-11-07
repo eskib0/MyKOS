@@ -222,9 +222,12 @@ def tick() -> int:
             fired += 1
             repeat = int(item.get("repeat_minutes", 0) or 0)
             if repeat > 0:
-                next_run = due
-                while next_run <= now:
-                    next_run += timedelta(minutes=repeat)
+                elapsed_seconds = (now - due).total_seconds()
+                if elapsed_seconds > 0:
+                    intervals = int(elapsed_seconds // (repeat * 60)) + 1
+                    next_run = due + timedelta(minutes=intervals * repeat)
+                else:
+                    next_run = due + timedelta(minutes=repeat)
                 item["run_at"] = _iso(next_run)
                 item["last_run_at"] = _iso(now)
             else:

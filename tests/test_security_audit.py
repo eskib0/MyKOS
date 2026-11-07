@@ -905,6 +905,125 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
             self.assertNotIn("AWS_ACCESS_KEY_ID", passed_env)
             self.assertEqual(passed_env.get("HOME"), str(meta_ai.META_AI_DIR))
 
+    def test_subprocess_extended_environment_scrubbing(self):
+        """Verifica que shell, git y rea purguen variables cloud y bases de datos (DATABASE_URL, GOOGLE_APPLICATION_CREDENTIALS, DSN, etc.)."""
+        from unittest.mock import patch, MagicMock
+        import tools.shell
+        import tools.git_tools
+
+        dirty_env = {
+            "GOOGLE_APPLICATION_CREDENTIALS": "/var/run/secrets/sa.json",
+            "DATABASE_URL": "postgres://user:secret@db.internal:5432/main",
+            "REDIS_URL": "redis://:p4ss@cache:6379",
+            "SENTRY_DSN": "https://pubkey:secret@sentry.io/123",
+            "MY_PRIVATE_CERT": "-----BEGIN CERTIFICATE-----",
+            "PATH": "/usr/bin:/bin",
+        }
+
+        # 1. tools.shell
+        with patch.dict(os.environ, dirty_env, clear=True), patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.wait.return_value = 0
+            mock_popen.return_value = mock_proc
+            tools.shell._execute_run_shell_posix(
+                {"command": "echo test"}, "mykos", ROOT, ROOT, 5
+            )
+            child_env = mock_popen.call_args.kwargs.get("env", {})
+            self.assertNotIn("GOOGLE_APPLICATION_CREDENTIALS", child_env)
+            self.assertNotIn("DATABASE_URL", child_env)
+            self.assertNotIn("REDIS_URL", child_env)
+            self.assertNotIn("SENTRY_DSN", child_env)
+            self.assertNotIn("MY_PRIVATE_CERT", child_env)
+
+        # 2. tools.git_tools
+        with patch.dict(os.environ, dirty_env, clear=True), patch("subprocess.run") as mock_run, patch("shutil.which", return_value="/usr/bin/git"):
+            mock_proc = MagicMock()
+            mock_proc.returncode = 0
+            mock_run.return_value = mock_proc
+            tools.git_tools._run_git(ROOT, ["status"])
+            git_env = mock_run.call_args.kwargs.get("env", {})
+            self.assertNotIn("GOOGLE_APPLICATION_CREDENTIALS", git_env)
+            self.assertNotIn("DATABASE_URL", git_env)
+            self.assertNotIn("REDIS_URL", git_env)
+            self.assertNotIn("SENTRY_DSN", git_env)
+            self.assertNotIn("MY_PRIVATE_CERT", git_env)
+
+    def test_git_local_inspection_disables_credential_helper(self):
+        """Verifica que las operaciones locales de inspección en git pasen -c credential.helper= para evitar invocar binarios externos."""
+        from unittest.mock import patch, MagicMock
+        import tools.git_tools
+
+        with patch("subprocess.run") as mock_run, patch("shutil.which", return_value="/usr/bin/git"):
+            mock_proc = MagicMock()
+            mock_proc.returncode = 0
+            mock_run.return_value = mock_proc
+
+            # git status local DEBE desactivar credential.helper
+            tools.git_tools._run_git(ROOT, ["status"])
+            cmd = mock_run.call_args.args[0]
+            self.assertIn("credential.helper=", cmd)
+
+            # git diff local DEBE desactivar credential.helper
+            tools.git_tools._run_git(ROOT, ["diff"])
+            cmd_diff = mock_run.call_args.args[0]
+            self.assertIn("credential.helper=", cmd_diff)
+
+    def test_browser_host_rules_blocks_ipv6_private_ranges(self):
+        """Verifica que las reglas de Chromium (--host-rules y --host-resolver-rules) bloqueen rangos privados IPv6 (ULA y Link-Local)."""
+        from unittest.mock import patch, MagicMock
+        import browser
+
+        ctrl = browser._BrowserController()
+        with patch.object(ctrl, "_find_executable", return_value="/usr/bin/chromium"), \
+             patch.object(ctrl, "_free_port", return_value=9999), \
+             patch("subprocess.Popen") as mock_popen, \
+             patch.object(ctrl, "_targets", return_value=[{"type": "page"}]):
+            mock_proc = MagicMock()
+            mock_proc.poll.return_value = None
+            mock_popen.return_value = mock_proc
+
+            ctrl._ensure()
+            cmd = mock_popen.call_args[0][0]
+            self.assertTrue(any("MAP [fe80:*] ~NOTFOUND" in arg for arg in cmd))
+            self.assertTrue(any("MAP [fc*] ~NOTFOUND" in arg for arg in cmd))
+            self.assertTrue(any("MAP [fd*] ~NOTFOUND" in arg for arg in cmd))
+            self.assertTrue(any("MAP [::ffff:*] ~NOTFOUND" in arg for arg in cmd))
+            ctrl.close()
+
+    def test_automations_catchup_math_resilience(self):
+        """Verifica que un recordatorio periódico con fecha antigua se actualice en O(1) sin bloquear el bucle."""
+        import automations
+        from datetime import datetime, timezone, timedelta
+        from unittest.mock import patch
+
+        now = datetime(2026, 11, 7, 16, 0, 0, tzinfo=timezone.utc)
+        ancient_due = datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        fake_data = {
+            "automations": [
+                {
+                    "id": "old-auto-1",
+                    "title": "Prueba antigua",
+                    "run_at": automations._iso(ancient_due),
+                    "repeat_minutes": 1,
+                    "enabled": True,
+                }
+            ],
+            "events": [],
+        }
+
+        with patch.object(automations, "_now", return_value=now), \
+             patch.object(automations, "_load", return_value=fake_data), \
+             patch.object(automations, "_save") as mock_save:
+            fired = automations.tick()
+            self.assertEqual(fired, 1)
+            saved_data = mock_save.call_args.args[0]
+            updated_item = saved_data["automations"][0]
+            self.assertTrue(updated_item["enabled"])
+            new_run_at = datetime.fromisoformat(updated_item["run_at"])
+            self.assertGreater(new_run_at, now)
+            # Debe programarse en el siguiente múltiplo exacto de 1 minuto
+            self.assertLessEqual(new_run_at, now + timedelta(minutes=1))
+
 
 if __name__ == "__main__":
     unittest.main()

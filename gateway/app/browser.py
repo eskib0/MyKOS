@@ -350,6 +350,10 @@ class _BrowserController:
             "MAP 169.254.* ~NOTFOUND",
             "MAP 0.0.0.0 ~NOTFOUND",
             "MAP [::1] ~NOTFOUND",
+            "MAP [fe80:*] ~NOTFOUND",
+            "MAP [fc*] ~NOTFOUND",
+            "MAP [fd*] ~NOTFOUND",
+            "MAP [::ffff:*] ~NOTFOUND",
             "MAP *.local ~NOTFOUND",
             "MAP *.internal ~NOTFOUND",
         ])
