@@ -330,6 +330,8 @@ def resolve_rea_target(target: str) -> str:
                         raise ReaError(f"Acceso denegado: «{expanded}» es un archivo protegido o ignorado (.env, claves o secretos).")
                 except (ValueError, OSError):
                     pass
+        except ReaError:
+            raise
         except Exception:
             pass
         if _is_within_allowed_roots(expanded):

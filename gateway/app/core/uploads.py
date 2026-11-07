@@ -7,6 +7,7 @@ validación de extensiones y tamaños, y purga periódica.
 from __future__ import annotations
 
 import mimetypes
+import os
 import threading
 import time
 import uuid
@@ -30,7 +31,11 @@ def cleanup_uploads(
 ) -> None:
     """Elimina adjuntos temporales expirados tanto de memoria como de disco."""
     cutoff = time.time() - retention_seconds
-    upload_dir.mkdir(parents=True, exist_ok=True)
+    upload_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        upload_dir.chmod(0o700)
+    except OSError:
+        pass
     with uploads_lock:
         for attachment_id, metadata in list(uploads.items()):
             path = Path(str(metadata.get("path", "")))
@@ -103,11 +108,10 @@ def process_multipart_uploads(
                 raise api_error_cls(f"El archivo {original_name} está vacío o supera su límite de tamaño.")
             attachment_id = uuid.uuid4().hex
             stored_path = upload_dir / f"{attachment_id}{suffix}"
-            stored_path.write_bytes(data)
-            try:
-                stored_path.chmod(0o600)
-            except OSError:
-                pass
+            # Creación atómica con permisos 0600 desde open() para eliminar ventanas de acceso (TOCTOU)
+            fd = os.open(str(stored_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
             kind = "pdf" if suffix == ".pdf" else "image"
             metadata = {
                 "id": attachment_id,

@@ -272,20 +272,37 @@ def _read_document(arguments: dict[str, Any]) -> dict[str, Any]:
 
     suffix = file_path.suffix.lower()
     truncated = False
-    max_uncompressed_xml = 50 * 1024 * 1024  # 50 MB límite anti zip-bomb
+    max_uncompressed_stream = 50 * 1024 * 1024  # 50 MB límite anti zip-bomb por flujo
+    max_total_uncompressed = 100 * 1024 * 1024  # 100 MB límite total
+
+    # Validación preventiva anti Zip-Bomb para cualquier contenedor ZIP de Office (.docx, .xlsx)
+    try:
+        with zipfile.ZipFile(file_path) as archive:
+            total_uncompressed = 0
+            for info in archive.infolist():
+                total_uncompressed += info.file_size
+                if info.file_size > max_uncompressed_stream:
+                    raise ToolError("El contenido XML/datos del documento supera el límite de descompresión seguro (50 MB).")
+                if total_uncompressed > max_total_uncompressed:
+                    raise ToolError("El archivo supera el límite de descompresión seguro (100 MB).")
+            if suffix == ".docx":
+                try:
+                    xml_info = archive.getinfo("word/document.xml")
+                except KeyError as error:
+                    raise ToolError("El documento DOCX no contiene 'word/document.xml'.") from error
+                raw_xml = archive.read(xml_info)
+    except zipfile.BadZipFile as error:
+        raise ToolError(f"El archivo {suffix.upper()} no es un contenedor ZIP válido: {error}") from error
+    except ToolError:
+        raise
+    except OSError as error:
+        raise ToolError(f"Error al inspeccionar el archivo {suffix.upper()}: {error}") from error
+
     if suffix == ".docx":
         try:
-            with zipfile.ZipFile(file_path) as archive:
-                total_uncompressed = sum(info.file_size for info in archive.infolist())
-                if total_uncompressed > max_uncompressed_xml * 2:
-                    raise ToolError("El archivo supera el límite de descompresión seguro (100 MB).")
-                xml_info = archive.getinfo("word/document.xml")
-                if xml_info.file_size > max_uncompressed_xml:
-                    raise ToolError("El contenido XML del documento supera el límite de descompresión seguro (50 MB).")
-                raw_xml = archive.read(xml_info)
             document = ET.fromstring(raw_xml)
-        except (KeyError, OSError, zipfile.BadZipFile, ET.ParseError) as error:
-            raise ToolError(f"No se pudo abrir el documento DOCX: {error}") from error
+        except ET.ParseError as error:
+            raise ToolError(f"No se pudo analizar el XML del documento DOCX: {error}") from error
 
         namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
         paragraphs: list[str] = []

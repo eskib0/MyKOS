@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import ipaddress
 import unittest
 from pathlib import Path
@@ -554,7 +555,7 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
             handler.send_openrouter_callback_page.assert_called_once_with("State mismatch detected", success=False)
 
     def test_git_tools_disables_fsmonitor_and_hooks(self):
-        """Verifica que _run_git pase core.fsmonitor=false y core.hooksPath=/dev/null para evitar RCE."""
+        """Verifica que _run_git pase core.fsmonitor=false, core.hooksPath=/dev/null y diff.external= para evitar RCE."""
         import tools.git_tools
         from unittest.mock import patch
 
@@ -565,55 +566,170 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
             self.assertIn("-c", called_cmd)
             self.assertIn("core.fsmonitor=false", called_cmd)
             self.assertIn("core.hooksPath=/dev/null", called_cmd)
+            self.assertIn("diff.external=", called_cmd)
+
+    def test_git_diff_disables_textconv(self):
+        """Verifica que _git_diff ejecute diff con --no-textconv y no dispare comandos maliciosos."""
+        import tools.git_tools
+        import subprocess
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as td:
+            repo_dir = Path(td)
+            subprocess.run(["git", "init"], cwd=repo_dir, check=True, capture_output=True)
+            poc_file = repo_dir / "sample.poc"
+            poc_file.write_text("initial content\n")
+            subprocess.run(["git", "add", "sample.poc"], cwd=repo_dir, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=repo_dir, check=True, capture_output=True)
+
+            attr_file = repo_dir / ".gitattributes"
+            attr_file.write_text("*.poc diff=poc\n")
+            poc_file.write_text("modified content\n")
+
+            marker = repo_dir / "pwned_marker.txt"
+            subprocess.run(["git", "config", "diff.poc.textconv", f"touch {marker}"], cwd=repo_dir, check=True, capture_output=True)
+
+            with patch("tools.git_tools._git_repository", return_value=("workspace", repo_dir)):
+                diff_result = tools.git_tools._git_diff({"paths": ["sample.poc"]})
+                self.assertTrue(diff_result.get("ok"))
+                self.assertFalse(marker.exists(), "¡El filtro textconv se ejecutó durante git_diff!")
 
     def test_rea_target_blocks_ignored_files(self):
-        """Verifica que rea.resolve_rea_target bloquee archivos sensibles (.env, token.json) dentro del workspace."""
+        """Verifica dinámicamente que rea.resolve_rea_target bloquee archivos sensibles (.env, token.json) dentro del workspace."""
         import rea
-        with self.assertRaises(rea.ReaError):
-            rea.resolve_rea_target("/home/ruben/.mykos/workspace/.env")
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as td:
+            ws_path = Path(td).resolve()
+            env_file = ws_path / ".env"
+            env_file.write_text("MY_SECRET=123")
+            token_file = ws_path / "token.json"
+            token_file.write_text('{"token": "xyz"}')
+            normal_file = ws_path / "app.py"
+            normal_file.write_text("print('hello')")
+
+            roots = [{"name": "workspace", "path": ws_path}]
+            with patch("tools.base._load_allowed_roots", return_value=roots):
+                # Archivo normal debe resolverse con éxito
+                resolved_normal = rea.resolve_rea_target(str(normal_file))
+                self.assertEqual(resolved_normal, str(normal_file))
+
+                # .env debe fallar con ReaError citando archivo protegido
+                with self.assertRaises(rea.ReaError) as ctx_env:
+                    rea.resolve_rea_target(str(env_file))
+                self.assertIn("protegido o ignorado", str(ctx_env.exception))
+
+                # token.json debe fallar con ReaError citando archivo protegido
+                with self.assertRaises(rea.ReaError) as ctx_token:
+                    rea.resolve_rea_target(str(token_file))
+                self.assertIn("protegido o ignorado", str(ctx_token.exception))
 
     def test_documents_zip_bomb_protection(self):
-        """Verifica que _read_document bloquee documentos DOCX cuyo XML descomprimido supere el límite de seguridad."""
+        """Verifica que _read_document bloquee documentos DOCX y XLSX cuyo XML descomprimido supere el límite de seguridad."""
         from unittest.mock import patch, MagicMock
         import tools.documents
         import zipfile
         import io
 
+        # 1. Prueba con DOCX
         fake_docx = io.BytesIO()
         with zipfile.ZipFile(fake_docx, "w") as zf:
             zf.writestr("word/document.xml", b"<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'/>")
 
-        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tf:
-            tf.write(fake_docx.getvalue())
-            tf_path = Path(tf.name)
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tf_docx:
+            tf_docx.write(fake_docx.getvalue())
+            docx_path = Path(tf_docx.name)
 
         try:
             mock_info = MagicMock()
             mock_info.file_size = 60 * 1024 * 1024  # 60 MB
-            with patch("tools.documents._resolve_read_file", return_value=("workspace", tf_path.parent, tf_path)), \
-                 patch.object(zipfile.ZipFile, "getinfo", return_value=mock_info):
+            with patch("tools.documents._resolve_read_file", return_value=("workspace", docx_path.parent, docx_path)), \
+                 patch("zipfile.ZipFile.infolist", return_value=[mock_info]):
                 with self.assertRaises(tools.documents.ToolError) as ctx:
-                    tools.documents._read_document({"path": tf_path.name})
+                    tools.documents._read_document({"path": docx_path.name})
                 self.assertIn("descompresión seguro", str(ctx.exception))
         finally:
-            tf_path.unlink(missing_ok=True)
+            docx_path.unlink(missing_ok=True)
+
+        # 2. Prueba con XLSX
+        fake_xlsx = io.BytesIO()
+        with zipfile.ZipFile(fake_xlsx, "w") as zf:
+            zf.writestr("xl/workbook.xml", b"<workbook/>")
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tf_xlsx:
+            tf_xlsx.write(fake_xlsx.getvalue())
+            xlsx_path = Path(tf_xlsx.name)
+
+        try:
+            mock_info_xlsx = MagicMock()
+            mock_info_xlsx.file_size = 60 * 1024 * 1024  # 60 MB
+            with patch("tools.documents._resolve_read_file", return_value=("workspace", xlsx_path.parent, xlsx_path)), \
+                 patch("zipfile.ZipFile.infolist", return_value=[mock_info_xlsx]):
+                with self.assertRaises(tools.documents.ToolError) as ctx:
+                    tools.documents._read_document({"path": xlsx_path.name})
+                self.assertIn("descompresión seguro", str(ctx.exception))
+        finally:
+            xlsx_path.unlink(missing_ok=True)
 
     def test_web_pinned_connection_blocks_private_ip(self):
-        """Verifica que _PinnedHTTPConnection bloquee conexiones si la IP del socket es privada (anti-DNS Rebinding)."""
+        """Verifica que _PinnedHTTPConnection.connect() invoque el socket real y aborte ante IPs privadas (anti-DNS Rebinding)."""
         import tools.web
-        from unittest.mock import MagicMock
+        import http.client
+        from unittest.mock import MagicMock, patch
 
         conn = tools.web._PinnedHTTPConnection("example.com", 80)
         mock_sock = MagicMock()
         mock_sock.getpeername.return_value = ("127.0.0.1", 80)
-        conn.sock = mock_sock
-        with self.assertRaises(tools.web.ToolError) as ctx:
-            # Simular verificación tras super().connect()
-            peer_ip = conn.sock.getpeername()[0]
-            if not ipaddress.ip_address(peer_ip).is_global:
-                conn.close()
-                raise tools.web.ToolError(f"Por seguridad, la conexión resolvió a una IP no pública o local ({peer_ip}).")
-        self.assertIn("no pública o local", str(ctx.exception))
+
+        def mock_super_connect():
+            conn.sock = mock_sock
+
+        with patch.object(http.client.HTTPConnection, "connect", side_effect=mock_super_connect):
+            with self.assertRaises(tools.web.ToolError) as ctx:
+                conn.connect()
+            self.assertIn("no pública o local (127.0.0.1)", str(ctx.exception))
+            mock_sock.close.assert_called_once()
+
+    def test_uploads_atomic_mode_0600(self):
+        """Verifica que las cargas de archivos se almacenen con permisos 0600 de forma atómica y el directorio sea 0700."""
+        from core.uploads import process_multipart_uploads
+        import stat
+
+        with tempfile.TemporaryDirectory() as td:
+            up_dir = Path(td) / "uploads"
+            boundary = "----WebKitFormBoundaryX"
+            payload = (
+                f"--{boundary}\r\n"
+                'Content-Disposition: form-data; name="file"; filename="test.png"\r\n'
+                "Content-Type: image/png\r\n\r\n"
+                "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4\r\n"
+                f"--{boundary}--\r\n"
+            ).encode("latin-1")
+            content_type = f"multipart/form-data; boundary={boundary}"
+            uploads: dict = {}
+            lock = threading.Lock()
+
+            created = process_multipart_uploads(
+                content_type,
+                payload,
+                up_dir,
+                uploads,
+                lock,
+                utc_now_fn=lambda: "2026-11-07T12:00:00Z",
+                api_error_cls=ValueError,
+            )
+
+            self.assertEqual(len(created), 1)
+            stored_file = up_dir / f"{created[0]['id']}.png"
+            self.assertTrue(stored_file.exists())
+
+            # Comprobar permisos del fichero: 0600 (-rw-------)
+            file_mode = stat.S_IMODE(stored_file.stat().st_mode)
+            self.assertEqual(file_mode, 0o600)
+
+            # Comprobar permisos del directorio: 0700 (drwx------)
+            dir_mode = stat.S_IMODE(up_dir.stat().st_mode)
+            self.assertEqual(dir_mode, 0o700)
 
 
 if __name__ == "__main__":

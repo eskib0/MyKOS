@@ -18,6 +18,7 @@ from .base import (
     GIT_MAX_PATHS,
     GIT_REMOTE_TIMEOUT_SECONDS,
     ToolError,
+    _relative_label,
     _resolve_project_path,
     _resolve_root,
 )
@@ -32,7 +33,7 @@ def _run_git(root_path: Path, arguments: list[str], *, timeout: int = 20, env: d
         if env:
             process_env.update(env)
         return subprocess.run(
-            [git, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "--literal-pathspecs", *arguments],
+            [git, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "diff.external=", "--literal-pathspecs", *arguments],
             cwd=str(root_path),
             capture_output=True,
             text=True,
@@ -81,10 +82,10 @@ def _git_status_state(root_path: Path) -> dict[str, str]:
     fingerprint_parts = [raw]
     diff_targets = []
     if head:
-        diff_targets.append(["diff", "--raw", "--no-ext-diff", "--no-color", head, "--"])
+        diff_targets.append(["diff", "--raw", "--no-ext-diff", "--no-textconv", "--no-color", head, "--"])
     else:
-        diff_targets.append(["diff", "--raw", "--no-ext-diff", "--no-color", "--"])
-    diff_targets.append(["diff", "--raw", "--cached", "--"])
+        diff_targets.append(["diff", "--raw", "--no-ext-diff", "--no-textconv", "--no-color", "--"])
+    diff_targets.append(["diff", "--raw", "--cached", "--no-ext-diff", "--no-textconv", "--"])
     for diff_arguments in diff_targets:
         diff_result = _run_git(root_path, diff_arguments, timeout=30)
         if diff_result.returncode != 0:
@@ -177,7 +178,7 @@ def _git_pathspecs(arguments: dict[str, Any], root_path: Path) -> list[str]:
 
 
 def _git_diff_stat(root_path: Path, *, staged: bool, paths: list[str]) -> str:
-    arguments = ["diff", "--no-ext-diff", "--no-color", "--stat"]
+    arguments = ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--stat"]
     if staged:
         arguments.append("--cached")
     arguments.extend(["--", *paths])
@@ -212,7 +213,7 @@ def _git_diff(arguments: dict[str, Any]) -> dict[str, Any]:
     root_name, root_path = _git_repository(arguments)
     staged = bool(arguments.get("staged", False))
     paths = _git_pathspecs(arguments, root_path)
-    git_arguments = ["diff", "--no-ext-diff", "--no-color", "--unified=3"]
+    git_arguments = ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=3"]
     if staged:
         git_arguments.append("--cached")
     git_arguments.extend(["--", *paths])
@@ -481,7 +482,7 @@ def _prepare_git_commit(arguments: dict[str, Any]) -> dict[str, Any]:
         if not selected.stdout.strip():
             raise ToolError("Las rutas indicadas no tienen cambios para incluir.")
     elif not stage_all:
-        cached = _run_git(root_path, ["diff", "--cached", "--quiet", "--"], timeout=20)
+        cached = _run_git(root_path, ["diff", "--cached", "--quiet", "--no-ext-diff", "--no-textconv", "--"], timeout=20)
         if cached.returncode == 0:
             raise ToolError("No hay cambios preparados. Indica paths o stage_all=true.")
         if cached.returncode != 1:
@@ -534,7 +535,7 @@ def _execute_git_commit(action: dict[str, Any]) -> dict[str, Any]:
             detail = (added.stderr or added.stdout).strip()[:800]
             raise ToolError(f"Git no pudo preparar los cambios. {detail}".strip())
 
-        cached = _run_git(root_path, ["diff", "--cached", "--quiet", "--"], timeout=20)
+        cached = _run_git(root_path, ["diff", "--cached", "--quiet", "--no-ext-diff", "--no-textconv", "--"], timeout=20)
         if cached.returncode == 0:
             raise ToolError("No quedan cambios preparados para el commit.")
         if cached.returncode != 1:

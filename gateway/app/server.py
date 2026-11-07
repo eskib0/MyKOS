@@ -4327,7 +4327,16 @@ def _watch_parent(server: ThreadingHTTPServer, parent_pid: int) -> None:
 
 
 def main() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        DATA_DIR.chmod(0o700)
+    except OSError:
+        pass
+    UPLOAD_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        UPLOAD_DIR.chmod(0o700)
+    except OSError:
+        pass
     _cleanup_uploads()
     if not gateway_store.ENABLED:
         start_scheduler()
