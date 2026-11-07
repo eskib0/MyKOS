@@ -4775,9 +4775,12 @@ function stopCallVisual() {
 function setVoiceCallUi(active) {
   elements.chatPanel.classList.toggle("voice-call-active", active);
   if (elements.voiceCallStage) elements.voiceCallStage.hidden = !active;
-  if (active) startCallVisual();
-  else if (!active) elements.chatPanel.classList.remove("voice-call-minimized");
-  stopCallVisual();
+  if (active) {
+    startCallVisual();
+  } else {
+    elements.chatPanel.classList.remove("voice-call-minimized");
+    stopCallVisual();
+  }
 }
 function updateVoiceCompactBar(mode) {
   if (elements.voiceCompactDot) elements.voiceCompactDot.dataset.mode = mode || "";
@@ -5452,3 +5455,14 @@ loadAutomations();
 state.automationPollTimer = window.setInterval(loadAutomations, 5000);
 loadManagement();
 renderLibraryRoots();
+
+const urlParams = new URLSearchParams(window.location.search);
+const initPage = urlParams.get("page");
+if (initPage) {
+  setTimeout(() => {
+    setPage(initPage);
+    const initTab = urlParams.get("tab");
+    if (initTab && typeof switchSettingsTab === "function") switchSettingsTab(initTab);
+  }, 350);
+}
+

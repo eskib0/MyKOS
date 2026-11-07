@@ -256,7 +256,9 @@
         window.addEventListener("resize", onResize);
         lastTick = 0;
         frame = requestAnimationFrame(tick);
+        requestAnimationFrame(resize);
       },
+      resize,
       stop() {
         if (frame) cancelAnimationFrame(frame);
         frame = 0;
