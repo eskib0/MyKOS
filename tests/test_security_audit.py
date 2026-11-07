@@ -823,6 +823,88 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
         self.assertEqual(payload.get("sessionId"), "child-target-session-42")
         self.assertEqual(payload.get("params", {}).get("requestId"), "req-99")
 
+    def test_browser_reader_loop_handles_async_fetch_paused_and_call_responses(self):
+        """Verifica que el hilo lector continuo de _WebSocket procese Fetch.requestPaused en segundo plano y despache call()."""
+        import browser
+        import threading
+        import time
+        from unittest.mock import patch
+
+        ws = object.__new__(browser._WebSocket)
+        ws.next_id = 1
+        ws.closed = False
+        ws.pending = {}
+        ws.pending_cond = threading.Condition()
+        ws.send_lock = threading.Lock()
+
+        call_sent = threading.Event()
+        sent_frames: list[dict] = []
+        nav_call_id: list[int] = []
+
+        def fake_send(opcode: int, data: bytes) -> None:
+            msg = json.loads(data.decode("utf-8"))
+            sent_frames.append(msg)
+            if msg.get("method") == "Page.navigate":
+                nav_call_id.append(int(msg["id"]))
+                call_sent.set()
+
+        ws._send_frame = fake_send  # type: ignore[method-assign]
+        step = [0]
+
+        def fake_recv():
+            step[0] += 1
+            if step[0] == 1:
+                return (0x1, json.dumps({
+                    "method": "Fetch.requestPaused",
+                    "sessionId": "bg-iframe-1",
+                    "params": {"requestId": "bg-req-1", "request": {"url": "http://127.0.0.1:8080/internal"}},
+                }).encode("utf-8"))
+            if step[0] == 2:
+                call_sent.wait(timeout=2)
+                return (0x1, json.dumps({
+                    "id": nav_call_id[0],
+                    "result": {"frameId": "main-frame"},
+                }).encode("utf-8"))
+            time.sleep(0.05)
+            return (0x8, b"")
+
+        ws._recv_frame = fake_recv  # type: ignore[method-assign]
+
+        with patch("browser._validate_public_url", side_effect=browser.BrowserError("blocked")):
+            t = threading.Thread(target=ws._reader_loop, daemon=True)
+            t.start()
+            res = ws.call("Page.navigate", {"url": "https://example.com"})
+            t.join(timeout=2)
+
+        self.assertEqual(res.get("frameId"), "main-frame")
+        fail_cmds = [m for m in sent_frames if m.get("method") == "Fetch.failRequest"]
+        self.assertEqual(len(fail_cmds), 1)
+        self.assertEqual(fail_cmds[0].get("sessionId"), "bg-iframe-1")
+
+    def test_meta_ai_dgw_uses_isolated_vm_context_and_strict_env_allowlist(self):
+        """Verifica que meta_ai_dgw.mjs use vm.createContext + vm.runInContext (sin runInThisContext) y meta_ai.py use allowlist de entorno."""
+        import meta_ai
+        from unittest.mock import patch, MagicMock
+
+        dgw_source = (GATEWAY_APP / "meta_ai_dgw.mjs").read_text(encoding="utf-8")
+        self.assertIn("vm.createContext(", dgw_source)
+        self.assertIn("vm.runInContext(", dgw_source)
+        self.assertNotIn("vm.runInThisContext(", dgw_source)
+
+        with patch.dict(os.environ, {"DATABASE_URL": "postgres://u:p@localhost/db", "AWS_ACCESS_KEY_ID": "AKIA123", "PATH": "/usr/bin"}), \
+             patch("subprocess.run") as mock_run:
+            mock_proc = MagicMock()
+            mock_proc.returncode = 0
+            mock_proc.stdout = '{"ok": true}'
+            mock_run.return_value = mock_proc
+
+            res = meta_ai._invoke_dgw_bridge({"action": "ping"})
+            self.assertTrue(res.get("ok"))
+            passed_env = mock_run.call_args.kwargs.get("env", {})
+            self.assertNotIn("DATABASE_URL", passed_env)
+            self.assertNotIn("AWS_ACCESS_KEY_ID", passed_env)
+            self.assertEqual(passed_env.get("HOME"), str(meta_ai.META_AI_DIR))
+
 
 if __name__ == "__main__":
     unittest.main()

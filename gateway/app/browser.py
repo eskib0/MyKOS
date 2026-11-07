@@ -93,6 +93,10 @@ class _WebSocket:
             raise BrowserError("El navegador devolvió un endpoint CDP no local.")
         self.socket = socket.create_connection((parsed.hostname, parsed.port or 80), timeout=BROWSER_TIMEOUT_SECONDS)
         self.socket.settimeout(BROWSER_TIMEOUT_SECONDS)
+        self.send_lock = threading.Lock()
+        self.closed = False
+        self.pending: dict[int, dict[str, Any]] = {}
+        self.pending_cond = threading.Condition()
         self.next_id = 1
         key = base64.b64encode(os.urandom(16)).decode("ascii")
         path = parsed.path or "/"
@@ -111,6 +115,9 @@ class _WebSocket:
         if not response.startswith(b"HTTP/1.1 101"):
             self.close()
             raise BrowserError("El navegador rechazó la conexión CDP.")
+        self.socket.settimeout(1.0)
+        self.reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self.reader_thread.start()
 
     def _read_until(self, marker: bytes) -> bytes:
         data = bytearray()
@@ -143,7 +150,12 @@ class _WebSocket:
             header = bytes([first, 0x80 | 127]) + struct.pack("!Q", length)
         mask = os.urandom(4)
         masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
-        self.socket.sendall(header + mask + masked)
+        lock = getattr(self, "send_lock", None)
+        if lock is not None:
+            with lock:
+                self.socket.sendall(header + mask + masked)
+        else:
+            self.socket.sendall(header + mask + masked)
 
     def _recv_frame(self) -> tuple[int, bytes]:
         first, second = self._recv_exact(2)
@@ -162,32 +174,67 @@ class _WebSocket:
             payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
         return opcode, payload
 
-    def call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        call_id = self.next_id
-        self.next_id += 1
-        self._send_frame(1, json.dumps({"id": call_id, "method": method, "params": params or {}}).encode("utf-8"))
-        while True:
-            opcode, payload = self._recv_frame()
+    def _reader_loop(self) -> None:
+        while not self.closed:
+            try:
+                opcode, payload = self._recv_frame()
+            except TimeoutError:
+                continue
+            except (OSError, BrowserError):
+                with self.pending_cond:
+                    self.closed = True
+                    self.pending_cond.notify_all()
+                break
             if opcode == 0x9:
-                self._send_frame(0xA, payload)
+                try:
+                    self._send_frame(0xA, payload)
+                except OSError:
+                    pass
                 continue
             if opcode == 0x8:
-                raise BrowserError("El navegador cerró la página.")
+                with self.pending_cond:
+                    self.closed = True
+                    self.pending_cond.notify_all()
+                break
             if opcode != 0x1:
                 continue
             try:
                 message = json.loads(payload.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                raise BrowserError("El navegador devolvió un mensaje no válido.") from error
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
             if message.get("method") in {"Network.requestIntercepted", "Fetch.requestPaused"}:
-                self._handle_intercepted_request(message)
+                try:
+                    self._handle_intercepted_request(message)
+                except Exception:
+                    pass
                 continue
-            if message.get("id") != call_id:
-                continue
-            if "error" in message:
-                detail = message.get("error", {}).get("message", "error CDP")
-                raise BrowserError(str(detail))
-            return message.get("result", {}) if isinstance(message.get("result", {}), dict) else {}
+            msg_id = message.get("id")
+            if isinstance(msg_id, int):
+                with self.pending_cond:
+                    self.pending[msg_id] = message
+                    self.pending_cond.notify_all()
+
+    def call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        with self.pending_cond:
+            if getattr(self, "closed", False):
+                raise BrowserError("El navegador cerró la página.")
+            call_id = self.next_id
+            self.next_id += 1
+        self._send_frame(1, json.dumps({"id": call_id, "method": method, "params": params or {}}).encode("utf-8"))
+        deadline = time.monotonic() + BROWSER_TIMEOUT_SECONDS
+        with self.pending_cond:
+            while call_id not in self.pending:
+                if getattr(self, "closed", False):
+                    raise BrowserError("El navegador cerró la página.")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise BrowserError("El navegador aislado tardó demasiado en responder.")
+                self.pending_cond.wait(timeout=remaining)
+            message = self.pending.pop(call_id)
+        if "error" in message:
+            detail = message.get("error", {}).get("message", "error CDP")
+            raise BrowserError(str(detail))
+        return message.get("result", {}) if isinstance(message.get("result", {}), dict) else {}
 
     def _handle_intercepted_request(self, message: dict[str, Any]) -> None:
         params = message.get("params") if isinstance(message.get("params"), dict) else {}
@@ -226,6 +273,11 @@ class _WebSocket:
         self._send_frame(1, json.dumps(command).encode("utf-8"))
 
     def close(self) -> None:
+        self.closed = True
+        cond = getattr(self, "pending_cond", None)
+        if cond is not None:
+            with cond:
+                cond.notify_all()
         try:
             self.socket.close()
         except OSError:

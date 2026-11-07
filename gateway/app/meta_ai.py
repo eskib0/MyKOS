@@ -139,15 +139,23 @@ def _open_chrome(url: str) -> None:
 
 def _invoke_dgw_bridge(payload: dict[str, Any], timeout: int = 75) -> dict[str, Any]:
   node_bin = _find_node_binary()
-  META_AI_DIR.mkdir(parents=True, exist_ok=True)
+  META_AI_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+  try:
+    os.chmod(META_AI_DIR, 0o700)
+  except OSError:
+    pass
   bridge_input = {
       **payload,
       "cacheDir": str(META_AI_DIR),
   }
   clean_env = {
-      k: v for k, v in os.environ.items()
-      if not re.search(r"(TOKEN|KEY|SECRET|PASSWORD|AUTH)", k, re.IGNORECASE)
+      "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+      "HOME": str(META_AI_DIR),
+      "NODE_NO_WARNINGS": "1",
   }
+  for proxy_var in ("HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS"):
+    if proxy_var in os.environ:
+      clean_env[proxy_var] = os.environ[proxy_var]
   proc = subprocess.run(
       [node_bin, str(META_AI_DGW_SCRIPT)],
       input=json.dumps(bridge_input, ensure_ascii=False),

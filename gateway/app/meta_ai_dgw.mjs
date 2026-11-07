@@ -147,12 +147,75 @@ async function loadChunks(cacheDir, session, forceRefresh = false) {
 }
 
 function initTurbopackRuntime(wasmChunkText, dgwChunkText, cookieHeader) {
-  globalThis.TURBOPACK = [];
-  vm.runInThisContext(wasmChunkText);
-  vm.runInThisContext(dgwChunkText);
+  const sandbox = Object.create(null);
+  Object.assign(sandbox, {
+    TURBOPACK: [],
+    Object,
+    Array,
+    String,
+    Number,
+    Boolean,
+    Symbol,
+    BigInt,
+    Math,
+    Date,
+    RegExp,
+    Error,
+    TypeError,
+    RangeError,
+    SyntaxError,
+    URIError,
+    EvalError,
+    ReferenceError,
+    Map,
+    Set,
+    WeakMap,
+    WeakSet,
+    Promise,
+    Proxy,
+    Reflect,
+    JSON,
+    ArrayBuffer,
+    SharedArrayBuffer,
+    DataView,
+    Int8Array,
+    Uint8Array,
+    Uint8ClampedArray,
+    Int16Array,
+    Uint16Array,
+    Int32Array,
+    Uint32Array,
+    Float32Array,
+    Float64Array,
+    BigInt64Array,
+    BigUint64Array,
+    TextEncoder,
+    TextDecoder,
+    URL,
+    URLSearchParams,
+    WebAssembly,
+    Buffer,
+    crypto,
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    queueMicrotask,
+    atob,
+    btoa,
+    console: { log: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+  });
+  sandbox.globalThis = sandbox;
+  sandbox.self = sandbox;
+  sandbox.window = sandbox;
+  const vmContext = vm.createContext(sandbox, {
+    codeGeneration: { strings: false, wasm: true },
+  });
+  vm.runInContext(wasmChunkText, vmContext, { timeout: 5000 });
+  vm.runInContext(dgwChunkText, vmContext, { timeout: 5000 });
 
   const factories = new Map();
-  for (const entry of globalThis.TURBOPACK) {
+  for (const entry of sandbox.TURBOPACK) {
     let i = 1;
     while (i < entry.length) {
       const ids = [];
