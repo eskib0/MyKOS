@@ -32,7 +32,7 @@ def _run_git(root_path: Path, arguments: list[str], *, timeout: int = 20, env: d
         if env:
             process_env.update(env)
         return subprocess.run(
-            [git, "--literal-pathspecs", *arguments],
+            [git, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "--literal-pathspecs", *arguments],
             cwd=str(root_path),
             capture_output=True,
             text=True,

@@ -272,10 +272,17 @@ def _read_document(arguments: dict[str, Any]) -> dict[str, Any]:
 
     suffix = file_path.suffix.lower()
     truncated = False
+    max_uncompressed_xml = 50 * 1024 * 1024  # 50 MB límite anti zip-bomb
     if suffix == ".docx":
         try:
             with zipfile.ZipFile(file_path) as archive:
-                raw_xml = archive.read("word/document.xml")
+                total_uncompressed = sum(info.file_size for info in archive.infolist())
+                if total_uncompressed > max_uncompressed_xml * 2:
+                    raise ToolError("El archivo supera el límite de descompresión seguro (100 MB).")
+                xml_info = archive.getinfo("word/document.xml")
+                if xml_info.file_size > max_uncompressed_xml:
+                    raise ToolError("El contenido XML del documento supera el límite de descompresión seguro (50 MB).")
+                raw_xml = archive.read(xml_info)
             document = ET.fromstring(raw_xml)
         except (KeyError, OSError, zipfile.BadZipFile, ET.ParseError) as error:
             raise ToolError(f"No se pudo abrir el documento DOCX: {error}") from error

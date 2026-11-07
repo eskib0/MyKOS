@@ -236,6 +236,7 @@ class _BrowserController:
         self.port = 0
         self.profile: Path | None = None
         self.target_url = ""
+        self.ws: _WebSocket | None = None
 
     def _find_executable(self) -> str:
         candidates = [
@@ -350,7 +351,11 @@ class _BrowserController:
     def open(self, url: str, max_chars: int) -> dict[str, Any]:
         with self.lock:
             self._ensure()
+            if self.ws is not None:
+                self.ws.close()
+                self.ws = None
             ws = self._page_socket()
+            self.ws = ws
             try:
                 ws.call("Page.enable")
                 ws.call("Runtime.enable")
@@ -368,25 +373,29 @@ class _BrowserController:
                 self.target_url = final_url
                 result["url"] = final_url
                 return result
-            finally:
-                ws.close()
+            except Exception:
+                self.close()
+                raise
 
     def snapshot(self, max_chars: int) -> dict[str, Any]:
         with self.lock:
-            if not self.target_url:
+            if not self.target_url or self.ws is None:
                 raise BrowserError("Todavía no hay una página abierta en el navegador aislado.")
             self._ensure()
-            ws = self._page_socket()
             try:
-                result = self._extract(ws, max_chars)
+                result = self._extract(self.ws, max_chars)
                 final_url = _validate_public_url(str(result.get("url", "")))
                 self.target_url = final_url
                 result["url"] = final_url
                 return result
-            finally:
-                ws.close()
+            except Exception:
+                self.close()
+                raise
 
     def close(self) -> None:
+        if self.ws is not None:
+            self.ws.close()
+            self.ws = None
         process = self.process
         profile = self.profile
         self.process = None

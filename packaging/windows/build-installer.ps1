@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # Helper para compilar el instalador de Windows (Inno Setup 6)
 # ==============================================================================
 param(
@@ -19,20 +19,32 @@ Write-Host "============================================================" -Foreg
 if ($FullOffline) {
     New-Item -ItemType Directory -Force -Path (Join-Path $RuntimeDir "python"), (Join-Path $RuntimeDir "node") | Out-Null
 
+    function Assert-FileHash($filePath, $expectedHash) {
+        $actualHash = (Get-FileHash -Path $filePath -Algorithm SHA256).Hash.ToLower()
+        if ($actualHash -ne $expectedHash.ToLower()) {
+            Remove-Item $filePath -Force -ErrorAction SilentlyContinue
+            Write-Error "❌ Verificación de integridad SHA-256 fallida para $filePath. Esperado: $expectedHash, Obtenido: $actualHash"
+            exit 1
+        }
+    }
+
     # 1. Node.js portable
     $nodeExe = Join-Path $RuntimeDir "node\node.exe"
+    $nodeExpectedSha256 = "35b7c95a379beb606f5798ed83081690df13190077630b234163c6607aa4cc94"
     if (-not (Test-Path $nodeExe)) {
         Write-Host "▶ Descargando Node.js v20 portable..." -ForegroundColor Cyan
-        $nodeZip = Join-Path $RuntimeDir "node.zip"
         Invoke-WebRequest -Uri "https://nodejs.org/dist/v20.18.0/win-x64/node.exe" -OutFile $nodeExe
+        Assert-FileHash $nodeExe $nodeExpectedSha256
     }
 
     # 2. Python 3.12 embeddable
     $pyExe = Join-Path $RuntimeDir "python\python.exe"
+    $pyExpectedSha256 = "0d57bb6cb078b74d23dbfe91f77d6780d45bed328911609f1f7ee2ba1606bf44"
     if (-not (Test-Path $pyExe)) {
         Write-Host "▶ Descargando Python 3.12 embebido..." -ForegroundColor Cyan
         $pyZip = Join-Path $RuntimeDir "python-embed.zip"
         Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.12.7/python-3.12.7-embed-amd64.zip" -OutFile $pyZip
+        Assert-FileHash $pyZip $pyExpectedSha256
         Expand-Archive -Path $pyZip -DestinationPath (Join-Path $RuntimeDir "python") -Force
         Remove-Item $pyZip -Force
     }

@@ -269,12 +269,14 @@ SYSTEM_BIN_DIRS = (
 
 def _is_within_allowed_roots(path: Path) -> bool:
     try:
-        from tools.base import _load_allowed_roots
+        from tools.base import _load_allowed_roots, _is_ignored
         roots = _load_allowed_roots()
         resolved = path.resolve()
         for r in roots:
             try:
                 resolved.relative_to(r["path"])
+                if _is_ignored(resolved, r["path"]):
+                    return False
                 return True
             except (ValueError, OSError):
                 continue
@@ -319,6 +321,17 @@ def resolve_rea_target(target: str) -> str:
 
     # 2. Si la ruta existe en disco: debe residir dentro de las raíces autorizadas o ser un ejecutable del sistema
     if expanded.exists():
+        try:
+            from tools.base import _load_allowed_roots, _is_ignored
+            for r in _load_allowed_roots():
+                try:
+                    expanded.relative_to(r["path"])
+                    if _is_ignored(expanded, r["path"]):
+                        raise ReaError(f"Acceso denegado: «{expanded}» es un archivo protegido o ignorado (.env, claves o secretos).")
+                except (ValueError, OSError):
+                    pass
+        except Exception:
+            pass
         if _is_within_allowed_roots(expanded):
             return str(expanded)
         if _is_system_binary(expanded):

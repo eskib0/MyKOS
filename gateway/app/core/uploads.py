@@ -104,6 +104,10 @@ def process_multipart_uploads(
             attachment_id = uuid.uuid4().hex
             stored_path = upload_dir / f"{attachment_id}{suffix}"
             stored_path.write_bytes(data)
+            try:
+                stored_path.chmod(0o600)
+            except OSError:
+                pass
             kind = "pdf" if suffix == ".pdf" else "image"
             metadata = {
                 "id": attachment_id,

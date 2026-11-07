@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import http.client
 import ipaddress
 import re
 import socket
@@ -59,6 +60,36 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(request, fp, code, msg, headers, newurl)
 
 
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def connect(self) -> None:
+        super().connect()
+        if self.sock is not None:
+            peer_ip = self.sock.getpeername()[0]
+            if not ipaddress.ip_address(peer_ip).is_global:
+                self.close()
+                raise ToolError(f"Por seguridad, la conexión resolvió a una IP no pública o local ({peer_ip}).")
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self) -> None:
+        super().connect()
+        if self.sock is not None:
+            peer_ip = self.sock.getpeername()[0]
+            if not ipaddress.ip_address(peer_ip).is_global:
+                self.close()
+                raise ToolError(f"Por seguridad, la conexión resolvió a una IP no pública o local ({peer_ip}).")
+
+
+class _PinnedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req: urllib.request.Request) -> Any:
+        return self.do_open(_PinnedHTTPConnection, req)
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req: urllib.request.Request) -> Any:
+        return self.do_open(_PinnedHTTPSConnection, req)
+
+
 def _download_web_page(url: str) -> tuple[str, str, str, bytes]:
     validated_url = _validate_web_url(url)
     request = urllib.request.Request(
@@ -70,7 +101,11 @@ def _download_web_page(url: str) -> tuple[str, str, str, bytes]:
         },
         method="GET",
     )
-    opener = urllib.request.build_opener(_SafeRedirectHandler())
+    opener = urllib.request.build_opener(
+        _SafeRedirectHandler(),
+        _PinnedHTTPHandler(),
+        _PinnedHTTPSHandler(),
+    )
     try:
         with opener.open(request, timeout=WEB_REQUEST_TIMEOUT_SECONDS) as response:
             final_url = _validate_web_url(response.geturl())

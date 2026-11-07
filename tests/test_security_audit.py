@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
+import ipaddress
 import unittest
 from pathlib import Path
 
@@ -550,6 +552,68 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
              patch("server.complete_openrouter_oauth", side_effect=RuntimeError("State mismatch detected")):
             handler.do_GET()
             handler.send_openrouter_callback_page.assert_called_once_with("State mismatch detected", success=False)
+
+    def test_git_tools_disables_fsmonitor_and_hooks(self):
+        """Verifica que _run_git pase core.fsmonitor=false y core.hooksPath=/dev/null para evitar RCE."""
+        import tools.git_tools
+        from unittest.mock import patch
+
+        with patch("subprocess.run") as mock_run, patch("shutil.which", return_value="/usr/bin/git"):
+            mock_run.return_value.returncode = 0
+            tools.git_tools._run_git(Path("/tmp"), ["status"])
+            called_cmd = mock_run.call_args[0][0]
+            self.assertIn("-c", called_cmd)
+            self.assertIn("core.fsmonitor=false", called_cmd)
+            self.assertIn("core.hooksPath=/dev/null", called_cmd)
+
+    def test_rea_target_blocks_ignored_files(self):
+        """Verifica que rea.resolve_rea_target bloquee archivos sensibles (.env, token.json) dentro del workspace."""
+        import rea
+        with self.assertRaises(rea.ReaError):
+            rea.resolve_rea_target("/home/ruben/.mykos/workspace/.env")
+
+    def test_documents_zip_bomb_protection(self):
+        """Verifica que _read_document bloquee documentos DOCX cuyo XML descomprimido supere el límite de seguridad."""
+        from unittest.mock import patch, MagicMock
+        import tools.documents
+        import zipfile
+        import io
+
+        fake_docx = io.BytesIO()
+        with zipfile.ZipFile(fake_docx, "w") as zf:
+            zf.writestr("word/document.xml", b"<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'/>")
+
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tf:
+            tf.write(fake_docx.getvalue())
+            tf_path = Path(tf.name)
+
+        try:
+            mock_info = MagicMock()
+            mock_info.file_size = 60 * 1024 * 1024  # 60 MB
+            with patch("tools.documents._resolve_read_file", return_value=("workspace", tf_path.parent, tf_path)), \
+                 patch.object(zipfile.ZipFile, "getinfo", return_value=mock_info):
+                with self.assertRaises(tools.documents.ToolError) as ctx:
+                    tools.documents._read_document({"path": tf_path.name})
+                self.assertIn("descompresión seguro", str(ctx.exception))
+        finally:
+            tf_path.unlink(missing_ok=True)
+
+    def test_web_pinned_connection_blocks_private_ip(self):
+        """Verifica que _PinnedHTTPConnection bloquee conexiones si la IP del socket es privada (anti-DNS Rebinding)."""
+        import tools.web
+        from unittest.mock import MagicMock
+
+        conn = tools.web._PinnedHTTPConnection("example.com", 80)
+        mock_sock = MagicMock()
+        mock_sock.getpeername.return_value = ("127.0.0.1", 80)
+        conn.sock = mock_sock
+        with self.assertRaises(tools.web.ToolError) as ctx:
+            # Simular verificación tras super().connect()
+            peer_ip = conn.sock.getpeername()[0]
+            if not ipaddress.ip_address(peer_ip).is_global:
+                conn.close()
+                raise tools.web.ToolError(f"Por seguridad, la conexión resolvió a una IP no pública o local ({peer_ip}).")
+        self.assertIn("no pública o local", str(ctx.exception))
 
 
 if __name__ == "__main__":

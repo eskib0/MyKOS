@@ -115,10 +115,11 @@ def start_claude_login(root_dir: Path | None = None) -> dict[str, Any]:
             child_environment.update(desktop)
             opener = shutil.which("xdg-open")
             if opener and real_home:
-                launcher = Path(tempfile.gettempdir()) / f"mykos-open-desktop-{os.getuid()}.sh"
-                launcher.write_text(f"#!/bin/sh\nHOME={shlex.quote(real_home)} exec {shlex.quote(opener)} \"$@\"\n", encoding="utf-8")
-                launcher.chmod(0o700)
-                child_environment["BROWSER"] = str(launcher)
+                with tempfile.NamedTemporaryFile(mode="w", prefix="mykos-open-desktop-", suffix=".sh", delete=False, encoding="utf-8") as tf:
+                    tf.write(f"#!/bin/sh\nHOME={shlex.quote(real_home)} exec {shlex.quote(opener)} \"$@\"\n")
+                    launcher_path = tf.name
+                os.chmod(launcher_path, 0o700)
+                child_environment["BROWSER"] = launcher_path
         try:
             CLAUDE_LOGIN_PROCESS = subprocess.Popen(
                 [executable, "auth", "login"],
