@@ -19,7 +19,8 @@ class SafetyTests(unittest.TestCase):
             self.assertTrue(antigravity_cli.DENIED_TOOLS.issubset(set(__import__('json').loads(antigravity_cli.SAFE_SETTINGS.read_text())['permissions']['deny'])))
 
     def test_qwen_spawn_uses_isolated_profile(self):
-        with patch.object(qwen_cli.subprocess, 'run') as run:
+        with patch.object(qwen_cli, 'qwen_executable_path', return_value='/usr/bin/qwen'), \
+             patch.object(qwen_cli.subprocess, 'run') as run:
             run.return_value.returncode = 0
             run.return_value.stdout = '[{"type":"result","subtype":"success","is_error":false,"result":"OK","usage":{},"duration_ms":1000}]'
             qwen_cli.ask_qwen('Synthetic chat')
