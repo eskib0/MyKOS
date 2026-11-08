@@ -298,7 +298,8 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
         from unittest.mock import patch
         import qwen_cli
 
-        with patch.object(qwen_cli.subprocess, "run") as mock_run:
+        with patch.object(qwen_cli, "qwen_executable_path", return_value="/usr/bin/qwen"), \
+             patch.object(qwen_cli.subprocess, "run") as mock_run:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = '[{"type":"result","subtype":"success","is_error":false,"result":"OK"}]'
 
@@ -580,7 +581,7 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
             poc_file = repo_dir / "sample.poc"
             poc_file.write_text("initial content\n")
             subprocess.run(["git", "add", "sample.poc"], cwd=repo_dir, check=True, capture_output=True)
-            subprocess.run(["git", "commit", "-m", "init"], cwd=repo_dir, check=True, capture_output=True)
+            subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "init"], cwd=repo_dir, check=True, capture_output=True)
 
             attr_file = repo_dir / ".gitattributes"
             attr_file.write_text("*.poc diff=poc\n")
