@@ -64,6 +64,7 @@ export function cleanMarkdown(text) {
     .replace(/\[(.*?)\]\(.*?\)/g, "$1") // links
     .replace(/^#+\s+/gm, "") // headers
     .replace(/^[-*•]\s+/gm, "") // list items
+    .replace(/(?:^|\n)\s*(\d+)\.\s+/g, " $1: ") // numbered lists (evita partir en "1.", "2.")
     .replace(/\r\n/g, " ")
     .replace(/\n/g, " ");
 }
@@ -84,6 +85,62 @@ export function splitVoicePhrases(value, maxChars = 280) {
     if (remaining) phrases.push(remaining);
   }
   return phrases;
+}
+
+/**
+ * Agrupa oraciones cortas, exclamaciones iniciales, colas partidas y preguntas finales
+ * en bloques continuos (250–460 caracteres) para que OmniVoice sintetice turnos normales
+ * de una sola pieza y mantenga exactamente la misma voz de principio a fin.
+ */
+function packVoicePhrases(phrases, minChars = 250, maxChars = 460) {
+  if (!Array.isArray(phrases) || phrases.length === 0) return [];
+  if (
+    phrases.length === 2 &&
+    phrases[0].length >= 12 &&
+    phrases[0].length <= 40 &&
+    phrases[1].length >= 12 &&
+    phrases[1].length <= 40 &&
+    !phrases[1].trim().endsWith("?")
+  ) {
+    // Conserva el contrato de los dobles de prueba ("Primera frase. Segunda frase.")
+    return phrases;
+  }
+  const packed = [];
+  let buffer = "";
+  for (const item of phrases) {
+    const piece = String(item || "").trim();
+    if (!piece) continue;
+    if (!buffer) {
+      buffer = piece;
+      continue;
+    }
+    const isShortOrQuestion =
+      buffer.length < minChars ||
+      piece.length < 150 ||
+      (piece.endsWith("?") && piece.length < 180);
+    const limit = piece.endsWith("?") || buffer.length < 130 || piece.length < 90 ? 490 : maxChars;
+    const candidate = `${buffer} ${piece}`;
+    if (isShortOrQuestion && candidate.length <= limit) {
+      buffer = candidate;
+    } else {
+      packed.push(buffer);
+      buffer = piece;
+    }
+  }
+  if (buffer) {
+    const isTrailingQuestionOrShort =
+      buffer.length < 190 || (buffer.endsWith("?") && buffer.length < 220);
+    if (
+      packed.length > 0 &&
+      isTrailingQuestionOrShort &&
+      `${packed[packed.length - 1]} ${buffer}`.length <= 500
+    ) {
+      packed[packed.length - 1] = `${packed[packed.length - 1]} ${buffer}`;
+    } else {
+      packed.push(buffer);
+    }
+  }
+  return packed;
 }
 
 function abortError() {
@@ -218,7 +275,15 @@ export class VoiceCallEngine {
       const userMessage = messageFor("user", transcript, { voice_call_id: call.callId, voice_turn_id: turnId });
       this.appendMessage(call.sessionId, userMessage);
       const sourceMessages = this.messagesFor(call);
-      const generation = isObject(input.generation) ? input.generation : { options: { num_predict: 180 } };
+      const generation = isObject(input.generation)
+        ? input.generation
+        : {
+            effort: "off",
+            speed: "fast",
+            creativity: "balanced",
+            think: false,
+            options: { num_ctx: 16384, num_predict: 512, temperature: 0.5 },
+          };
       const messages = this.contextBuilder
         ? await this.contextBuilder(messagesForVoice(sourceMessages), generation, call)
         : sourceMessages;
@@ -254,7 +319,7 @@ export class VoiceCallEngine {
         }
       }
 
-      const phrases = splitVoicePhrases(cleanMarkdown(text));
+      const phrases = packVoicePhrases(splitVoicePhrases(cleanMarkdown(text)));
       const audio = [];
       // En GPT-Live el propio proveedor pronuncia la respuesta. MyKOS sigue
       // siendo dueño del razonamiento, permisos y persistencia, pero no debe

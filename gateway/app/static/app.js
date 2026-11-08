@@ -3799,6 +3799,9 @@ async function decideApproval(approvalId, decision, permissionMode = "once") {
 }
 
 async function openConversation(conversationId) {
+  if (state.localVoiceCall && state.conversationId && state.conversationId !== conversationId) {
+    await endLocalVoiceCall();
+  }
   state.conversationId = conversationId;
   localStorage.setItem("mykos-conversation", conversationId);
   renderConversationList();
@@ -4890,15 +4893,23 @@ function monitorVoiceActivity() {
     state.localVoiceSilenceSince = 0;
     state.localVoiceSpeechSince ||= now;
     const speechFor = now - state.localVoiceSpeechSince;
-    // Con MyKOS en silencio grabamos rápido (80ms); si está hablando exigimos voz más sostenida (300ms).
-    const recordDelay = isSpeaking ? 300 : VOICE_VAD.recordAfterMs;
-    if (speechFor >= recordDelay && !state.localVoiceRecorder) {
-      beginAutomaticVoiceRecording();
+    const bargeInEnabled = getVoiceBargeInEnabled();
+    if (isSpeaking || isBusy) {
+      // Mientras MyKOS habla o procesa un turno, solo interrumpimos y grabamos si
+      // barge-in está activo y la voz del usuario supera de forma sostenida el umbral de interrupción.
+      const bargeInDelay = isSpeaking ? 480 : 380;
+      if (bargeInEnabled && speechFor >= bargeInDelay) {
+        void interruptVoiceForBargeIn();
+        if (!state.localVoiceRecorder) {
+          beginAutomaticVoiceRecording();
+        }
+      }
+    } else {
+      const recordDelay = VOICE_VAD.recordAfterMs;
+      if (speechFor >= recordDelay && !state.localVoiceRecorder) {
+        beginAutomaticVoiceRecording();
+      }
     }
-    // Para interrumpir a MyKOS (barge-in) mientras habla, comprobamos si está activado
-    // y exigimos que el usuario hable de forma sostenida (500ms) por encima del umbral elevado.
-    const bargeInDelay = isSpeaking ? 500 : VOICE_VAD.startMs;
-    if (getVoiceBargeInEnabled() && speechFor >= bargeInDelay && (state.localVoiceAudio || state.busy)) void interruptVoiceForBargeIn();
   } else {
     state.localVoiceSpeechSince = 0;
     if (state.localVoiceRecorder) {
@@ -4925,6 +4936,10 @@ async function openHandsFreeMicrophone() {
   state.localVoiceAnalyser = state.localVoiceAudioContext.createAnalyser();
   state.localVoiceAnalyser.fftSize = 1024;
   source.connect(state.localVoiceAnalyser);
+  state.callMicAnalyser = state.localVoiceAnalyser;
+  state.callRemoteAnalyser = state.localVoiceAudioContext.createAnalyser();
+  state.callRemoteAnalyser.fftSize = 1024;
+  state.callRemoteAnalyser.connect(state.localVoiceAudioContext.destination);
   state.localVoiceNoiseFloor = 0.006;
   state.localVoiceSpeechSince = 0;
   state.localVoiceSilenceSince = 0;
@@ -4942,6 +4957,12 @@ function playPreparedAudio(audio) {
   if (!audio || !state.localVoiceCall) return Promise.resolve(false);
   try {
     audio.playbackRate = getVoicePlaybackRate();
+  } catch {}
+  try {
+    if (state.localVoiceAudioContext?.state === "running" && state.callRemoteAnalyser) {
+      const mediaSource = state.localVoiceAudioContext.createMediaElementSource(audio);
+      mediaSource.connect(state.callRemoteAnalyser);
+    }
   } catch {}
   state.localVoiceAudio = audio;
   return new Promise((resolve, reject) => {
@@ -5207,6 +5228,33 @@ async function getActiveVoiceMode() {
   }
 }
 
+async function playInitialCallGreeting() {
+  if (!state.localVoiceCall) return;
+  const greetingText = "Hola, buenas, soy MyKOS, ¿en qué te puedo ayudar?";
+  state.busy = true;
+  state.localVoiceInterrupted = false;
+  try {
+    setVoiceButton("speaking", "Iniciando voz de MyKOS…");
+    const ttsData = await api("/api/tts", {
+      method: "POST",
+      body: JSON.stringify({ text: greetingText }),
+    });
+    if (!state.localVoiceCall || state.localVoiceInterrupted) return;
+    callTranscriptLine("assistant", greetingText);
+    addBubble("assistant", greetingText, false, [], new Date().toISOString(), "", elements.model?.value || "");
+    if (ttsData?.audio) {
+      await playVoiceAudio([ttsData]);
+    }
+  } catch {
+    // Si falla el saludo inicial, la llamada continúa igualmente con el micrófono abierto.
+  } finally {
+    state.busy = false;
+    if (state.localVoiceCall && !state.localVoiceRecorder) {
+      setVoiceButton("listening", "Micrófono abierto. Habla con normalidad.");
+    }
+  }
+}
+
 async function startVoiceTurn() {
   if (state.localVoiceCall || state.busy) return;
   const currentMode = await getActiveVoiceMode();
@@ -5234,11 +5282,16 @@ async function startVoiceTurn() {
   }
   try {
     await ensureVoiceConversation();
-    const data = await api("/api/sessions/" + encodeURIComponent(state.conversationId) + "/calls", { method: "POST", body: JSON.stringify({ model: elements.model.value }) });
-    state.localVoiceCallId = data.callId;
     state.localVoiceCall = true;
+    setVoiceCallUi(true);
     setVoiceButton("connecting", "Abriendo micrófono…");
+    const data = await api("/api/sessions/" + encodeURIComponent(state.conversationId) + "/calls", {
+      method: "POST",
+      body: JSON.stringify({ model: elements.model.value, replace: true }),
+    });
+    state.localVoiceCallId = data.callId;
     await openHandsFreeMicrophone();
+    await playInitialCallGreeting();
   } catch (error) {
     const callId = state.localVoiceCallId;
     state.localVoiceCall = false;
@@ -5268,6 +5321,13 @@ elements.voiceMinimizeButton?.addEventListener("click", () => setVoiceCallMinimi
 elements.voiceCompactExpandButton?.addEventListener("click", () => setVoiceCallMinimized(false));
 elements.voiceCompactHangupButton?.addEventListener("click", () => { setVoiceCallMinimized(false); endLocalVoiceCall(); });
 elements.voiceTranscriptToggle?.addEventListener("click", () => setCallTranscriptVisible(elements.voiceCallStage.classList.contains("transcript-hidden")));
+window.addEventListener("pagehide", () => {
+  if (state.localVoiceCallId) {
+    try {
+      fetch("/api/calls/" + encodeURIComponent(state.localVoiceCallId), { method: "DELETE", keepalive: true }).catch(() => {});
+    } catch {}
+  }
+});
 {
   let savedTranscriptPreference = "on";
   try { savedTranscriptPreference = localStorage.getItem("mykos-call-transcript") || "on"; } catch { /* sin almacenamiento */ }

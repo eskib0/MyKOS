@@ -65,7 +65,23 @@ _WHISPER_PROCESS: subprocess.Popen[str] | None = None
 _WHISPER_LOCK = threading.Lock()
 
 TTS_CONFIG = ROOT / "config" / "tts.json"
-TTS_ENGINES = {"kokoro", "chatterbox"}
+TTS_ENGINES = {"kokoro", "chatterbox", "omnivoice"}
+OMNIVOICE_PYTHON = Path(
+    os.environ.get(
+        "MYKOS_OMNIVOICE_PYTHON",
+        str(ROOT.parent / "tts" / "venv_omni" / "bin" / "python")
+        if (ROOT.parent / "tts" / "venv_omni" / "bin" / "python").is_file()
+        else (
+            str(Path.home() / ".mykos" / "tts" / "venv_omni" / "bin" / "python")
+            if (Path.home() / ".mykos" / "tts" / "venv_omni" / "bin" / "python").is_file()
+            else str(Path.home() / ".config" / "VoiceStudio" / "runtime" / "project" / ".venv" / "bin" / "python")
+        ),
+    )
+)
+OMNIVOICE_WORKER = ROOT / "omnivoice_worker.py"
+_OMNIVOICE_PROCESS: subprocess.Popen[str] | None = None
+_OMNIVOICE_LOCK = threading.Lock()
+
 CHATTERBOX_PYTHON = Path(
     os.environ.get(
         "MYKOS_CHATTERBOX_PYTHON",
@@ -100,7 +116,15 @@ def _tts_engine() -> str:
 
 
 def _text_to_speech_status() -> dict[str, Any]:
-    if _tts_engine() == "chatterbox":
+    engine = _tts_engine()
+    if engine == "omnivoice":
+        return {
+            "available": OMNIVOICE_PYTHON.is_file() and OMNIVOICE_WORKER.is_file() and VOICES_DIR.is_dir(),
+            "engine": "OmniVoice Neural local (GPU)" if OMNIVOICE_PYTHON.is_file() else None,
+            "executable": str(OMNIVOICE_PYTHON),
+            "voice": "alvaro",
+        }
+    if engine == "chatterbox":
         return {
             "available": CHATTERBOX_PYTHON.is_file() and CHATTERBOX_WORKER.is_file() and VOICES_DIR.is_dir(),
             "engine": "Chatterbox Multilingual local (GPU)" if CHATTERBOX_PYTHON.is_file() else None,
@@ -394,13 +418,72 @@ def chatterbox_audio(text: str, voice: str = "alvaro") -> dict[str, Any]:
     return result
 
 
+def _omnivoice_process() -> subprocess.Popen[str]:
+    global _OMNIVOICE_PROCESS
+    if _OMNIVOICE_PROCESS is None or _OMNIVOICE_PROCESS.poll() is not None:
+        if not OMNIVOICE_PYTHON.is_file():
+            raise MediaError(f"No se encuentra Python de OmniVoice: {OMNIVOICE_PYTHON}")
+        if not OMNIVOICE_WORKER.is_file():
+            raise MediaError(f"No se encuentra el trabajador de OmniVoice: {OMNIVOICE_WORKER}")
+        if not VOICES_DIR.is_dir():
+            raise MediaError(f"No se encuentra la carpeta de voces: {VOICES_DIR}")
+        environment = os.environ.copy()
+        environment["MYKOS_TTS_VOICES_DIR"] = str(VOICES_DIR)
+        environment["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+        environment["PYTHONIOENCODING"] = "utf-8"
+        _OMNIVOICE_PROCESS = subprocess.Popen(
+            [str(OMNIVOICE_PYTHON), "-u", str(OMNIVOICE_WORKER)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            env=environment,
+        )
+    return _OMNIVOICE_PROCESS
+
+
+def omnivoice_audio(text: str, voice: str = "alvaro") -> dict[str, Any]:
+    """Genera voz neuronal en castellano en local con OmniVoice; no usa API ni servicios en la nube."""
+    value = _spoken_text(text, natural=True)
+    selected_voice = _chatterbox_voice(voice)
+    if not value:
+        raise MediaError("El texto de voz está vacío.")
+    if len(value) > MAX_TTS_CHARS:
+        raise MediaError(f"El texto no puede superar {MAX_TTS_CHARS} caracteres.")
+    with _OMNIVOICE_LOCK:
+        process = _omnivoice_process()
+        if process.stdin is None or process.stdout is None:
+            raise MediaError("El trabajador de OmniVoice no tiene sus canales disponibles.")
+        try:
+            process.stdin.write(json.dumps({"text": value, "voice": selected_voice}, ensure_ascii=False) + "\n")
+            process.stdin.flush()
+            line = process.stdout.readline()
+        except (OSError, UnicodeError) as error:
+            raise MediaError(f"OmniVoice no pudo comunicarse con su trabajador local: {error}") from error
+    if not line:
+        raise MediaError("El trabajador de OmniVoice se cerró inesperadamente.")
+    try:
+        result = json.loads(line)
+    except json.JSONDecodeError as error:
+        raise MediaError("OmniVoice devolvió una respuesta inválida.") from error
+    if not result.get("ok"):
+        raise MediaError(str(result.get("error") or "OmniVoice no pudo generar el audio."))
+    return result
+
+
 def kokoro_audio(text: str, voice: str = "em_alex") -> dict[str, Any]:
     """Genera voz local en español. Nombre histórico: despacha al motor activo.
 
-    Por defecto usa Kokoro; con MYKOS_TTS_ENGINE=chatterbox o config/tts.json
-    ({"engine": "chatterbox"}) usa Chatterbox. Sin API ni Gateway.
+    Por defecto usa Kokoro; con MYKOS_TTS_ENGINE=omnivoice, chatterbox o config/tts.json
+    usa OmniVoice o Chatterbox. Sin API ni Gateway.
     """
-    if _tts_engine() == "chatterbox":
+    engine = _tts_engine()
+    if engine == "omnivoice":
+        return omnivoice_audio(text, voice)
+    if engine == "chatterbox":
         return chatterbox_audio(text, voice)
     value = _spoken_text(text)
     selected_voice = _kokoro_voice(voice)

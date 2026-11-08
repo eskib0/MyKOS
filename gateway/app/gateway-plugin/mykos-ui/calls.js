@@ -13,7 +13,8 @@ const isObject = (value) => value !== null && typeof value === "object" && !Arra
 
 function providerFor(model) {
   const value = String(model || "").trim();
-  if (value.startsWith("openai-codex-oauth/")) return "openai_codex_oauth";
+  if (!value) return "unknown";
+  if (value.startsWith("openai-codex-oauth/") || value === "gpt-live-1-codex") return "openai_codex_oauth";
   if (value.startsWith("openrouter/")) return "openrouter";
   if (value.startsWith("meta-ai/")) return "meta_ai_oauth";
   if (value.startsWith("nvidia/")) return "nvidia_api";
@@ -21,6 +22,11 @@ function providerFor(model) {
   if (value.startsWith("gemini/")) return "gemini_api";
   if (value.startsWith("mistral/")) return "mistral_api";
   if (value.startsWith("grok/")) return "grok";
+  if (value.startsWith("antigravity/")) return "antigravity";
+  if (value.startsWith("qwen-cli/")) return "qwen_cli";
+  if (value.startsWith("anthropic/") || value === "claude-sonnet-oauth") return "anthropic";
+  if (value === "mykos-cuda" || value.startsWith("strata/")) return "strata";
+  if (!value.includes("/")) return "ollama";
   return "unknown";
 }
 
@@ -101,7 +107,7 @@ export class CallRegistry {
     });
   }
 
-  create({ sessionId, model } = {}) {
+  create({ sessionId, model, replace = false } = {}) {
     const cleanSessionId = String(sessionId || "").trim();
     if (!cleanSessionId || cleanSessionId.length > 160) throw new CallError(400, "bad_session", "La sesión indicada no es válida.");
     const selectedModel = String(model || this.defaultModel).trim();
@@ -111,6 +117,10 @@ export class CallRegistry {
     this.conversation(cleanSessionId);
     for (const call of this.calls.values()) {
       if (call.sessionId === cleanSessionId && !["ended", "error"].includes(call.state)) {
+        if (replace) {
+          this.end(call.callId);
+          continue;
+        }
         throw new CallError(409, "call_exists", "Esta sesión ya tiene una llamada activa.");
       }
     }

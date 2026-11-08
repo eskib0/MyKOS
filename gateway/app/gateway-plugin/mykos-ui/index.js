@@ -1791,7 +1791,11 @@ async function handleCallApi(req, res, route, registry, voiceEngine, modelContro
         try { payload = raw.length ? JSON.parse(raw.toString("utf8")) : {}; } catch { sendJson(res, 400, { error: "El cuerpo de la llamada no es JSON válido." }); return true; }
         if (!isObject(payload)) { sendJson(res, 400, { error: "El cuerpo de la llamada debe ser un objeto JSON." }); return true; }
       }
-      const call = registry.create({ sessionId: route.sessionId, model: payload.model });
+      const call = registry.create({
+        sessionId: route.sessionId,
+        model: payload.model,
+        replace: payload.replace === true,
+      });
       sendJson(res, 201, { ok: true, ...call });
       return true;
     }
