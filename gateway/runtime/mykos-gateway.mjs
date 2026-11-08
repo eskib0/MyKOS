@@ -4,12 +4,10 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const require = createRequire(import.meta.url);
 
 function parseCliArgs(argv) {
   const opts = { port: null, host: null, configPath: null };
@@ -197,7 +195,7 @@ const gatewayLogger = createLogger("mykos-gateway");
 const routes = [];
 const services = [];
 
-function registerPlugin(pluginDir, entryId, entryConfig) {
+async function registerPlugin(pluginDir, entryId, entryConfig) {
   const resolvedDir = path.resolve(pluginDir);
   const pkgPath = path.join(resolvedDir, "package.json");
   let entryFile = path.join(resolvedDir, "index.js");
@@ -208,7 +206,7 @@ function registerPlugin(pluginDir, entryId, entryConfig) {
       entryFile = path.resolve(resolvedDir, configuredMain);
     }
   }
-  const mod = require(entryFile);
+  const mod = await import(pathToFileURL(entryFile).href);
   const plugin = mod?.default || mod;
   if (!plugin || typeof plugin.register !== "function") {
     throw new Error(`El plugin en ${resolvedDir} no exporta register(api)`);
@@ -265,7 +263,7 @@ for (const pluginPath of loadPaths) {
   }
   const entry = entries[pluginId] ?? { enabled: true, config: {} };
   if (entry.enabled === false) continue;
-  registerPlugin(pluginPath, pluginId, entry.config || {});
+  await registerPlugin(pluginPath, pluginId, entry.config || {});
 }
 
 // Ordenar rutas: primero exactas, luego prefijos de mayor a menor longitud
