@@ -37,15 +37,31 @@ echo "  Instalador de MyKOS Ecosystem"
 echo "  Raíz del proyecto: $MYKOS_ROOT"
 echo "============================================================"
 
-# 1. Comprobar requisitos básicos
-if ! command -v node >/dev/null 2>&1; then
-  echo "❌ Error: Node.js no está instalado. MyKOS requiere Node.js (>= 20)." >&2
-  exit 1
+# 1. Comprobar e instalar requisitos básicos (Node.js >= 20 y Python >= 3.10)
+if [[ -d "$HOME/.mykos/runtime/node/bin" ]]; then
+  export PATH="$HOME/.mykos/runtime/node/bin:$PATH"
 fi
-NODE_MAJOR=$(node -v 2>/dev/null | tr -d 'v' | cut -d. -f1)
-if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 20 ]; then
-  echo "❌ Error: Se detectó Node.js $(node -v). MyKOS requiere Node.js >= 20.0.0." >&2
-  exit 1
+
+NEED_NODE=0
+if ! command -v node >/dev/null 2>&1; then
+  NEED_NODE=1
+else
+  NODE_MAJOR=$(node -v 2>/dev/null | tr -d 'v' | cut -d. -f1 || echo 0)
+  if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 20 ]; then
+    NEED_NODE=1
+  fi
+fi
+
+if [[ "$NEED_NODE" -eq 1 ]]; then
+  echo "▶ Descargando Node.js v20 LTS portátil en $HOME/.mykos/runtime/node..."
+  mkdir -p "$HOME/.mykos/runtime/node"
+  ARCH_UNAME="$(uname -m)"
+  NODE_ARCH="x64"
+  [[ "$ARCH_UNAME" == "aarch64" || "$ARCH_UNAME" == "arm64" ]] && NODE_ARCH="arm64"
+  curl -fsSL "https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-${NODE_ARCH}.tar.xz" \
+    | tar -xJ --strip-components=1 -C "$HOME/.mykos/runtime/node"
+  export PATH="$HOME/.mykos/runtime/node/bin:$PATH"
+  NODE_MAJOR=$(node -v 2>/dev/null | tr -d 'v' | cut -d. -f1 || echo 20)
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -98,10 +114,29 @@ echo "  • analizador-mykos"
 if [[ "$WITH_DESKTOP" -eq 1 ]]; then
   APPS_DIR="$HOME/.local/share/applications"
   ICONS_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
-  mkdir -p "$APPS_DIR" "$ICONS_DIR"
+  ICONS_512_DIR="$HOME/.local/share/icons/hicolor/512x512/apps"
+  mkdir -p "$APPS_DIR" "$ICONS_DIR" "$ICONS_512_DIR"
   cp -f "$MYKOS_ROOT/apps/monitor/mykos-monitor-icon.png" "$ICONS_DIR/mykos-monitor.png"
   cp -f "$MYKOS_ROOT/apps/monitor/mycos-monitor.desktop" "$APPS_DIR/mykos-monitor.desktop"
-  echo "✔ Acceso directo de escritorio instalado en $APPS_DIR/mykos-monitor.desktop"
+  if [[ -f "$MYKOS_ROOT/packaging/assets/mykos.png" ]]; then
+    cp -f "$MYKOS_ROOT/packaging/assets/mykos.png" "$ICONS_512_DIR/mykos.png"
+  fi
+  cat > "$APPS_DIR/mykos.desktop" <<EOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=MyKOS
+GenericName=Asistente de IA Local
+Comment=Asistente de IA local soberano, multimodal y ligero con Gateway propio
+Exec=$LOCAL_BIN/mykos open
+Icon=mykos
+Terminal=false
+Categories=Utility;Development;ArtificialIntelligence;
+Keywords=AI;LLM;Assistant;MyKOS;Ollama;Voice;
+StartupNotify=true
+EOF
+  chmod 644 "$APPS_DIR/mykos.desktop"
+  echo "✔ Accesos directos de escritorio instalados en $APPS_DIR (mykos.desktop y mykos-monitor.desktop)"
 fi
 
 # 7. Servicio systemd de usuario (opcional con --systemd)

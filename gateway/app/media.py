@@ -8,6 +8,7 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -20,8 +21,18 @@ import urllib.parse
 import urllib.request
 
 
+def _resolve_data_dir(root: Path) -> Path:
+    env_dir = os.environ.get("MYKOS_DATA_DIR", "").strip()
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+    candidate = root / "data"
+    if os.access(candidate if candidate.exists() else root, os.W_OK):
+        return candidate
+    return (Path.home() / ".mykos" / "data").resolve()
+
+
 ROOT = Path(__file__).resolve().parent
-MEDIA_DIR = ROOT / "data" / "media"
+MEDIA_DIR = _resolve_data_dir(ROOT) / "media"
 MAX_TTS_CHARS = 12_000
 MAX_MEDIA_FILES = 100
 MAX_TRANSCRIPTION_BYTES = 25 * 1024 * 1024
@@ -47,12 +58,12 @@ WHISPER_PYTHON = Path(
         else (
             str(ROOT.parent / ".venv" / "bin" / "python")
             if (ROOT.parent / ".venv" / "bin" / "python").is_file()
-            else (shutil.which("python3") or "/usr/bin/python3")
+            else (sys.executable or shutil.which("python3") or "/usr/bin/python3")
         ),
     )
 )
 KOKORO_PYTHON = Path(
-    os.environ.get("MYKOS_KOKORO_PYTHON", shutil.which("python3") or "/usr/bin/python3")
+    os.environ.get("MYKOS_KOKORO_PYTHON", sys.executable or shutil.which("python3") or "/usr/bin/python3")
 )
 KOKORO_WORKER = ROOT / "kokoro_worker.py"
 KOKORO_ESPEAK_DATA = Path(

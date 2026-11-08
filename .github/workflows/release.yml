@@ -70,15 +70,19 @@ jobs:
       - name: "Descargar repositorio"
         uses: actions/checkout@v4
 
+      - name: "Configurar Python 3.12 (para empaquetar dependencias en runtime embebido)"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: "Configurar Inno Setup"
         run: |
           choco install innosetup --no-progress
 
-      - name: "Compilar instalador MyKOS-Setup.exe"
+      - name: "Compilar instalador MyKOS-Setup.exe (Full Offline con Node.js y Python)"
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          ISCC.exe packaging/windows/mykos-setup.iss
+          ./packaging/windows/build-installer.ps1 -FullOffline
 
       - name: "Subir artefacto Windows"
         uses: actions/upload-artifact@v4

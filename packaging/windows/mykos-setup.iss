@@ -54,7 +54,7 @@ Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Gateway (Node.js runtime, plugins y SPA frontend)
-Source: "..\..\gateway\*"; DestDir: "{app}\gateway"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "gateway\app\data\*.log,*.tmp"
+Source: "..\..\gateway\*"; DestDir: "{app}\gateway"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "gateway\app\data\*.log,gateway\app\data\*.json,gateway\app\data\*.bak*,gateway\app\data\oauth\*,gateway\app\data\media\*,gateway\app\data\uploads\*,*.tmp,*.pyc,__pycache__"
 
 ; Aplicaciones de escritorio (Monitor, Analizador)
 Source: "..\..\apps\*"; DestDir: "{app}\apps"; Flags: ignoreversion recursesubdirs createallsubdirs

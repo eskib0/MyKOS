@@ -47,16 +47,92 @@ fs.mkdirSync(workspaceDir, { recursive: true, mode: 0o700 });
 
 const defaultAppDir = path.resolve(__dirname, "..", "app");
 const defaultPluginDir = path.join(defaultAppDir, "gateway-plugin", "mykos-ui");
+const mykosRootDir = path.resolve(defaultAppDir, "..", "..");
+
+function isWritableDir(dirPath) {
+  try {
+    const target = fs.existsSync(dirPath) ? dirPath : path.dirname(dirPath);
+    fs.accessSync(target, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveDefaultPython() {
+  if (process.env.MYKOS_BACKEND_PYTHON) {
+    return process.env.MYKOS_BACKEND_PYTHON;
+  }
+  const candidates = process.platform === "win32"
+    ? [
+        path.join(mykosRootDir, "runtime", "python", "python.exe"),
+        path.join(mykosRootDir, "runtime", "python", "Scripts", "python.exe"),
+        path.join(homeDir, ".mykos", "venv", "Scripts", "python.exe"),
+      ]
+    : [
+        path.join(mykosRootDir, "runtime", "python", "bin", "python3"),
+        path.join(mykosRootDir, "runtime", "venv", "bin", "python"),
+        path.join(homeDir, ".mykos", "venv", "bin", "python"),
+      ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return process.platform === "win32" ? "python" : "python3";
+}
 
 function loadOrCreateConfig(filePath) {
-  if (fs.existsSync(filePath)) {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const defaultPython = resolveDefaultPython();
+  const appDataDir = path.join(defaultAppDir, "data");
+  if (!process.env.MYKOS_DATA_DIR && !isWritableDir(appDataDir)) {
+    const fallbackDataDir = path.join(stateDir, "data");
+    fs.mkdirSync(fallbackDataDir, { recursive: true, mode: 0o700 });
+    process.env.MYKOS_DATA_DIR = fallbackDataDir;
   }
-  const venvPython = process.platform === "win32"
-    ? path.join(homeDir, ".mykos", "venv", "Scripts", "python.exe")
-    : path.join(homeDir, ".mykos", "venv", "bin", "python");
-  const defaultPython = process.env.MYKOS_BACKEND_PYTHON
-    || (fs.existsSync(venvPython) ? venvPython : (process.platform === "win32" ? "python" : "python3"));
+  if (fs.existsSync(filePath)) {
+    try {
+      const existing = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      let mutated = false;
+      if (Array.isArray(existing?.plugins?.load?.paths)) {
+        const validPaths = existing.plugins.load.paths.filter((p) => fs.existsSync(p));
+        if (validPaths.length === 0) {
+          existing.plugins.load.paths = [defaultPluginDir];
+          mutated = true;
+        }
+      }
+      const uiCfg = existing?.plugins?.entries?.["mykos-ui"]?.config;
+      if (uiCfg && typeof uiCfg === "object") {
+        if (!uiCfg.projectDir || !fs.existsSync(uiCfg.projectDir)) {
+          uiCfg.projectDir = defaultAppDir;
+          mutated = true;
+        }
+        if (!uiCfg.staticDir || !fs.existsSync(uiCfg.staticDir)) {
+          uiCfg.staticDir = path.join(defaultAppDir, "static");
+          mutated = true;
+        }
+        if (uiCfg.backend && typeof uiCfg.backend === "object") {
+          if (!uiCfg.backend.script || !fs.existsSync(uiCfg.backend.script)) {
+            uiCfg.backend.script = path.join(defaultAppDir, "server.py");
+            mutated = true;
+          }
+          if (process.env.MYKOS_BACKEND_PYTHON && uiCfg.backend.python !== process.env.MYKOS_BACKEND_PYTHON) {
+            uiCfg.backend.python = process.env.MYKOS_BACKEND_PYTHON;
+            mutated = true;
+          } else if (
+            uiCfg.backend.python &&
+            path.isAbsolute(uiCfg.backend.python) &&
+            !fs.existsSync(uiCfg.backend.python)
+          ) {
+            uiCfg.backend.python = defaultPython;
+            mutated = true;
+          }
+        }
+      }
+      if (mutated) {
+        fs.writeFileSync(filePath, `${JSON.stringify(existing, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+      }
+      return existing;
+    } catch {}
+  }
   const initialConfig = {
     gateway: {
       host: "127.0.0.1",

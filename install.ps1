@@ -19,20 +19,55 @@ Write-Host "  Instalador de MyKOS Ecosystem (Windows)" -ForegroundColor Cyan
 Write-Host "  Raíz del proyecto: $MykosRoot" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 
-# 1. Comprobar Node.js y Python
+# 1. Comprobar Node.js y Python (o descargar runtimes portables automáticamente)
+$RuntimeDir = Join-Path $MykosRoot "runtime"
+$BundledNodeExe = Join-Path $RuntimeDir "node\node.exe"
+if (Test-Path $BundledNodeExe) {
+    $env:PATH = "$(Join-Path $RuntimeDir 'node');$env:PATH"
+}
 try {
     $nodeVer = & node -v
 } catch {
-    Write-Error "❌ Node.js (>= 20) no está instalado. Descárgalo desde https://nodejs.org/"
-    exit 1
+    Write-Host "▶ Node.js no detectado; descargando Node.js v20 portátil en $RuntimeDir\node..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Force -Path (Join-Path $RuntimeDir "node") | Out-Null
+    Invoke-WebRequest -Uri "https://nodejs.org/dist/v20.18.0/win-x64/node.exe" -OutFile $BundledNodeExe
+    $env:PATH = "$(Join-Path $RuntimeDir 'node');$env:PATH"
+    $nodeVer = & $BundledNodeExe -v
 }
+
+$HasSystemPy = $false
 try {
-    $pyVer = & python --version
-} catch {
-    Write-Error "❌ Python 3 (>= 3.10) no está instalado. Descárgalo desde https://www.python.org/"
-    exit 1
+    $pyCmd = Get-Command "python.exe" -ErrorAction SilentlyContinue
+    if ($pyCmd -and $pyCmd.Source -and ($pyCmd.Source -notmatch "WindowsApps")) {
+        $pyVer = & python --version
+        if ($LASTEXITCODE -eq 0) { $HasSystemPy = $true }
+    }
+} catch {}
+
+if (-not $HasSystemPy) {
+    $pyDir = Join-Path $RuntimeDir "python"
+    $pyExe = Join-Path $pyDir "python.exe"
+    if (-not (Test-Path $pyExe)) {
+        Write-Host "▶ Python 3 no detectado; descargando Python 3.12 embebido en $pyDir..." -ForegroundColor Cyan
+        New-Item -ItemType Directory -Force -Path $pyDir | Out-Null
+        $pyZip = Join-Path $RuntimeDir "python-embed.zip"
+        Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.12.7/python-3.12.7-embed-amd64.zip" -OutFile $pyZip
+        Expand-Archive -Path $pyZip -DestinationPath $pyDir -Force
+        Remove-Item $pyZip -Force
+    }
+    $pthFile = Join-Path $pyDir "python312._pth"
+    Set-Content -Path $pthFile -Value ("python312.zip`r`n.`r`nLib\site-packages`r`n..\..\gateway\app`r`nimport site") -Encoding ASCII
+    $getPip = Join-Path $pyDir "get-pip.py"
+    if (-not (Test-Path (Join-Path $pyDir "Scripts\pip.exe"))) {
+        Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile $getPip
+        & $pyExe $getPip --quiet
+        Remove-Item $getPip -Force -ErrorAction SilentlyContinue
+    }
+    & $pyExe -m pip install --quiet -r (Join-Path $MykosRoot "gateway\app\requirements.txt")
+    $pyVer = & $pyExe --version
+    $NoVenv = $true
 }
-Write-Host "✔ Node.js $nodeVer y $pyVer detectados." -ForegroundColor Green
+Write-Host "✔ Node.js $nodeVer y $pyVer listos." -ForegroundColor Green
 
 # 2. Crear carpetas de estado
 New-Item -ItemType Directory -Force -Path $StateDir, $WorkspaceDir | Out-Null

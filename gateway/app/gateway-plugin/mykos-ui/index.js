@@ -16,7 +16,7 @@
 //   3. register(api) se ejecuta más de una vez por arranque (registro temprano y runtime completo): sin efectos
 //      secundarios al registrar. Los procesos solo se lanzan desde el servicio, que se registra en modo "full".
 
-import { appendFileSync, chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync, createReadStream } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import http from "node:http";
@@ -771,6 +771,25 @@ function resolveConfig(api) {
     } catch {
       throw new Error(`mykos-ui: backend.url no es una URL válida: «${b.url}» (se esperaba algo como http://127.0.0.1:3211)`);
     }
+    const defaultDataDir = path.join(projectDir, "data");
+    let writableDataDir = process.env.MYKOS_DATA_DIR ? path.resolve(process.env.MYKOS_DATA_DIR) : defaultDataDir;
+    try {
+      mkdirSync(writableDataDir, { recursive: true });
+      const probeFile = path.join(writableDataDir, `.write-probe-${process.pid}`);
+      writeFileSync(probeFile, "");
+      try { unlinkSync(probeFile); } catch {}
+    } catch {
+      writableDataDir = path.join(gatewayStateDir, "data");
+      try { mkdirSync(writableDataDir, { recursive: true, mode: 0o700 }); } catch {}
+    }
+    let resolvedLogFile = path.resolve(b.logFile || path.join(writableDataDir, "mykos-backend.log"));
+    try {
+      mkdirSync(path.dirname(resolvedLogFile), { recursive: true });
+      const fdProbe = openSync(resolvedLogFile, "a");
+      closeSync(fdProbe);
+    } catch {
+      resolvedLogFile = path.join(gatewayStateDir, "mykos-backend.log");
+    }
     const childEnv = {};
     for (const [key, value] of Object.entries(process.env)) {
       if (!/^MYKOS_/i.test(key)) childEnv[key] = value; // el backend no debe heredar el estado del Gateway
@@ -786,6 +805,7 @@ function resolveConfig(api) {
       MYKOS_CONTROL_URL: `http://127.0.0.1:${gatewayPort}`,
       MYKOS_CONTROL_TOKEN: controlToken,
       MYKOS_CREDENTIALS_DIR: path.join(gatewayStateDir, "mykos", "credentials"),
+      MYKOS_DATA_DIR: writableDataDir,
       MYKOS_WORKSPACE_DIR: workspaceDir,
       MYKOS_GATEWAY_WORKSPACE_DIR: workspaceDir,
       MYKOS_BACKEND_ONLY: "1",
@@ -801,7 +821,7 @@ function resolveConfig(api) {
       python: b.python || process.env.MYKOS_BACKEND_PYTHON || "python",
       script: path.resolve(b.script || path.join(projectDir, "server.py")),
       cwd: projectDir,
-      logFile: path.resolve(b.logFile || path.join(projectDir, "data", "mykos-backend.log")),
+      logFile: resolvedLogFile,
       env: childEnv,
       supervision: {
         delaysMs: Array.isArray(b.supervision?.delaysMs) && b.supervision.delaysMs.length ? b.supervision.delaysMs.map(Number) : BACKOFF_MS,

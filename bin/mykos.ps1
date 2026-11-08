@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # MyKOS CLI (Windows PowerShell) — Herramienta unificada para el ecosistema MyKOS
 # ==============================================================================
 $ErrorActionPreference = "Stop"
@@ -14,17 +14,45 @@ $StateDir = if ($env:MYKOS_GATEWAY_STATE_DIR) { $env:MYKOS_GATEWAY_STATE_DIR } e
 $WorkspaceDir = if ($env:MYKOS_GATEWAY_WORKSPACE_DIR) { $env:MYKOS_GATEWAY_WORKSPACE_DIR } else { Join-Path $HOME ".mykos\workspace" }
 $PidFile = Join-Path $StateDir "mykos-gateway.pid"
 $GatewayLog = Join-Path $StateDir "mykos-gateway.log"
-$BackendLog = Join-Path $GatewayDir "app\data\mykos-backend.log"
+$AppDataDir = Join-Path $GatewayDir "app\data"
+$BackendLog = Join-Path $AppDataDir "mykos-backend.log"
+try {
+    New-Item -ItemType Directory -Force -Path $AppDataDir -ErrorAction Stop | Out-Null
+    $probeFile = Join-Path $AppDataDir ".write-probe-$PID"
+    Set-Content -Path $probeFile -Value "" -ErrorAction Stop
+    Remove-Item $probeFile -Force -ErrorAction SilentlyContinue
+} catch {
+    $BackendLog = Join-Path $StateDir "mykos-backend.log"
+}
 $ConfigFile = if ($env:MYKOS_GATEWAY_CONFIG) { $env:MYKOS_GATEWAY_CONFIG } else { Join-Path $StateDir "mykos-gateway.json" }
 $DefaultPort = if ($env:MYKOS_GATEWAY_PORT) { [int]$env:MYKOS_GATEWAY_PORT } else { 3210 }
 
-# Si existe Node.js embebido en runtime\node, añadirlo al inicio del PATH
-$BundledNode = Join-Path $MykosRoot "runtime\node"
-if (Test-Path (Join-Path $BundledNode "node.exe")) {
-    $env:PATH = "$BundledNode;$env:PATH"
+# Si existe Node.js embebido en runtime\node o en ~/.mykos/runtime/node, añadirlo al inicio del PATH
+foreach ($nodeDir in @((Join-Path $MykosRoot "runtime\node"), (Join-Path $HOME ".mykos\runtime\node"))) {
+    if (Test-Path (Join-Path $nodeDir "node.exe")) {
+        $env:PATH = "$nodeDir;$env:PATH"
+    }
 }
 
 New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
+
+function Get-MykosNode {
+    foreach ($candidate in @(
+        (Join-Path $MykosRoot "runtime\node\node.exe"),
+        (Join-Path $HOME ".mykos\runtime\node\node.exe")
+    )) {
+        if (Test-Path $candidate) { return $candidate }
+    }
+    $cmd = Get-Command "node.exe" -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source) { return $cmd.Source }
+    $userNodeDir = Join-Path $HOME ".mykos\runtime\node"
+    $userNodeExe = Join-Path $userNodeDir "node.exe"
+    Write-Host "▶ Descargando Node.js v20 portátil para MyKOS..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Force -Path $userNodeDir | Out-Null
+    Invoke-WebRequest -Uri "https://nodejs.org/dist/v20.18.0/win-x64/node.exe" -OutFile $userNodeExe
+    $env:PATH = "$userNodeDir;$env:PATH"
+    return $userNodeExe
+}
 
 function Show-MykosLogo {
     param([string]$Subtitle = "AI Gateway · Local & Cloud Intelligence · Voice Engine")
@@ -40,11 +68,17 @@ function Show-MykosLogo {
 }
 
 function Get-MykosPython {
-    $bundledPy = Join-Path $MykosRoot "runtime\python\python.exe"
-    $venvPy = Join-Path $HOME ".mykos\venv\Scripts\python.exe"
     if ($env:MYKOS_BACKEND_PYTHON -and (Test-Path $env:MYKOS_BACKEND_PYTHON)) { return $env:MYKOS_BACKEND_PYTHON }
-    if (Test-Path $bundledPy) { return $bundledPy }
-    if (Test-Path $venvPy) { return $venvPy }
+    foreach ($candidate in @(
+        (Join-Path $MykosRoot "runtime\python\python.exe"),
+        (Join-Path $MykosRoot "runtime\python\Scripts\python.exe"),
+        (Join-Path $HOME ".mykos\venv\Scripts\python.exe"),
+        (Join-Path $HOME ".mykos\runtime\python\python.exe")
+    )) {
+        if (Test-Path $candidate) { return $candidate }
+    }
+    $cmd = Get-Command "python.exe" -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source -and ($cmd.Source -notmatch "WindowsApps")) { return $cmd.Source }
     return "python"
 }
 
@@ -112,25 +146,35 @@ function Invoke-MykosStart {
         Write-Host "MyKOS Gateway ya está en marcha (PID $($existing.Id)) en http://127.0.0.1:$Port" -ForegroundColor Green
         return
     }
-    $env:MYKOS_BACKEND_PYTHON = Get-MykosPython
+    $nodeExe = Get-MykosNode
+    $pyExe = Get-MykosPython
+    $env:MYKOS_BACKEND_PYTHON = $pyExe
+    $env:MYKOS_GATEWAY_STATE_DIR = $StateDir
     if ($Foreground) {
         Show-MykosLogo "MyKOS Gateway · Modo Primer Plano (http://127.0.0.1:$Port)"
-        & node $RuntimeMjs gateway --port $Port
+        & $nodeExe $RuntimeMjs gateway --port $Port
         return
     }
     Write-Host "Arrancando MyKOS Gateway en segundo plano (puerto $Port)..."
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $GatewayLog) | Out-Null
     $procId = $null
     try {
-        $nodeCmd = "cmd.exe /c node `"$RuntimeMjs`" gateway --port $Port > `"$GatewayLog`" 2> `"$GatewayLog.err`""
-        $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $nodeCmd }
+        $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly
+        $startup.ShowWindow = [uint16]0
+        $nodeCmd = "cmd.exe /c `"set `"MYKOS_BACKEND_PYTHON=$pyExe`" && set `"MYKOS_GATEWAY_STATE_DIR=$StateDir`" && `"$nodeExe`" `"$RuntimeMjs`" gateway --port $Port > `"$GatewayLog`" 2> `"$GatewayLog.err`"`""
+        $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+            CommandLine = $nodeCmd
+            CurrentDirectory = $GatewayDir
+            ProcessStartupInformation = $startup
+        }
         if ($res -and $res.ReturnValue -eq 0 -and $res.ProcessId) {
             $procId = $res.ProcessId
         }
     } catch {}
 
     if (-not $procId) {
-        $proc = Start-Process -FilePath "node" -ArgumentList @($RuntimeMjs, "gateway", "--port", "$Port") `
+        $proc = Start-Process -FilePath $nodeExe -ArgumentList @($RuntimeMjs, "gateway", "--port", "$Port") `
+            -WorkingDirectory $GatewayDir `
             -RedirectStandardOutput $GatewayLog -RedirectStandardError "$GatewayLog.err" `
             -WindowStyle Hidden -PassThru
         $procId = $proc.Id
@@ -159,13 +203,16 @@ function Invoke-MykosRun {
         Invoke-MykosStop | Out-Null
     }
 
+    $nodeExe = Get-MykosNode
     $env:MYKOS_BACKEND_PYTHON = Get-MykosPython
+    $env:MYKOS_GATEWAY_STATE_DIR = $StateDir
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $GatewayLog) | Out-Null
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $BackendLog) | Out-Null
     if (-not (Test-Path $GatewayLog)) { New-Item -ItemType File -Force -Path $GatewayLog | Out-Null }
     if (-not (Test-Path $BackendLog)) { New-Item -ItemType File -Force -Path $BackendLog | Out-Null }
 
-    $proc = Start-Process -FilePath "node" -ArgumentList @($RuntimeMjs, "gateway", "--port", "$Port") `
+    $proc = Start-Process -FilePath $nodeExe -ArgumentList @($RuntimeMjs, "gateway", "--port", "$Port") `
+        -WorkingDirectory $GatewayDir `
         -RedirectStandardOutput $GatewayLog -RedirectStandardError "$GatewayLog.err" `
         -NoNewWindow -PassThru
     Set-Content -Path $PidFile -Value $proc.Id -Encoding ASCII
@@ -326,6 +373,9 @@ switch ($Command) {
     { $_ -in @("status", "health") } { Invoke-MykosStatus }
     { $_ -in @("doctor", "diag") } { Invoke-MykosDoctor -Fix:($RestArgs -contains "--fix") }
     { $_ -in @("open", "ui") } {
+        if (-not (Get-MykosProcess)) {
+            Invoke-MykosStart
+        }
         $p = Resolve-MykosPort
         Start-Process "http://127.0.0.1:$p"
     }

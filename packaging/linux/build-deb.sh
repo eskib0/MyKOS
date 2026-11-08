@@ -35,7 +35,8 @@ Section: utils
 Priority: optional
 Architecture: ${ARCH}
 Maintainer: Ruben <eskib0@github.com>
-Depends: nodejs (>= 20.0.0), python3 (>= 3.10), python3-pip, python3-venv, curl, bash
+Depends: python3 (>= 3.10), python3-pip, python3-venv, curl, bash, ca-certificates, xz-utils
+Recommends: nodejs
 Homepage: https://github.com/eskib0/MyKOS
 Description: MyKOS Ecosystem - Multi-Model Local AI Assistant & Gateway
  MyKOS es un asistente de IA local soberano, ligero y multimodal.
@@ -47,8 +48,39 @@ EOF
 cat > "$STAGE_DIR/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
-chmod +x /opt/mykos/bin/mykos
+chmod +x /opt/mykos/bin/mykos /opt/mykos/gateway/runtime/mykos-gateway.mjs
 ln -sf /opt/mykos/bin/mykos /usr/bin/mykos
+
+mkdir -p /opt/mykos/gateway/app/data/uploads /opt/mykos/gateway/app/data/media
+chmod -R 1777 /opt/mykos/gateway/app/data || true
+
+# Asegurar Node.js >= 20 en /opt/mykos/runtime/node si el sistema no lo tiene o es antiguo
+NEED_NODE=1
+if command -v node >/dev/null 2>&1; then
+  NODE_MAJOR="$(node -v 2>/dev/null | tr -d 'v' | cut -d. -f1 || echo 0)"
+  if [ "$NODE_MAJOR" -ge 20 ] 2>/dev/null; then
+    NEED_NODE=0
+  fi
+fi
+if [ "$NEED_NODE" -eq 1 ] && [ ! -x /opt/mykos/runtime/node/bin/node ]; then
+  echo "▶ Descargando Node.js v20 LTS para MyKOS en /opt/mykos/runtime/node..."
+  mkdir -p /opt/mykos/runtime/node
+  ARCH_UNAME="$(uname -m)"
+  NODE_ARCH="x64"
+  [ "$ARCH_UNAME" = "aarch64" ] || [ "$ARCH_UNAME" = "arm64" ] && NODE_ARCH="arm64"
+  curl -fsSL "https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-${NODE_ARCH}.tar.xz" \
+    | tar -xJ --strip-components=1 -C /opt/mykos/runtime/node || true
+fi
+
+# Preparar entorno virtual Python compartido en /opt/mykos/runtime/venv
+if command -v python3 >/dev/null 2>&1 && [ ! -x /opt/mykos/runtime/venv/bin/python ]; then
+  echo "▶ Configurando entorno Python de MyKOS en /opt/mykos/runtime/venv..."
+  mkdir -p /opt/mykos/runtime
+  if python3 -m venv /opt/mykos/runtime/venv >/dev/null 2>&1; then
+    /opt/mykos/runtime/venv/bin/pip install --quiet --upgrade pip >/dev/null 2>&1 || true
+    /opt/mykos/runtime/venv/bin/pip install --quiet -r /opt/mykos/gateway/app/requirements.txt >/dev/null 2>&1 || true
+  fi
+fi
 
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database -q /usr/share/applications || true
@@ -80,6 +112,7 @@ cat > "$STAGE_DIR/DEBIAN/postrm" <<'EOF'
 set -e
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
   rm -f /usr/bin/mykos
+  rm -rf /opt/mykos/runtime
   if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database -q /usr/share/applications || true
   fi
@@ -99,10 +132,19 @@ rsync -a --exclude='.git' \
          --exclude='node_modules' \
          --exclude='gateway-state' \
          --exclude='*.log' \
+         --exclude='promo*' \
+         --exclude='sliding_window_median.cpp' \
+         --exclude='swm' \
+         --exclude='*backup*' \
          --exclude='data/oauth' \
          --exclude='data/conversations.json' \
          --exclude='data/*.db*' \
          --exclude='data/media' \
+         --exclude='gateway/app/data/*.json' \
+         --exclude='gateway/app/data/*.bak*' \
+         --exclude='gateway/app/data/oauth' \
+         --exclude='gateway/app/data/media' \
+         --exclude='gateway/app/data/uploads' \
          --exclude='gateway/runtime/state' \
          --exclude='gateway/runtime/antigravity-home' \
          --exclude='gateway/runtime/qwen-home' \

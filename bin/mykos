@@ -15,12 +15,64 @@ STATE_DIR="${MYKOS_GATEWAY_STATE_DIR:-$HOME/.mykos/gateway-state}"
 WORKSPACE_DIR="${MYKOS_GATEWAY_WORKSPACE_DIR:-$HOME/.mykos/workspace}"
 PID_FILE="$STATE_DIR/mykos-gateway.pid"
 GATEWAY_LOG="$STATE_DIR/mykos-gateway.log"
-BACKEND_LOG="$GATEWAY_DIR/app/data/mykos-backend.log"
+if [[ -d "$GATEWAY_DIR/app/data" && -w "$GATEWAY_DIR/app/data" ]] || [[ ! -e "$GATEWAY_DIR/app/data" && -w "$GATEWAY_DIR/app" ]]; then
+  BACKEND_LOG="$GATEWAY_DIR/app/data/mykos-backend.log"
+else
+  BACKEND_LOG="$STATE_DIR/mykos-backend.log"
+fi
 CONFIG_FILE="${MYKOS_GATEWAY_CONFIG:-$STATE_DIR/mykos-gateway.json}"
 DEFAULT_PORT="${MYKOS_GATEWAY_PORT:-3210}"
 
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR" 2>/dev/null || true
+
+# Asegurar que Node.js y binarios de usuario o empaquetados estén en PATH (incluso al lanzar desde icono .desktop)
+for extra_bin in \
+  "$MYKOS_ROOT/runtime/node/bin" \
+  "$HOME/.mykos/runtime/node/bin" \
+  "$HOME/.local/bin" \
+  "$HOME/.volta/bin" \
+  "$HOME/.fnm/current/bin"; do
+  if [[ -d "$extra_bin" ]] && [[ ":$PATH:" != *":$extra_bin:"* ]]; then
+    export PATH="$extra_bin:$PATH"
+  fi
+done
+if ! command -v node >/dev/null 2>&1 && [[ -d "$HOME/.nvm/versions/node" ]]; then
+  latest_nvm_node="$(ls -1d "$HOME/.nvm/versions/node/"v*/bin 2>/dev/null | sort -V | tail -n 1 || true)"
+  if [[ -n "$latest_nvm_node" ]]; then
+    export PATH="$latest_nvm_node:$PATH"
+  fi
+fi
+
+ensure_runtime_deps() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo "Descargando runtime portátil de Node.js v20 para MyKOS..."
+    local node_dir="$HOME/.mykos/runtime/node"
+    mkdir -p "$node_dir"
+    local arch
+    arch="$(uname -m)"
+    local node_arch="x64"
+    [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] && node_arch="arm64"
+    if curl -fsSL "https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-${node_arch}.tar.xz" | tar -xJ --strip-components=1 -C "$node_dir"; then
+      export PATH="$node_dir/bin:$PATH"
+    fi
+  fi
+  if [[ -z "${MYKOS_BACKEND_PYTHON:-}" ]]; then
+    if [[ -x "$MYKOS_ROOT/runtime/venv/bin/python" ]]; then
+      export MYKOS_BACKEND_PYTHON="$MYKOS_ROOT/runtime/venv/bin/python"
+    elif [[ -x "$HOME/.mykos/venv/bin/python" ]]; then
+      export MYKOS_BACKEND_PYTHON="$HOME/.mykos/venv/bin/python"
+    elif command -v python3 >/dev/null 2>&1 && [[ -f "$GATEWAY_DIR/app/requirements.txt" ]]; then
+      echo "Preparando entorno Python aislado de MyKOS en ~/.mykos/venv (primera ejecución)..."
+      mkdir -p "$HOME/.mykos"
+      if python3 -m venv "$HOME/.mykos/venv" 2>/dev/null; then
+        "$HOME/.mykos/venv/bin/pip" install --quiet --upgrade pip 2>/dev/null || true
+        "$HOME/.mykos/venv/bin/pip" install --quiet -r "$GATEWAY_DIR/app/requirements.txt" || true
+        export MYKOS_BACKEND_PYTHON="$HOME/.mykos/venv/bin/python"
+      fi
+    fi
+  fi
+}
 
 # Colores ANSI (solo si stdout es terminal o se fuerza)
 if [[ -t 1 ]] || [[ "${MYKOS_FORCE_COLOR:-0}" == "1" ]]; then
@@ -116,9 +168,7 @@ cmd_start() {
     return 0
   fi
 
-  if [[ -x "$HOME/.mykos/venv/bin/python" ]] && [[ -z "${MYKOS_BACKEND_PYTHON:-}" ]]; then
-    export MYKOS_BACKEND_PYTHON="$HOME/.mykos/venv/bin/python"
-  fi
+  ensure_runtime_deps
   export MYKOS_GATEWAY_STATE_DIR="$STATE_DIR"
 
   if [[ "$fg" -eq 1 ]]; then
@@ -186,9 +236,7 @@ cmd_run() {
     cmd_stop >/dev/null 2>&1 || true
   fi
 
-  if [[ -x "$HOME/.mykos/venv/bin/python" ]] && [[ -z "${MYKOS_BACKEND_PYTHON:-}" ]]; then
-    export MYKOS_BACKEND_PYTHON="$HOME/.mykos/venv/bin/python"
-  fi
+  ensure_runtime_deps
   export MYKOS_GATEWAY_STATE_DIR="$STATE_DIR"
 
   mkdir -p "$(dirname "$GATEWAY_LOG")" "$(dirname "$BACKEND_LOG")"
@@ -1010,8 +1058,13 @@ case "$COMMAND" in
     cmd_doctor "$@"
     ;;
   open|ui)
+    if ! is_running; then
+      cmd_start
+    fi
     PORT="$(resolve_port)"
-    xdg-open "http://127.0.0.1:$PORT" >/dev/null 2>&1 &
+    if command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "http://127.0.0.1:$PORT" >/dev/null 2>&1 &
+    fi
     echo "Abriendo http://127.0.0.1:$PORT ..."
     ;;
   logs|log)

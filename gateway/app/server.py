@@ -191,9 +191,19 @@ from core.runners import (
 )
 
 
+def _resolve_data_dir(root: Path) -> Path:
+    env_dir = os.environ.get("MYKOS_DATA_DIR", "").strip()
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+    candidate = root / "data"
+    if os.access(candidate if candidate.exists() else root, os.W_OK):
+        return candidate
+    return (Path.home() / ".mykos" / "data").resolve()
+
+
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
-DATA_DIR = ROOT / "data"
+DATA_DIR = _resolve_data_dir(ROOT)
 CONFIG_DIR = ROOT / "config"
 CONVERSATIONS_FILE = DATA_DIR / "conversations.json"
 APPROVALS_FILE = DATA_DIR / "approvals.json"

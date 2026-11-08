@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # Helper para compilar el instalador de Windows (Inno Setup 6)
 # ==============================================================================
 param(
@@ -37,17 +37,35 @@ if ($FullOffline) {
         Assert-FileHash $nodeExe $nodeExpectedSha256
     }
 
-    # 2. Python 3.12 embeddable
-    $pyExe = Join-Path $RuntimeDir "python\python.exe"
+    # 2. Python 3.12 embeddable + dependencias del Gateway preinstaladas
+    $pyDir = Join-Path $RuntimeDir "python"
+    $pyExe = Join-Path $pyDir "python.exe"
     $pyExpectedSha256 = "0d57bb6cb078b74d23dbfe91f77d6780d45bed328911609f1f7ee2ba1606bf44"
     if (-not (Test-Path $pyExe)) {
         Write-Host "▶ Descargando Python 3.12 embebido..." -ForegroundColor Cyan
         $pyZip = Join-Path $RuntimeDir "python-embed.zip"
         Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.12.7/python-3.12.7-embed-amd64.zip" -OutFile $pyZip
         Assert-FileHash $pyZip $pyExpectedSha256
-        Expand-Archive -Path $pyZip -DestinationPath (Join-Path $RuntimeDir "python") -Force
+        Expand-Archive -Path $pyZip -DestinationPath $pyDir -Force
         Remove-Item $pyZip -Force
     }
+
+    # Habilitar import site, Lib\site-packages y gateway\app en python312._pth
+    $pthFile = Join-Path $pyDir "python312._pth"
+    $pthContent = @(
+        "python312.zip",
+        ".",
+        "Lib\site-packages",
+        "..\..\gateway\app",
+        "import site"
+    ) -join "`r`n"
+    Set-Content -Path $pthFile -Value $pthContent -Encoding ASCII
+
+    $sitePackages = Join-Path $pyDir "Lib\site-packages"
+    New-Item -ItemType Directory -Force -Path $sitePackages | Out-Null
+    $reqFile = Join-Path $MykosRoot "gateway\app\requirements.txt"
+    Write-Host "▶ Instalando dependencias de Python en runtime\python\Lib\site-packages..." -ForegroundColor Cyan
+    & python -m pip install --upgrade --target $sitePackages -r $reqFile
 }
 
 # 3. Localizar compilador Inno Setup (ISCC.exe)

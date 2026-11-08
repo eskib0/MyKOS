@@ -43,7 +43,10 @@ export const BASE_HEADERS = {
 };
 
 export function mediaLibrary(projectDir, limit) {
-  const dir = path.join(projectDir, "data", "media");
+  const baseDataDir = process.env.MYKOS_DATA_DIR
+    ? path.resolve(process.env.MYKOS_DATA_DIR)
+    : path.join(projectDir, "data");
+  const dir = path.join(baseDataDir, "media");
   const rows = [];
   try {
     for (const name of readdirSync(dir)) {

@@ -20,7 +20,8 @@ import gateway_store
 ROOT = Path(__file__).resolve().parent
 WORKSPACE_ENV = os.environ.get("MYKOS_WORKSPACE_DIR") or os.environ.get("MYKOS_GATEWAY_WORKSPACE_DIR")
 WORKSPACE = Path(WORKSPACE_ENV).expanduser().resolve() if WORKSPACE_ENV else (Path.home() / ".mykos" / "workspace").resolve()
-DATA = ROOT / "data"
+_DATA_ENV = os.environ.get("MYKOS_DATA_DIR", "").strip()
+DATA = Path(_DATA_ENV).expanduser().resolve() if _DATA_ENV else (ROOT / "data" if os.access(ROOT / "data" if (ROOT / "data").exists() else ROOT, os.W_OK) else (Path.home() / ".mykos" / "data").resolve())
 CONFIG = ROOT / "config"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 
