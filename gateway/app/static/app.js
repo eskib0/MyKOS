@@ -5082,6 +5082,7 @@ async function submitAutomaticVoiceTurn(blob, mimeType) {
     }
     callTranscriptLine("user", message);
     addBubble("user", message, false, [], new Date().toISOString());
+    setVoiceButton("thinking", "MyKOS está pensando la respuesta…");
     await sendLocalVoiceMessage(message, controller.signal);
   } catch (error) {
     if (error?.name !== "AbortError" && state.localVoiceCall) setVoiceButton("listening", "Error de voz: " + (error.message || "desconocido"));

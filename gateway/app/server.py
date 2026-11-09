@@ -94,6 +94,13 @@ from strata import (
     strata_model_catalog,
     strata_status,
 )
+from llamacpp import (
+    ensure_llamacpp_model,
+    llamacpp_chat_request,
+    llamacpp_model_catalog,
+    llamacpp_status,
+    stop_llamacpp_server,
+)
 from oauth import (
     complete_openrouter_oauth,
     logout_openai,
@@ -482,6 +489,7 @@ from core.activity import (
 
 
 def stop_llama_cpp_server() -> None:
+    stop_llamacpp_server()
     _core_stop_llama_cpp_server(LLAMA_CPP_MODEL)
 
 
@@ -1344,6 +1352,8 @@ def controller_run_chat_loop(
     El Gateway devuelve además el contexto tal como acaba (`_messages`) y los ajustes finales (`_generation`): se copian
     a las listas/diccionarios de quien llama, que los usa después para el medidor de contexto de la interfaz.
     """
+    if model.startswith("llama_cpp/") or model.startswith("llamacpp/") or model == LLAMA_CPP_MODEL_NAME:
+        ensure_llamacpp_model(model)
     try:
         result = mykos_gateway_control_request(
             "loop",
@@ -1531,35 +1541,17 @@ def llama_cpp_model_summary() -> dict[str, Any] | None:
 def llama_cpp_chat_request(
     messages: list[dict[str, Any]],
     generation: dict[str, Any],
+    tool_schemas: list[dict[str, Any]] | None = None,
+    model_name: str = "qwen2.5-7b",
 ) -> dict[str, Any]:
-    options = generation.get("options") if isinstance(generation, dict) else {}
-    options = options if isinstance(options, dict) else {}
-    payload: dict[str, Any] = {
-        "model": LLAMA_CPP_MODEL_NAME,
-        "messages": [
-            {
-                key: value
-                for key, value in item.items()
-                if key in {"role", "content", "images", "tool_calls", "tool_call_id"}
-            }
-            for item in messages
-        ],
-        "stream": False,
-        "max_tokens": int(options.get("num_predict", 1536) or 1536),
-        "temperature": float(options.get("temperature", 0.5) or 0.5),
-    }
-    effort = str(generation.get("effort", "")).strip().casefold()
-    if effort == "off":
-        payload["reasoning_effort"] = "none"
-    elif effort in {"low", "medium", "high"}:
-        payload["reasoning_effort"] = effort
-    if TOOL_SCHEMAS:
-        payload["tools"] = TOOL_SCHEMAS
-        payload["tool_choice"] = "auto"
-    if MYKOS_GATEWAY_ENABLED and MYKOS_CONTROL_TOKEN:
-        return mykos_gateway_model_request("llama_cpp", payload)
-    ensure_llama_cpp_server()
-    return _llama_cpp_request("/v1/chat/completions", payload, timeout=600)
+    requester = controller_request_model if (MYKOS_GATEWAY_ENABLED and MYKOS_CONTROL_TOKEN) else None
+    return llamacpp_chat_request(
+        messages=messages,
+        generation=generation,
+        tool_schemas=tool_schemas or TOOL_SCHEMAS,
+        model_name=model_name,
+        gateway_requester=requester,
+    )
 
 
 def model_summary(model: dict[str, Any]) -> dict[str, Any]:
@@ -1652,9 +1644,10 @@ def get_model_catalog() -> tuple[list[dict[str, Any]], str]:
     except RuntimeError as error:
         ollama_error = str(error)
     models = [*ollama_models]
-    llama_model = llama_cpp_model_summary()
-    if llama_model is not None:
-        models.append(llama_model)
+    try:
+        models.extend(llamacpp_model_catalog())
+    except Exception as error:
+        logger.warning(f"Error cargando catálogo llama.cpp: {error}")
     try:
         models.extend(strata_model_catalog())
     except Exception as error:
@@ -1789,7 +1782,7 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
             provider = "openai_codex_oauth"
         elif model_name == CLAUDE_MODEL_NAME:
             provider = "anthropic_oauth"
-        elif model_name == LLAMA_CPP_MODEL_NAME:
+        elif model_name == LLAMA_CPP_MODEL_NAME or model_name.startswith("llama_cpp/") or model_name.startswith("llamacpp/"):
             provider = "llama_cpp"
         elif model_name.startswith("strata/"):
             provider = "strata"
@@ -2906,7 +2899,7 @@ def run_model_until_result(
             activity_id,
             permission_mode,
         )
-    if model != LLAMA_CPP_MODEL_NAME and not gateway_controls_models:
+    if not (model == LLAMA_CPP_MODEL_NAME or model.startswith("llama_cpp/") or model.startswith("llamacpp/")) and not gateway_controls_models:
         stop_llama_cpp_server()
     if model.startswith("antigravity/"):
         return run_antigravity_until_result(
@@ -4053,7 +4046,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 handle.write(data)
                 temporary_path = Path(handle.name)
             result = transcribe_audio_file(temporary_path)
-            print(f"[transcribe] audio={len(data)} bytes ({suffix}) -> texto={len(str(result.get('text', '')))} car.", flush=True)
+            print(f"[transcribe] audio={len(data)} bytes ({suffix}) -> texto={len(str(result.get('text', '')))} car. ('{result.get('text', '')}')", flush=True)
             self.send_json(result)
         except MediaError as error:
             raise ApiError(str(error)) from error

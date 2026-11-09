@@ -53,6 +53,13 @@ apps/horario/
 dist/
 /runtime/
 packaging/staging/
+backup_stt_*/
+promo/
+promo_pro/
+promo_v2/
+sliding_window_median.cpp
+swm
+gateway/app/voices/*_backup*.wav
 
 # OS & Editor
 .DS_Store

@@ -42,12 +42,10 @@ def _detect_whisper_model() -> str:
     if env_m:
         return env_m
     cache_dir = Path.home() / ".cache" / "whisper"
-    if (cache_dir / "large-v3-turbo.pt").is_file():
-        return "large-v3-turbo"
-    for name in ("medium", "small", "base", "tiny"):
+    for name in ("small", "base", "large-v3-turbo", "large-v3", "medium", "tiny"):
         if (cache_dir / f"{name}.pt").is_file():
             return name
-    return "base"
+    return "small"
 
 WHISPER_MODEL = _detect_whisper_model()
 WHISPER_PYTHON = Path(
@@ -203,6 +201,15 @@ def _whisper_process(engine_status) -> subprocess.Popen[str]:
         cache_dir = Path(engine_status["model_path"]).parent
         
         environment = os.environ.copy()
+        extra_ld_paths = [
+            Path("/home/ruben/mini/tts/venv_cb/lib/python3.12/site-packages/nvidia/cublas/lib"),
+            Path("/home/ruben/mini/tts/venv_cb/lib/python3.12/site-packages/nvidia/cudnn/lib"),
+            Path.home() / ".config" / "VoiceStudio" / "runtime" / "project" / ".venv" / "lib" / "python3.11" / "site-packages" / "cudnn8_compat" / "nvidia" / "cudnn" / "lib",
+        ]
+        valid_ld = [str(p) for p in extra_ld_paths if p.is_dir()]
+        if valid_ld:
+            current_ld = environment.get("LD_LIBRARY_PATH", "")
+            environment["LD_LIBRARY_PATH"] = ":".join(valid_ld) + (f":{current_ld}" if current_ld else "")
         _WHISPER_PROCESS = subprocess.Popen(
             [str(WHISPER_PYTHON), "-u", str(WHISPER_WORKER), WHISPER_MODEL, str(cache_dir)],
             stdin=subprocess.PIPE,

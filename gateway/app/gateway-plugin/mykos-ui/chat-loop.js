@@ -400,17 +400,18 @@ export function strataPayload(model, messages, conversationId, generation, toolS
     payload.tools = toolSchemas;
     payload.tool_choice = "auto";
   }
+  payload.stop = ["<|endoftext|>", "<|user|>", "<|assistant|>", "<|observation|>", "<|im_end|>"];
   return payload;
 }
 
 /** Petición al motor llama.cpp (formato OpenAI). Igual que mykos_gateway_chat_request() de server.py. */
-export function llamaPayload(messages, conversationId, generation, toolSchemas) {
+export function llamaPayload(messages, conversationId, generation, toolSchemas, modelName = LLAMA_MODEL_NAME) {
   const options = isObject(generation?.options) ? generation.options : {};
   // No inyectar <registro-verificado-del-host> en mensajes assistant de modelos locales:
   // los modelos de 35B imitan esa etiqueta XML en vez de usar tool_calls nativos.
   const cleaned = messages.filter(isObject).map(cleanAssistantMessage);
   const payload = {
-    model: LLAMA_MODEL_NAME,
+    model: modelName || LLAMA_MODEL_NAME,
     messages: cleaned.map((item) => pick(item, ["role", "content", "tool_calls", "tool_call_id", "images"])),
     stream: false,
     user: `mykos-web-${conversationId}`,
@@ -426,6 +427,7 @@ export function llamaPayload(messages, conversationId, generation, toolSchemas) 
     payload.tools = toolSchemas;
     payload.tool_choice = "auto";
   }
+  payload.stop = ["<|endoftext|>", "<|user|>", "<|assistant|>", "<|observation|>", "<|im_end|>"];
   return payload;
 }
 
@@ -464,12 +466,21 @@ async function callModel(deps, ctx, messages, options) {
     };
   }
   if (ctx.useLlama) {
-    const result = await deps.model.request("llama_cpp", llamaPayload(messages, ctx.conversationId, ctx.generation, ctx.toolSchemas));
+    const cleanModel = ctx.model.startsWith("llama_cpp/")
+      ? ctx.model.slice("llama_cpp/".length)
+      : (ctx.model.startsWith("llamacpp/") ? ctx.model.slice("llamacpp/".length) : ctx.model);
+    const result = await deps.model.request("llama_cpp", llamaPayload(messages, ctx.conversationId, ctx.generation, ctx.toolSchemas, cleanModel));
     const durationMs = Date.now() - started;
     const choice = isObject(result?.choices?.[0]) ? result.choices[0] : {};
+    let msg = isObject(choice.message) ? { ...choice.message } : {};
+    if (msg.content === null || msg.content === undefined || !String(msg.content).trim()) {
+      if (msg.reasoning_content) {
+        msg.content = msg.reasoning_content;
+      }
+    }
     return {
       result,
-      responseMessage: isObject(choice.message) ? choice.message : {},
+      responseMessage: msg,
       doneReason: text(choice.finish_reason ?? "stop"),
       durationMs,
     };
@@ -730,11 +741,12 @@ export async function runChatLoop(input, deps) {
   const toolSchemas = Array.isArray(catalog?.schemas) ? catalog.schemas : [];
   const sensitiveTools = new Set(Array.isArray(catalog?.sensitive) ? catalog.sensitive : []);
   const isStrata = model.startsWith("strata/") || model === "strata";
-  const isOpenAiFormat = isStrata || model === LLAMA_MODEL_NAME;
+  const isLlama = model.startsWith("llama_cpp/") || model.startsWith("llamacpp/") || model === LLAMA_MODEL_NAME;
+  const isOpenAiFormat = isStrata || isLlama;
   const ctx = {
     model,
     useStrata: isStrata,
-    useLlama: model === LLAMA_MODEL_NAME,
+    useLlama: isLlama,
     isOpenAiFormat,
     conversationId: text(input.conversation_id).trim(),
     supportsVision: Boolean(input.supports_vision),

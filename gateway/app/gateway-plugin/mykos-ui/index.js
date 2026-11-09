@@ -747,13 +747,16 @@ function resolveConfig(api) {
   const realtimeRaw = raw.realtime && typeof raw.realtime === "object" ? raw.realtime : {};
   const geminiLiveRaw = raw.geminiLive && typeof raw.geminiLive === "object" ? raw.geminiLive : {};
   const storedVoiceMode = String(realtimeRaw.mode || "").trim().toLowerCase();
-  const defaultLlamaBin = process.platform === "win32" ? "llama-server.exe" : "llama-server";
+  const defaultLlamaDir = path.join(os.homedir(), ".local", "llama-quick", "llama-b12211");
+  const defaultLlamaBin = path.join(defaultLlamaDir, process.platform === "win32" ? "llama-server.exe" : "llama-server");
+  const defaultModelsDir = path.join(os.homedir(), "models");
+  const defaultLlamaModel = path.join(defaultModelsDir, "qwen2.5-7b.gguf");
   const model = {
     llamaUrl: String(modelRaw.llamaUrl || process.env.MYKOS_LLAMA_CPP_URL || "http://127.0.0.1:8091").replace(/\/+$/, ""),
     strataUrl: String(modelRaw.strataUrl || process.env.MYKOS_STRATA_URL || process.env.STRATA_URL || "http://127.0.0.1:18080").replace(/\/+$/, ""),
     ollamaUrl: String(modelRaw.ollamaUrl || process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/+$/, ""),
-    llamaExe: String(modelRaw.llamaExe || process.env.MYKOS_LLAMA_CPP_EXE || path.join(os.homedir(), "llama.cpp", "build", "bin", defaultLlamaBin)),
-    llamaModel: String(modelRaw.llamaModel || process.env.MYKOS_LLAMA_CPP_MODEL || path.join(os.homedir(), ".ollama", "models", "blobs", "sha256-d372de8e934898a59e6ccfabc3368474711384d8f1fd4d22d87a3f0a45400cdc")),
+    llamaExe: String(modelRaw.llamaExe || process.env.MYKOS_LLAMA_CPP_EXE || (existsSync(defaultLlamaBin) ? defaultLlamaBin : path.join(os.homedir(), "llama.cpp", "build", "bin", defaultLlamaBin))),
+    llamaModel: String(modelRaw.llamaModel || process.env.MYKOS_LLAMA_CPP_MODEL || (existsSync(defaultLlamaModel) ? defaultLlamaModel : path.join(os.homedir(), ".ollama", "models", "blobs", "sha256-d372de8e934898a59e6ccfabc3368474711384d8f1fd4d22d87a3f0a45400cdc"))),
     llamaContext: Number(modelRaw.llamaContext || process.env.MYKOS_LLAMA_CPP_CONTEXT || 32768),
     llamaStartTimeoutMs: Number(modelRaw.llamaStartTimeoutMs || 120000),
   };
@@ -811,7 +814,7 @@ function resolveConfig(api) {
       MYKOS_BACKEND_ONLY: "1",
       MYKOS_WORKER_GUARD: "1", // el trabajador exige el token del Gateway en todo /api/* (menos /api/health)
       MYKOS_GATEWAY_CHAT_LOOP: chatLoopEnabled ? "1" : "0", // el bucle del modelo local lo ejecuta el Gateway (chat-loop.js)
-      MYKOS_WHISPER_MODEL: String(raw.whisperModel || process.env.MYKOS_WHISPER_MODEL || "large-v3-turbo"), // modelo Whisper local para transcripción de voz
+      MYKOS_WHISPER_MODEL: String(raw.whisperModel || process.env.MYKOS_WHISPER_MODEL || "small"), // modelo Whisper local para transcripción de voz
       MYKOS_PARENT_PID: String(process.pid),
       ...(b.env && typeof b.env === "object" ? b.env : {}),
     });
@@ -936,6 +939,43 @@ function persistVoiceMode(configFile, mode, cfg, logger) {
   }
 }
 
+function loadModelPreset(modelKey) {
+  const iniPath = path.join(os.homedir(), "models", "models.ini");
+  let ngl = 20;
+  let ctx = 32768;
+  let reasoning = "off";
+  if (existsSync(iniPath)) {
+    try {
+      const raw = readFileSync(iniPath, "utf8");
+      let currentSection = "";
+      const sections = {};
+      for (const line of raw.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(";")) continue;
+        const secMatch = trimmed.match(/^\[(.*)\]$/);
+        if (secMatch) {
+          currentSection = secMatch[1].trim();
+          sections[currentSection] = {};
+          continue;
+        }
+        const kvMatch = trimmed.match(/^([^=]+)=(.*)$/);
+        if (kvMatch && currentSection) {
+          sections[currentSection][kvMatch[1].trim()] = kvMatch[2].trim();
+        }
+      }
+      let key = String(modelKey || "").trim();
+      if (key.startsWith("llama_cpp/")) key = key.slice("llama_cpp/".length);
+      if (key.startsWith("llamacpp/")) key = key.slice("llamacpp/".length);
+      const lowerKey = key.toLowerCase();
+      const sec = sections[key] || sections[lowerKey] || sections["default"] || {};
+      if (sec["n-gpu-layers"] || sec["ngl"]) ngl = parseInt(sec["n-gpu-layers"] || sec["ngl"], 10);
+      if (sec["ctx-size"] || sec["c"]) ctx = parseInt(sec["ctx-size"] || sec["c"], 10);
+      if (sec["reasoning"]) reasoning = sec["reasoning"].trim().toLowerCase();
+    } catch {}
+  }
+  return { ngl, ctx, reasoning };
+}
+
 class ModelController {
   constructor(config, logger) {
     this.config = config;
@@ -953,48 +993,110 @@ class ModelController {
     return result.body;
   }
 
-  async probeLlama() {
+  async probeLlama(modelKey) {
     const result = await probeJson(`${this.config.llamaUrl}/health`, 1_500);
-    return result?.json?.status === "ok" || result?.json?.status === "loading model";
+    const ok = result?.json?.status === "ok" || result?.json?.status === "loading model";
+    if (!ok) return false;
+    if (!modelKey) return true;
+    try {
+      const modelsRes = await probeJson(`${this.config.llamaUrl}/v1/models`, 2_000);
+      const loaded = modelsRes?.json?.data?.[0]?.id || "";
+      let cleanKey = String(modelKey || "").trim();
+      if (cleanKey.startsWith("llama_cpp/")) cleanKey = cleanKey.slice("llama_cpp/".length);
+      if (cleanKey.startsWith("llamacpp/")) cleanKey = cleanKey.slice("llamacpp/".length);
+      if (loaded && (loaded.toLowerCase() === cleanKey.toLowerCase() || loaded.toLowerCase().endsWith(`/${cleanKey.toLowerCase()}`))) {
+        return true;
+      }
+      return false;
+    } catch {
+      return true;
+    }
   }
 
-  async ensureLlama() {
-    if (await this.probeLlama()) return;
+  async ensureLlama(modelKey) {
+    if (await this.probeLlama(modelKey)) return;
     if (this.starting) return this.starting;
     this.starting = (async () => {
-      if (await this.probeLlama()) return;
+      if (await this.probeLlama(modelKey)) return;
+      await this.stopLlama();
+      await this.unloadOllama();
+
+      let targetModel = this.config.llamaModel;
+      let cleanKey = String(modelKey || "").trim();
+      if (cleanKey.startsWith("llama_cpp/")) cleanKey = cleanKey.slice("llama_cpp/".length);
+      if (cleanKey.startsWith("llamacpp/")) cleanKey = cleanKey.slice("llamacpp/".length);
+      if (cleanKey === "mykos-cuda") cleanKey = "qwen2.5-7b";
+
+      if (cleanKey) {
+        const candidate = path.join(os.homedir(), "models", `${cleanKey}.gguf`);
+        if (existsSync(candidate)) {
+          targetModel = candidate;
+        } else {
+          try {
+            const files = readdirSync(path.join(os.homedir(), "models"));
+            const match = files.find((f) => f.toLowerCase() === `${cleanKey.toLowerCase()}.gguf`);
+            if (match) targetModel = path.join(os.homedir(), "models", match);
+          } catch {}
+        }
+      }
+
       try {
         statSync(this.config.llamaExe);
-        statSync(this.config.llamaModel);
+        statSync(targetModel);
       } catch (error) {
         throw new Error(`El motor llama.cpp no está configurado: ${error.message}`);
       }
+
       const target = new URL(this.config.llamaUrl);
+      const preset = loadModelPreset(cleanKey);
       const args = [
-        "-m", this.config.llamaModel,
-        "-c", String(this.config.llamaContext),
+        "-m", targetModel,
+        "-c", String(preset.ctx || this.config.llamaContext || 32768),
         "-n", "8192",
-        "-ngl", "20",
+        "-ngl", String(preset.ngl ?? 20),
+        "-np", "1",
         "-fa", "auto",
-        "--reasoning", "auto",
         "--no-webui",
         "--host", target.hostname || "127.0.0.1",
         "--port", String(target.port || 8091),
+        "--alias", cleanKey || "qwen2.5-7b",
       ];
+      if (preset.reasoning && ["off", "on", "auto"].includes(preset.reasoning)) {
+        args.push("--reasoning", preset.reasoning);
+      }
+
+      const env = { ...process.env };
+      const cudaPaths = [
+        path.join(os.homedir(), ".local", "llama-quick", "llama-b12211"),
+        "/usr/local/lib/ollama/cuda_v12",
+        "/usr/local/cuda/lib64",
+      ].filter((p) => { try { return statSync(p).isDirectory(); } catch { return false; } });
+      if (cudaPaths.length) {
+        env.LD_LIBRARY_PATH = cudaPaths.join(":") + (env.LD_LIBRARY_PATH ? `:${env.LD_LIBRARY_PATH}` : "");
+      }
+
       const child = spawn(this.config.llamaExe, args, {
         cwd: path.dirname(this.config.llamaExe),
         stdio: "ignore",
         windowsHide: true,
+        env,
       });
       this.child = child;
       child.once("exit", () => {
         if (this.child === child) this.child = null;
       });
+
+      try {
+        const pidFile = path.join(os.homedir(), ".mykos", "gateway-state", "llama-server.pid");
+        mkdirSync(path.dirname(pidFile), { recursive: true });
+        writeFileSync(pidFile, JSON.stringify({ pid: child.pid, starttime: Date.now() }), "utf8");
+      } catch {}
+
       try {
         const deadline = Date.now() + this.config.llamaStartTimeoutMs;
         while (Date.now() < deadline) {
           if (child.exitCode !== null) throw new Error(`llama.cpp terminó al arrancar (código ${child.exitCode}).`);
-          if (await this.probeLlama()) return;
+          if (await this.probeLlama(modelKey)) return;
           await sleep(500);
         }
         throw new Error("llama.cpp tardó demasiado en cargar el modelo CUDA.");
@@ -1015,6 +1117,22 @@ class ModelController {
     const child = this.child;
     this.child = null;
     if (child && child.exitCode === null) killTree(child.pid);
+    try {
+      const pidFile = path.join(os.homedir(), ".mykos", "gateway-state", "llama-server.pid");
+      if (existsSync(pidFile)) {
+        const raw = readFileSync(pidFile, "utf8").trim();
+        let pid = 0;
+        if (raw.startsWith("{")) {
+          pid = JSON.parse(raw).pid;
+        } else if (raw) {
+          pid = parseInt(raw, 10);
+        }
+        if (pid && pid > 0) {
+          try { process.kill(pid, "SIGTERM"); } catch {}
+        }
+        unlinkSync(pidFile);
+      }
+    } catch {}
   }
 
   async unloadOllama() {
@@ -1046,7 +1164,7 @@ class ModelController {
 
   async request(provider, payload) {
     if (provider === "llama_cpp") {
-      await this.ensureLlama();
+      await this.ensureLlama(payload?.model);
       return this.upstream(this.config.llamaUrl, payload);
     }
     if (provider === "strata") {
@@ -3248,7 +3366,7 @@ export default {
               });
               const toolMsg = toolMessageForResult(actionResult, Boolean(record.supports_vision), String(record.tool_name || action.kind || ""));
               const lastMsg = messages.at(-1);
-              if ((model === "mykos-cuda" || model.startsWith("strata/")) && Array.isArray(lastMsg?.tool_calls) && lastMsg.tool_calls[0]?.id) {
+              if ((model === "mykos-cuda" || model.startsWith("llama_cpp/") || model.startsWith("llamacpp/") || model.startsWith("strata/")) && Array.isArray(lastMsg?.tool_calls) && lastMsg.tool_calls[0]?.id) {
                 toolMsg.tool_call_id = String(lastMsg.tool_calls[0].id);
               }
               messages.push(toolMsg);

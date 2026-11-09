@@ -1,0 +1,50 @@
+# ==============================================================================
+# MyKOS — Presets de Modelos GGUF para llama.cpp 0.9 (llama-server)
+# Ubicación en runtime: ~/models/models.ini
+# ==============================================================================
+
+[default]
+reasoning = off
+reasoning-budget = 0
+ctx-size = 32768
+n-gpu-layers = 16
+
+[GLM-4.7-Flash]
+n-gpu-layers = 16
+ctx-size = 32768
+reasoning = off
+
+[glm-4.7-flash]
+n-gpu-layers = 16
+ctx-size = 32768
+reasoning = off
+
+[qwen3.5-0.8b]
+n-gpu-layers = 99
+ctx-size = 32768
+reasoning = off
+
+[qwen3.6-35b]
+n-gpu-layers = 6
+ctx-size = 32768
+reasoning = off
+
+[qwen3.8-35b-empero]
+n-gpu-layers = 6
+ctx-size = 32768
+reasoning = off
+
+[nemotron-3.5-bolt-74b]
+n-gpu-layers = 6
+ctx-size = 32768
+reasoning = off
+
+[qwen2.5-7b]
+n-gpu-layers = 22
+ctx-size = 32768
+reasoning = off
+
+[qwen3.8-27b-nvfp4]
+n-gpu-layers = 12
+ctx-size = 32768
+reasoning = off

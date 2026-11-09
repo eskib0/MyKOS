@@ -127,6 +127,13 @@ const input = (over = {}) => ({
     check("la herramienta de lectura la ejecuta el trabajador y se anota en tools_used", log.tools.length === 1 && log.tools[0].name === "read_project_file" && r.tools_used.join() === "read_project_file" && r.message.content === "Listo");
   }
 
+  // 3b. llama.cpp dinámico con prefijo llama_cpp/
+  {
+    const { deps, log } = harness({ script: [llamaText("Respuesta de Qwen 2.5")] });
+    const r = await runChatLoop(input({ model: "llama_cpp/qwen2.5-7b" }), deps);
+    check("llama.cpp dinámico: proveedor llama_cpp y modelo limpio sin prefijo", log.model[0].provider === "llama_cpp" && log.model[0].payload.model === "qwen2.5-7b" && r.message.content === "Respuesta de Qwen 2.5");
+  }
+
   // 4. Acción sensible sin permiso: aprobación pendiente, nada se ejecuta
   {
     const { deps, log } = harness({ script: [ollamaCalls([call("run_powershell", { command: "dir" })], "Propongo listar")] });
