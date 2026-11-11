@@ -226,7 +226,7 @@ mykos analizador            # Abre Analizador MyKOS (mapa de disco y limpieza de
 
 ## 🔒 Privacidad y Seguridad
 
-- **Cero secretos en el repositorio:** Todas las credenciales se cifran localmente con `mykos-sealed-v1` (HMAC-SHA256 + clave maestra local con permisos `0600`) en `~/.mykos/gateway-state/mykos/credentials/`.
+- **Cero secretos en el repositorio:** Todas las credenciales se cifran localmente con `mykos-sealed-v1` (stream cipher HMAC-SHA256 en modo CTR + Encrypt-then-MAC con clave maestra local con permisos `0600`) en `~/.mykos/gateway-state/mykos/credentials/`.
 - **Aislamiento de red:** El Gateway y el trabajador Python escuchan exclusivamente en `127.0.0.1` y verifican `Host`, `Origin` y tokens internos en tiempo constante (`timingSafeEqual` / `hmac.compare_digest`).
 - **Terminal web desactivada por defecto:** El endpoint `/terminal` permanece bloqueado salvo que se habilite explícitamente con `MYKOS_ENABLE_WEB_TERMINAL=1`.
 - **Raíces autorizadas acotadas:** Las herramientas de ficheros solo pueden operar dentro de las carpetas declaradas en [`gateway/app/config/allowed_roots.json`](gateway/app/config/allowed_roots.json), bloqueando por código cualquier intento de registrar `/` como raíz.
@@ -236,7 +236,7 @@ mykos analizador            # Abre Analizador MyKOS (mapa de disco y limpieza de
 ## 🗺️ Roadmap de Seguridad y Deuda Técnica
 
 Puntos identificados durante las auditorías de endurecimiento para futuras iteraciones:
-1. **Migración del sellado de credenciales a AEAD:** Actualmente se utiliza el esquema `mykos-sealed-v1` (ofuscación por transposición + HMAC-SHA256). Se migrará a un esquema criptográfico estándar AEAD (como `AES-256-GCM` o `ChaCha20-Poly1305`) para garantizar confidencialidad e integridad autenticada formalmente.
+1. **Evolución del sellado de credenciales:** Actualmente se utiliza el esquema `mykos-sealed-v1` (stream cipher HMAC-SHA256 en modo CTR + autenticación Encrypt-then-MAC con nonce aleatorio de 128 bits y clave maestra local `0600`). Se contempla como evolución opcional estandarizar hacia un primitivo AEAD (`AES-256-GCM` o `ChaCha20-Poly1305`) e integración con el keyring del sistema operativo.
 2. **Endurecimiento frente a condiciones de carrera (TOCTOU):**
    - **Symlink TOCTOU:** Uso de `openat2(RESOLVE_NO_SYMLINKS)` / `dir_fd` con `O_NOFOLLOW` en Linux para evitar manipulación concurrente de enlaces simbólicos durante la escritura de archivos.
    - **DNS TOCTOU:** Fijación de la IP resuelta (*IP pinning*) en `web_fetch` y `browser.py` para eliminar la ventana de DNS rebinding entre la validación y la conexión HTTP.
