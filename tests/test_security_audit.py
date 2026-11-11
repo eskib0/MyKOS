@@ -26,6 +26,7 @@ if str(GATEWAY_APP) not in sys.path:
 from tools import (
     ToolError,
     _load_allowed_roots,
+    _redact_git_text,
     _resolve_project_path,
     analyze_action_risk,
 )
@@ -60,6 +61,12 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
         # mykos debe apuntar al directorio del proyecto o gateway
         mykos_root = next(r for r in roots if r["name"] == "mykos")
         self.assertTrue(Path(mykos_root["path"]).is_dir())
+
+    def test_git_url_redaction_preserves_endpoint_and_punctuation(self):
+        redacted = _redact_git_text("fatal: https://user:secret@example.com:8443/group/repo.git, authentication failed")
+        self.assertEqual(redacted, "fatal: https://example.com:8443/group/repo.git, authentication failed")
+        self.assertNotIn("user", redacted)
+        self.assertNotIn("secret", redacted)
 
     def test_risk_heuristics_detects_dangerous_commands(self):
         """Verifica que el analizador heurístico clasifique como 'critical' los comandos potencialmente destructivos."""
@@ -362,6 +369,26 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
         # El payload enviado a Ollama DEBE ser qwen2.5-coder:7b, sin el prefijo qwen-cli/
         call_payload = mock_ollama_request.call_args.args[1]
         self.assertEqual(call_payload["model"], "qwen2.5-coder:7b")
+
+    def test_benchmark_accepts_all_catalog_profiles(self):
+        import core.benchmark
+        from unittest.mock import MagicMock, patch
+
+        profiles = list(core.benchmark.BENCHMARK_PROFILES)
+        models = [{"name": "qwen3:4b", "remote": False, "provider": "ollama"}]
+        with patch.object(core.benchmark, "run_model_benchmark", side_effect=lambda model, selected, profile_id, **kwargs: {"profile": profile_id}):
+            result = core.benchmark.execute_benchmark_suite(
+                {"model": "qwen3:4b", "profiles": profiles},
+                get_models_fn=lambda: models,
+                available_chat_models_fn=lambda rows: rows,
+                choose_default_model_fn=lambda rows: rows[0]["name"],
+                normalise_settings_fn=lambda generation, selected: generation,
+                ollama_request_fn=MagicMock(),
+                llama_cpp_chat_fn=MagicMock(),
+                strata_chat_fn=MagicMock(),
+                utc_now_fn=lambda: "2026-11-06T22:00:00Z",
+            )
+        self.assertEqual([item["profile"] for item in result["results"]], profiles)
 
     def test_csv_formula_injection_neutralization(self):
         """Verifica que la función real del analizador neutralice inyección de fórmulas CSV (=, +, -, @)."""

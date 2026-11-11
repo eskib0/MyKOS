@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from .base import (
     GIT_LOCK,
@@ -305,10 +306,16 @@ def _redact_git_text(value: Any) -> str:
     text = str(value or "")
     for candidate in re.findall(r"https?://[^\s]+", text):
         try:
-            parsed = urlsplit(candidate.rstrip(".,);]"))
+            url = candidate.rstrip(".,);]")
+            trailing = candidate[len(url):]
+            parsed = urlsplit(url)
             if parsed.username or parsed.password:
-                safe = urlunsplit((parsed.scheme, parsed.hostname or "", parsed.path, parsed.query, parsed.fragment))
-                text = text.replace(candidate, safe)
+                hostname = parsed.hostname or ""
+                netloc = f"[{hostname}]" if ":" in hostname else hostname
+                if parsed.port is not None:
+                    netloc = f"{netloc}:{parsed.port}"
+                safe = urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+                text = text.replace(candidate, safe + trailing)
         except ValueError:
             continue
     text = re.sub(r"(https?://)([^\s/@:]+):([^\s/@]+)@", r"\1***:***@", text)

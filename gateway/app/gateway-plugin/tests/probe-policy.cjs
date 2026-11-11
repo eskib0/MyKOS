@@ -34,6 +34,7 @@ const check = (name, ok, detail = "") => results.push({ name, ok: Boolean(ok), d
 
   // 1. Benchmark
   check("benchmark: modelo y perfiles válidos se aceptan", okBody("POST", "/api/benchmark", { model: "qwen3:14b", profiles: ["fast", "deep"] }), reasonOf(jsonVerdict("POST", "/api/benchmark", { model: "qwen3:14b", profiles: ["fast", "deep"] })));
+  check("benchmark: los seis perfiles del catálogo se aceptan", okBody("POST", "/api/benchmark", { model: "qwen3:14b", profiles: ["fast", "balanced", "deep", "full", "coding", "quality"] }), "");
   check("benchmark: solo el modelo (sin perfiles) se acepta", okBody("POST", "/api/benchmark", { model: "llama3.1:8b-instruct-q4_K_M" }), "");
   const benchDenials = [
     ["sin modelo", {}, "missing_field"],
@@ -41,7 +42,7 @@ const check = (name, ok, detail = "") => results.push({ name, ok: Boolean(ok), d
     ["modelo con espacios y comillas", { model: 'qwen3 "; rm -rf' }, "bad_format"],
     ["modelo que no es texto", { model: 12 }, "bad_type"],
     ["perfil inventado", { model: "a", profiles: ["turbo"] }, "bad_value"],
-    ["cinco perfiles", { model: "a", profiles: ["fast", "deep", "balanced", "fast", "deep"] }, "too_many"],
+    ["siete perfiles", { model: "a", profiles: ["fast", "balanced", "deep", "full", "coding", "quality", "fast"] }, "too_many"],
     ["perfiles que no son lista", { model: "a", profiles: "fast" }, "bad_type"],
     ["campo desconocido", { model: "a", prompt: "hola" }, "unknown_field"],
     ["cuerpo que es una lista", [{ model: "a" }], "bad_json"],

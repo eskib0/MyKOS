@@ -17,13 +17,23 @@ BENCHMARK_PROFILES = {
     },
     "balanced": {
         "label": "Equilibrado",
-        "description": "Contexto medio para tareas cotidianas.",
+        "description": "Punto de referencia para el uso diario.",
         "generation": {"effort": "off", "speed": "balanced", "creativity": "balanced"},
+    },
+    "deep": {
+        "label": "Profundo",
+        "description": "Más contexto y razonamiento cuando el modelo lo admite.",
+        "generation": {"effort": "high", "speed": "quality", "creativity": "precise"},
+    },
+    "full": {
+        "label": "Full Session · 131K",
+        "description": "Contexto máximo configurado; puede consumir bastante memoria.",
+        "generation": {"effort": "high", "speed": "full", "creativity": "precise"},
     },
     "coding": {
         "label": "Código",
         "description": "Instrucción técnica con algo más de contexto.",
-        "generation": {"effort": "off", "speed": "coding", "creativity": "precise"},
+        "generation": {"effort": "off", "speed": "quality", "creativity": "precise"},
     },
     "quality": {
         "label": "Calidad",
@@ -243,8 +253,8 @@ def execute_benchmark_suite(
     profile_ids = list(dict.fromkeys(profile_ids))
     if not profile_ids:
         raise ApiError("Selecciona al menos un perfil de rendimiento.")
-    if len(profile_ids) > 4:
-        raise ApiError("El benchmark admite como máximo cuatro perfiles.")
+    if len(profile_ids) > len(BENCHMARK_PROFILES):
+        raise ApiError(f"El benchmark admite como máximo {len(BENCHMARK_PROFILES)} perfiles.")
     unknown = [profile_id for profile_id in profile_ids if profile_id not in BENCHMARK_PROFILES]
     if unknown:
         raise ApiError(f"Perfil de rendimiento no válido: {', '.join(unknown)}.")

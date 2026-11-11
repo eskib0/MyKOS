@@ -49,7 +49,7 @@ export const POLICY_TABLE = [
     limits: { concurrent: 1, perMinute: 12 },
     fields: {
       model: { type: "string", required: true, pattern: MODEL_RE, max: 120 },
-      profiles: { type: "array", maxItems: 4, items: { type: "string", enum: ["fast", "balanced", "deep"] } },
+      profiles: { type: "array", maxItems: 6, items: { type: "string", enum: ["fast", "balanced", "deep", "full", "coding", "quality"] } },
     },
   },
   {

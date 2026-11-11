@@ -52,7 +52,7 @@ chmod +x /opt/mykos/bin/mykos /opt/mykos/gateway/runtime/mykos-gateway.mjs
 ln -sf /opt/mykos/bin/mykos /usr/bin/mykos
 
 mkdir -p /opt/mykos/gateway/app/data/uploads /opt/mykos/gateway/app/data/media
-chmod -R 1777 /opt/mykos/gateway/app/data || true
+chmod -R go-rwx /opt/mykos/gateway/app/data
 
 # Asegurar Node.js >= 20 en /opt/mykos/runtime/node si el sistema no lo tiene o es antiguo
 NEED_NODE=1

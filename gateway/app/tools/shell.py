@@ -296,11 +296,25 @@ def analyze_action_risk(action: dict[str, Any]) -> tuple[str, str]:
 
     if kind in {"write_file", "edit_file", "write_project_file", "edit_project_file"}:
         root = str(action.get("root", "")).strip()
-        path = str(action.get("path", "")).strip().lower()
+        path = str(action.get("path", "")).strip().lower().replace("\\", "/")
         if root == "mykos":
-            core_files = {"server.py", "policy.js", "routes.js", "permissions.py", "index.js", "tools.py"}
-            if any(path.endswith(cf) for cf in core_files):
-                return "critical", f"Modificación directa de la infraestructura crítica de MyKOS ({path})"
+            core_files = {
+                "server.py", "policy.js", "routes.js", "permissions.py", "permissions.js",
+                "index.js", "tools.py", "chat-loop.js", "store.js", "allowed_roots.json",
+                "mykos-gateway.mjs", "install.sh", "install.ps1", "mykos", "mykos.ps1",
+            }
+            core_prefixes = (
+                "tools/", "core/", "config/", "gateway-plugin/", "runtime/", "bin/", "packaging/",
+                "gateway/app/tools/", "gateway/app/core/", "gateway/app/config/",
+                "gateway/app/gateway-plugin/", "gateway/runtime/",
+            )
+            code_exts = (".py", ".js", ".mjs", ".cjs", ".sh", ".ps1", ".cmd", ".vbs", ".iss")
+            if (
+                any(path == cf or path.endswith(f"/{cf}") for cf in core_files)
+                or any(path.startswith(pref) or f"/{pref}" in path for pref in core_prefixes)
+                or path.endswith(code_exts)
+            ):
+                return "critical", f"Modificación directa de la infraestructura crítica o seguridad de MyKOS ({path})"
             return "warning", f"Escritura en el repositorio de código fuente de MyKOS ({path})"
         return "normal", ""
 

@@ -347,10 +347,15 @@ function Invoke-MykosTest {
         foreach ($t in @("probe-routes.cjs", "probe-policy.cjs", "probe-store.cjs", "probe-realtime-controller.cjs", "probe-gemini-live-tools.cjs")) {
             Write-Host "── $t ──"
             & node $t | Select-Object -Last 3
+            if ($LASTEXITCODE -ne 0) { throw "Falló $t (código $LASTEXITCODE)." }
         }
         Write-Host "── test_antigravity_safety.py ──"
         $pyExe = Get-MykosPython
         & $pyExe test_antigravity_safety.py
+        if ($LASTEXITCODE -ne 0) { throw "Falló test_antigravity_safety.py (código $LASTEXITCODE)." }
+        Write-Host "── test_security_audit.py ──"
+        & $pyExe (Join-Path $MykosRoot "tests\test_security_audit.py")
+        if ($LASTEXITCODE -ne 0) { throw "Falló test_security_audit.py (código $LASTEXITCODE)." }
     } finally {
         Pop-Location
     }
