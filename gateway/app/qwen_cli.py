@@ -69,9 +69,21 @@ def qwen_executable_path() -> str:
 
 
 def setup_safe_environment() -> None:
-    """Crea o sincroniza el perfil seguro de Qwen desactivando herramientas peligrosas."""
+    """Crea o sincroniza el perfil seguro de Qwen desactivando herramientas peligrosas y sincronizando credenciales."""
     SAFE_SETTINGS.parent.mkdir(parents=True, exist_ok=True)
-    user_settings_file = Path.home() / ".qwen" / "settings.json"
+    user_qwen_dir = Path.home() / ".qwen"
+    user_settings_file = user_qwen_dir / "settings.json"
+    user_cred_file = user_qwen_dir / "subscription_credentials.json"
+    safe_cred_file = SAFE_SETTINGS.parent / "subscription_credentials.json"
+
+    # Sincronizar credenciales de suscripción oficial de Qwen Plus si existen
+    if user_cred_file.is_file():
+        try:
+            safe_cred_file.write_bytes(user_cred_file.read_bytes())
+            os.chmod(safe_cred_file, 0o600)
+        except OSError:
+            pass
+
     safe_data: dict[str, Any] = {
         "$version": 4,
         "permissions": {
@@ -91,6 +103,14 @@ def setup_safe_environment() -> None:
                         safe_data[key] = user_data[key]
         except (OSError, ValueError, TypeError):
             pass
+
+    # Aseguramos que si existe suscripción, selectedType sea qwen-subscription
+    if safe_cred_file.is_file():
+        sec = safe_data.setdefault("security", {})
+        if isinstance(sec, dict):
+            auth = sec.setdefault("auth", {})
+            if isinstance(auth, dict):
+                auth["selectedType"] = "qwen-subscription"
 
     # Aseguramos que DENIED_TOOLS y permisos restrictivos se apliquen siempre
     tools_block = safe_data.setdefault("tools", {})
@@ -113,7 +133,29 @@ def setup_safe_environment() -> None:
 
 def ensure_chat_safe() -> None:
     """Falla cerrado si el perfil de Qwen no desactiva todas las herramientas autónomas."""
-    if not SAFE_SETTINGS.is_file():
+    user_settings_file = Path.home() / ".qwen" / "settings.json"
+    user_cred_file = Path.home() / ".qwen" / "subscription_credentials.json"
+    safe_cred_file = SAFE_SETTINGS.parent / "subscription_credentials.json"
+
+    # Forzar sincronización si SAFE_SETTINGS no existe, o si las credenciales de usuario cambiaron
+    need_sync = not SAFE_SETTINGS.is_file()
+    if not need_sync and user_settings_file.is_file():
+        try:
+            if user_settings_file.stat().st_mtime > SAFE_SETTINGS.stat().st_mtime:
+                need_sync = True
+        except OSError:
+            pass
+    if not need_sync and user_cred_file.is_file():
+        if not safe_cred_file.is_file():
+            need_sync = True
+        else:
+            try:
+                if user_cred_file.stat().st_mtime > safe_cred_file.stat().st_mtime:
+                    need_sync = True
+            except OSError:
+                pass
+
+    if need_sync:
         setup_safe_environment()
     try:
         settings = json.loads(SAFE_SETTINGS.read_text(encoding="utf-8"))
@@ -293,47 +335,77 @@ def _discover_qwen_models() -> list[dict[str, Any]]:
     })
     seen.add("qwen-code-default")
 
-    # 2. Modelo activo en ~/.qwen/settings.json
+    # 2. Modelo activo en ~/.qwen/settings.json (solo si no es local/Ollama)
     try:
         user_cfg = Path.home() / ".qwen" / "settings.json"
         if user_cfg.is_file():
             data = json.loads(user_cfg.read_text(encoding="utf-8"))
             active_model = str(data.get("model", {}).get("name", "")).strip()
-            if active_model and active_model not in seen:
+            if active_model and active_model not in seen and not _is_known_ollama_model(active_model):
                 family = "Qwen Coder" if "coder" in active_model.lower() else "Qwen"
                 active_endpoint, is_active_local = _get_qwen_configured_endpoint(active_model)
-                discovered.append({
-                    "id": active_model,
-                    "label": f"Qwen Code · {active_model}",
-                    "family": family,
-                    "remote": not is_active_local,
-                    "remote_host": "local (Ollama / endpoint local)" if is_active_local else (active_endpoint or default_host),
-                    "provider_label": "Qwen Code · Local" if is_active_local else "Qwen Code · Remoto",
-                    "auth_method": "CLI Qwen Code local" if is_active_local else default_auth,
-                    "is_ollama": False,
-                })
-                seen.add(active_model)
+                if not is_active_local:
+                    discovered.append({
+                        "id": active_model,
+                        "label": f"Qwen Code · {active_model}",
+                        "family": family,
+                        "remote": True,
+                        "remote_host": active_endpoint or default_host,
+                        "provider_label": "Qwen Code · Remoto",
+                        "auth_method": default_auth,
+                        "is_ollama": False,
+                    })
+                    seen.add(active_model)
     except Exception:
         pass
 
-    # 3. Modelos locales instalados en Ollama
-    ollama_models = _get_ollama_model_names()
-    for name in ollama_models:
-        if "qwen" in name.lower() and name not in seen:
-            family = "Qwen Coder" if "coder" in name.lower() else "Qwen"
-            discovered.append({
-                "id": name,
-                "label": f"Qwen · {name} (Ollama)",
-                "family": family,
-                "remote": False,
-                "remote_host": "local (Ollama / 127.0.0.1:11434)",
-                "provider_label": "Qwen Code · Local (Ollama)",
-                "auth_method": "Ollama local",
-                "is_ollama": True,
-            })
-            seen.add(name)
+    # 3. Modelos de suscripción oficial (Qwen Plus / chat.qwen.ai)
+    sub_file = Path.home() / ".qwen" / "subscription_credentials.json"
+    safe_sub_file = SAFE_SETTINGS.parent / "subscription_credentials.json"
+    sub_to_check = sub_file if sub_file.is_file() else safe_sub_file
+    if sub_to_check.is_file():
+        try:
+            sub_data = json.loads(sub_to_check.read_text(encoding="utf-8"))
+            if sub_data.get("tokens") or sub_data.get("models"):
+                for s_id in sub_data.get("models", []):
+                    s_id = str(s_id).strip()
+                    if s_id and s_id not in seen:
+                        s_fam = "Qwen Coder" if "coder" in s_id.lower() else "Qwen"
+                        discovered.append({
+                            "id": s_id,
+                            "label": f"Qwen · {s_id} (Plus)",
+                            "family": s_fam,
+                            "remote": True,
+                            "remote_host": "api.qwen.ai (Qwen Plus)",
+                            "provider_label": "Qwen Code · Plus (Suscripción)",
+                            "auth_method": "Suscripción Oficial Qwen Plus (chat.qwen.ai)",
+                            "is_ollama": False,
+                        })
+                        seen.add(s_id)
+                plus_catalog = [
+                    ("qwen3.8-max", "Qwen 3.8 Max · Nube (Plus)", "Qwen"),
+                    ("qwen3.8-flash", "Qwen 3.8 Flash · Nube (Plus)", "Qwen"),
+                    ("qwen-plus", "Qwen Plus · Nube (chat.qwen.ai)", "Qwen"),
+                    ("qwen-turbo", "Qwen Turbo · Nube (chat.qwen.ai)", "Qwen"),
+                    ("qwen-max", "Qwen Max · Nube (chat.qwen.ai)", "Qwen"),
+                ]
+                for p_id, p_label, p_fam in plus_catalog:
+                    if p_id not in seen:
+                        discovered.append({
+                            "id": p_id,
+                            "label": p_label,
+                            "family": p_fam,
+                            "remote": True,
+                            "remote_host": "api.qwen.ai (Qwen Plus)",
+                            "provider_label": "Qwen Code · Plus (Suscripción)",
+                            "auth_method": "Suscripción Oficial Qwen Plus (chat.qwen.ai)",
+                            "is_ollama": False,
+                        })
+                        seen.add(p_id)
+        except Exception:
+            pass
 
-    # 4. Modelos de nube solo si se dispone de clave de DashScope / Alibaba
+    # 5. Modelos de nube solo si se dispone de clave de DashScope / Alibaba
     has_dashscope = bool(
         os.environ.get("DASHSCOPE_API_KEY", "").strip()
         or os.environ.get("BAILIAN_CODING_PLAN_API_KEY", "").strip()
@@ -495,6 +567,8 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "") -> dict[s
         command.extend(["--openai-base-url", endpoint_url, "--auth-type", "openai"])
         child_environment["OPENAI_BASE_URL"] = endpoint_url
         child_environment.setdefault("OPENAI_API_KEY", "local")
+    elif (SAFE_SETTINGS.parent / "subscription_credentials.json").is_file():
+        command.extend(["--auth-type", "qwen-subscription"])
 
     command.extend(["-p", prompt])
 
