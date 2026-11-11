@@ -1051,6 +1051,41 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
             # Debe programarse en el siguiente múltiplo exacto de 1 minuto
             self.assertLessEqual(new_run_at, now + timedelta(minutes=1))
 
+    def test_transcription_does_not_log_spoken_text(self):
+        """Verifica que el texto transcrito del micrófono no se imprima en stdout ni logs."""
+        import server
+        import io
+        import contextlib
+        from unittest.mock import patch
+
+        secret = "PALABRA_SECRETA_DICTADA_12345"
+        boundary = "----MyKOSAuditBoundary"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="mic.webm"\r\n'
+            "Content-Type: audio/webm\r\n\r\n"
+            "AUDIOBYTES\r\n"
+            f"--{boundary}--\r\n"
+        ).encode("latin-1")
+
+        handler = server.MyKOSHandler.__new__(server.MyKOSHandler)
+        handler.headers = {
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Content-Length": str(len(body)),
+        }
+        handler.rfile = io.BytesIO(body)
+        handler.send_json = lambda payload, status=200: None
+
+        buf = io.StringIO()
+        with patch.object(server, "transcribe_audio_file", return_value={"text": secret, "language": "es"}), \
+             contextlib.redirect_stdout(buf):
+            handler.handle_transcription()
+
+        logged = buf.getvalue()
+        self.assertNotIn(secret, logged)
+        self.assertIn("[transcribe]", logged)
+        self.assertIn(f"texto={len(secret)} car.", logged)
+
 
 if __name__ == "__main__":
     unittest.main()

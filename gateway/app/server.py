@@ -4060,7 +4060,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 handle.write(data)
                 temporary_path = Path(handle.name)
             result = transcribe_audio_file(temporary_path)
-            print(f"[transcribe] audio={len(data)} bytes ({suffix}) -> texto={len(str(result.get('text', '')))} car. ('{result.get('text', '')}')", flush=True)
+            print(f"[transcribe] audio={len(data)} bytes ({suffix}) -> texto={len(str(result.get('text', '')))} car.", flush=True)
             self.send_json(result)
         except MediaError as error:
             raise ApiError(str(error)) from error
