@@ -1871,14 +1871,8 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
             "con herramientas. No le des comandos para que haga él una acción que te ha pedido ejecutar."
         )
     elif provider == "qwen_cli":
-        processing_scope = "remoto a través de Qwen Code CLI con el perfil seguro de MyKOS"
-        provider_note = (
-            "LÍMITE DEL PROVEEDOR: en esta petición Qwen Code CLI solo admite conversación de texto y "
-            "no recibe herramientas de MyKOS. No declares que vas a ejecutar, abrir, guardar, buscar, ni solicitar "
-            "aprobación para una herramienta: no podrías invocarla. Si Usuario pide una acción sobre el equipo o archivos, "
-            "di con claridad y brevedad que este proveedor concreto no puede ejecutarla y que debe elegir un modelo de MyKOS "
-            "con herramientas. No le des comandos para que haga él una acción que te ha pedido ejecutar."
-        )
+        processing_scope = "remoto a través de Qwen Code CLI con herramientas autónomas activas y suscripción oficial Qwen Plus"
+        provider_note = ""
     else:
         processing_scope = "remoto a través de Ollama" if selected_model.get("remote") else "local en este equipo"
         provider_note = ""
@@ -2568,6 +2562,24 @@ def run_antigravity_until_result(
             "usage": result.get("usage", {}), "duration_seconds": result.get("duration_seconds")}
 
 
+def qwen_prompt_from_messages(messages: list[dict[str, Any]], workspace_dir: str = "") -> str:
+    blocks: list[str] = []
+    for message in messages:
+        role = str(message.get("role", "mensaje")).strip().upper()
+        content = str(message.get("content", "")).strip() or "(sin texto)"
+        blocks.append(f"<{role}>\n{content}\n</{role}>")
+    workspace_info = f"\nDirectorio de trabajo activo: {workspace_dir}" if workspace_dir else ""
+    return (
+        "Eres MyKOS operando con el motor Qwen Code CLI y la suscripción oficial Qwen Plus.\n"
+        "Dispones de herramientas nativas de programación, inspección y edición de archivos, búsqueda (glob/grep) y comandos.\n"
+        "Cuando el usuario te solicite una acción técnica, utiliza tus herramientas directamente para resolverla."
+        f"{workspace_info}\n\n"
+        "HISTORIAL DE LA CONVERSACIÓN:\n"
+        + "\n\n".join(blocks)
+        + "\n\nResponde ahora al último mensaje del usuario utilizando las herramientas necesarias si aplica."
+    )
+
+
 def run_qwen_until_result(
     model: str,
     messages: list[dict[str, Any]],
@@ -2581,18 +2593,20 @@ def run_qwen_until_result(
     if supports_vision or has_message_images(messages):
         raise RuntimeError("Qwen Code CLI en MyKOS solo admite texto por ahora.")
     from qwen_cli import ask_qwen
-    update_activity(activity_id, status="working", phase="model", label="Trabajando…", detail=f"{model} · Qwen Code CLI.")
-    prompt = openrouter_prompt_from_messages(messages[-12:])
-    if len(prompt) > 12000:
-        prompt = prompt[-12000:]
-    result = ask_qwen(prompt, timeout_seconds=90, model=model.removeprefix("qwen-cli/"))
+    update_activity(activity_id, status="working", phase="model", label="Trabajando…", detail=f"{model} · Qwen Code CLI con herramientas.")
+    workspace_dir = next((r['path'] for r in allowed_root_catalog() if r.get('name') == 'mykos'), str(Path(__file__).resolve().parent.parent.parent))
+    prompt = qwen_prompt_from_messages(messages[-16:], workspace_dir=workspace_dir)
+    result = ask_qwen(prompt, timeout_seconds=120, model=model.removeprefix("qwen-cli/"), cwd=workspace_dir)
     content = str(result.get("response", "")).strip()
     if not content:
         raise RuntimeError("Qwen Code CLI no devolvió texto.")
+    tools_used = result.get("tools_used", [])
     assistant_message = {"role": "assistant", "model": model, "content": content, "created_at": utc_now()}
+    if tools_used:
+        assistant_message["tools_used"] = tools_used
     save_assistant_message(conversation_id, assistant_message)
-    return {"message": assistant_message, "tools_used": [], "sources": [], "done": True,
-            "usage": result.get("usage", {}), "duration_seconds": result.get("duration_seconds")}
+    return {"message": assistant_message, "tools_used": tools_used, "sources": [], "done": True,
+            "usage": result.get("usage", {}), "duration_seconds": result.get("duration_seconds", 0.0)}
 
 
 def run_nvidia_until_result(

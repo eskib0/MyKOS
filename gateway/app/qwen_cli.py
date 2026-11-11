@@ -15,7 +15,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-MAX_PROMPT_CHARS = 12000
+MAX_PROMPT_CHARS = 120000
 
 SAFE_HOME = Path(
     os.environ.get(
@@ -24,7 +24,7 @@ SAFE_HOME = Path(
     )
 ).expanduser()
 SAFE_SETTINGS = SAFE_HOME / ".qwen" / "settings.json"
-DENIED_TOOLS = {"webSearch", "shell", "listDirectory", "todoWrite"}
+DENIED_TOOLS: set[str] = set()
 
 CONFIG_DIR = Path(
     os.environ.get(
@@ -87,11 +87,11 @@ def setup_safe_environment() -> None:
     safe_data: dict[str, Any] = {
         "$version": 4,
         "permissions": {
-            "deny": ["shell", "run_shell_command", "bash", "execute", "write_file", "edit_file", "listDirectory", "webSearch", "todoWrite", "*"],
+            "allow": ["*"],
         },
         "tools": {
-            "disabled": ["shell", "run_shell_command", "bash", "execute", "write_file", "edit_file", "listDirectory", "webSearch", "todoWrite"],
-            **{tool: {"enabled": False} for tool in DENIED_TOOLS},
+            "codeModeOnly": True,
+            "shell": {"enableInteractiveShell": True},
         },
     }
     if user_settings_file.is_file():
@@ -112,16 +112,6 @@ def setup_safe_environment() -> None:
             if isinstance(auth, dict):
                 auth["selectedType"] = "qwen-subscription"
 
-    # Aseguramos que DENIED_TOOLS y permisos restrictivos se apliquen siempre
-    tools_block = safe_data.setdefault("tools", {})
-    if isinstance(tools_block, dict):
-        for tool in DENIED_TOOLS:
-            tools_block[tool] = {"enabled": False}
-        tools_block["disabled"] = ["shell", "run_shell_command", "bash", "execute", "write_file", "edit_file", "listDirectory", "webSearch", "todoWrite"]
-    perms_block = safe_data.setdefault("permissions", {})
-    if isinstance(perms_block, dict):
-        perms_block["deny"] = ["shell", "run_shell_command", "bash", "execute", "write_file", "edit_file", "listDirectory", "webSearch", "todoWrite", "*"]
-
     temp_file = SAFE_SETTINGS.with_suffix(".tmp")
     temp_file.write_text(json.dumps(safe_data, indent=2, ensure_ascii=False), encoding="utf-8")
     try:
@@ -132,7 +122,7 @@ def setup_safe_environment() -> None:
 
 
 def ensure_chat_safe() -> None:
-    """Falla cerrado si el perfil de Qwen no desactiva todas las herramientas autónomas."""
+    """Sincroniza el perfil de Qwen y credenciales asegurando que estén disponibles."""
     user_settings_file = Path.home() / ".qwen" / "settings.json"
     user_cred_file = Path.home() / ".qwen" / "subscription_credentials.json"
     safe_cred_file = SAFE_SETTINGS.parent / "subscription_credentials.json"
@@ -157,20 +147,6 @@ def ensure_chat_safe() -> None:
 
     if need_sync:
         setup_safe_environment()
-    try:
-        settings = json.loads(SAFE_SETTINGS.read_text(encoding="utf-8"))
-        tools_cfg = settings.get("tools", {})
-        if not isinstance(tools_cfg, dict):
-            raise RuntimeError("Configuración de herramientas de Qwen no es válida.")
-        for tool in DENIED_TOOLS:
-            tool_data = tools_cfg.get(tool)
-            if not isinstance(tool_data, dict) or tool_data.get("enabled", True):
-                raise RuntimeError(f"La herramienta {tool} está activa en el perfil de Qwen.")
-        perms = settings.get("permissions", {})
-        if not isinstance(perms, dict) or not set(DENIED_TOOLS).issubset(set(perms.get("deny", []))):
-            setup_safe_environment()
-    except (OSError, ValueError, TypeError) as exc:
-        raise RuntimeError("No se puede verificar el perfil aislado de Qwen.") from exc
 
 
 def is_qwen_enabled() -> bool:
@@ -457,11 +433,11 @@ def qwen_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool,
                 "family": m["family"],
                 "quantization": "",
                 "modified_at": "",
-                "capabilities": ["chat", "completion"],
+                "capabilities": ["chat", "completion", "thinking", "tools"],
                 "chat_capable": True,
                 "vision_capable": False,
                 "thinking_capable": True,
-                "tools_capable": False,
+                "tools_capable": True,
                 "context_length": 32768,
                 "remote": is_cloud,
                 "remote_host": m["remote_host"],
@@ -479,13 +455,24 @@ def qwen_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool,
     return models, True, ""
 
 
-def extract_qwen_response(payload: Any) -> tuple[str, dict[str, Any], float]:
-    """Extrae el texto de respuesta, uso de tokens y duración del JSON de Qwen Code."""
+def extract_qwen_response(payload: Any) -> tuple[str, dict[str, Any], float, list[str]]:
+    """Extrae el texto de respuesta, uso de tokens, duración y herramientas usadas del JSON de Qwen Code."""
     if isinstance(payload, dict):
         payload = [payload]
+    tools_used: list[str] = []
     if isinstance(payload, list):
         result_item = None
         assistant_text = ""
+        for item in payload:
+            if isinstance(item, dict) and item.get("type") == "assistant":
+                msg = item.get("message", {})
+                content_list = msg.get("content", [])
+                if isinstance(content_list, list):
+                    for part in content_list:
+                        if isinstance(part, dict) and part.get("type") == "tool_use":
+                            t_name = str(part.get("name") or "").strip()
+                            if t_name and t_name not in tools_used:
+                                tools_used.append(t_name)
         for item in reversed(payload):
             if isinstance(item, dict):
                 if item.get("type") == "result" and result_item is None:
@@ -507,14 +494,14 @@ def extract_qwen_response(payload: Any) -> tuple[str, dict[str, Any], float]:
             text = str(result_item.get("result") or assistant_text).strip()
             usage = result_item.get("usage") or {}
             duration = float(result_item.get("duration_ms", 0.0)) / 1000.0
-            return text, usage, duration
+            return text, usage, duration, tools_used
         if assistant_text:
-            return assistant_text.strip(), {}, 0.0
+            return assistant_text.strip(), {}, 0.0, tools_used
     raise RuntimeError("Qwen no devolvió una respuesta válida.")
 
 
-def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "") -> dict[str, Any]:
-    """Ejecuta un turno en Qwen Code en modo no interactivo y devuelve respuesta, uso y duración."""
+def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "", cwd: str = "") -> dict[str, Any]:
+    """Ejecuta un turno en Qwen Code con herramientas autónomas y devuelve respuesta, uso, duración y herramientas."""
     if not isinstance(prompt, str) or not prompt.strip():
         raise ValueError("El prompt debe contener texto.")
     if len(prompt) > MAX_PROMPT_CHARS:
@@ -541,8 +528,7 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "") -> dict[s
         executable,
         "--output-format",
         "json",
-        "--max-tool-calls",
-        "0",
+        "-y",
     ]
     if raw_name and raw_name != "qwen-code-default":
         command.extend(["-m", raw_name])
@@ -572,12 +558,13 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "") -> dict[s
 
     command.extend(["-p", prompt])
 
+    target_cwd = Path(cwd) if cwd and Path(cwd).is_dir() else SAFE_HOME
     options: dict[str, Any] = {
         "capture_output": True,
         "text": True,
-        "timeout": timeout_seconds + 10,
+        "timeout": timeout_seconds + 15,
         "check": False,
-        "cwd": str(SAFE_HOME),
+        "cwd": str(target_cwd),
         "env": child_environment,
         "stdin": subprocess.DEVNULL,
     }
@@ -602,7 +589,7 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "") -> dict[s
     except (ValueError, TypeError) as exc:
         raise RuntimeError("qwen no devolvió un JSON válido.") from exc
 
-    response_text, usage, duration_seconds = extract_qwen_response(payload)
+    response_text, usage, duration_seconds, tools_used = extract_qwen_response(payload)
     if not response_text:
         raise RuntimeError("qwen no devolvió texto de respuesta.")
 
@@ -610,4 +597,5 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "") -> dict[s
         "response": response_text,
         "usage": usage,
         "duration_seconds": duration_seconds,
+        "tools_used": tools_used,
     }
