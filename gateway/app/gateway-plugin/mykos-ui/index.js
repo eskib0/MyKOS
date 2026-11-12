@@ -750,13 +750,19 @@ function resolveConfig(api) {
   const defaultLlamaDir = path.join(os.homedir(), ".local", "llama-quick", "llama-b12211");
   const defaultLlamaBin = path.join(defaultLlamaDir, process.platform === "win32" ? "llama-server.exe" : "llama-server");
   const defaultModelsDir = path.join(os.homedir(), "models");
-  const defaultLlamaModel = path.join(defaultModelsDir, "qwen2.5-7b.gguf");
+  let defaultLlamaModel = path.join(defaultModelsDir, "qwen3.5-0.8b.gguf");
+  if (!existsSync(defaultLlamaModel)) {
+    try {
+      const candidates = readdirSync(defaultModelsDir).filter(f => f.endsWith(".gguf"));
+      if (candidates.length) defaultLlamaModel = path.join(defaultModelsDir, candidates[0]);
+    } catch {}
+  }
   const model = {
-    llamaUrl: String(modelRaw.llamaUrl || process.env.MYKOS_LLAMA_CPP_URL || "http://127.0.0.1:8091").replace(/\/+$/, ""),
+    llamaUrl: String(modelRaw.llamaUrl || process.env.MYKOS_LLAMA_CPP_URL || "http://127.0.0.1:9931").replace(/\/+$/, ""),
     strataUrl: String(modelRaw.strataUrl || process.env.MYKOS_STRATA_URL || process.env.STRATA_URL || "http://127.0.0.1:18080").replace(/\/+$/, ""),
     ollamaUrl: String(modelRaw.ollamaUrl || process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/+$/, ""),
     llamaExe: String(modelRaw.llamaExe || process.env.MYKOS_LLAMA_CPP_EXE || (existsSync(defaultLlamaBin) ? defaultLlamaBin : path.join(os.homedir(), "llama.cpp", "build", "bin", defaultLlamaBin))),
-    llamaModel: String(modelRaw.llamaModel || process.env.MYKOS_LLAMA_CPP_MODEL || (existsSync(defaultLlamaModel) ? defaultLlamaModel : path.join(os.homedir(), ".ollama", "models", "blobs", "sha256-d372de8e934898a59e6ccfabc3368474711384d8f1fd4d22d87a3f0a45400cdc"))),
+    llamaModel: String(modelRaw.llamaModel || process.env.MYKOS_LLAMA_CPP_MODEL || defaultLlamaModel),
     llamaContext: Number(modelRaw.llamaContext || process.env.MYKOS_LLAMA_CPP_CONTEXT || 32768),
     llamaStartTimeoutMs: Number(modelRaw.llamaStartTimeoutMs || 120000),
   };
@@ -1000,14 +1006,17 @@ class ModelController {
     if (!modelKey) return true;
     try {
       const modelsRes = await probeJson(`${this.config.llamaUrl}/v1/models`, 2_000);
-      const loaded = modelsRes?.json?.data?.[0]?.id || "";
+      const list = Array.isArray(modelsRes?.json?.data) ? modelsRes.json.data : [];
       let cleanKey = String(modelKey || "").trim();
       if (cleanKey.startsWith("llama_cpp/")) cleanKey = cleanKey.slice("llama_cpp/".length);
       if (cleanKey.startsWith("llamacpp/")) cleanKey = cleanKey.slice("llamacpp/".length);
-      if (loaded && (loaded.toLowerCase() === cleanKey.toLowerCase() || loaded.toLowerCase().endsWith(`/${cleanKey.toLowerCase()}`))) {
-        return true;
-      }
-      return false;
+      const match = list.find((m) => {
+        const id = String(m?.id || "").toLowerCase();
+        const target = cleanKey.toLowerCase();
+        return id === target || id.endsWith(`/${target}`) || target.endsWith(`/${id}`);
+      });
+      if (match) return true;
+      return list.length > 0;
     } catch {
       return true;
     }
@@ -1058,7 +1067,7 @@ class ModelController {
         "-fa", "auto",
         "--no-webui",
         "--host", target.hostname || "127.0.0.1",
-        "--port", String(target.port || 8091),
+        "--port", String(target.port || 9931),
         "--alias", cleanKey || "qwen2.5-7b",
       ];
       if (preset.reasoning && ["off", "on", "auto"].includes(preset.reasoning)) {

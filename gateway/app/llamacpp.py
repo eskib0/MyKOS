@@ -341,7 +341,7 @@ def ensure_llamacpp_model(model_name: str) -> None:
         stop_llamacpp_server()
 
         parsed_url = urllib.parse.urlparse(LLAMA_CPP_URL)
-        port = str(parsed_url.port or 8091)
+        port = str(parsed_url.port or 9931)
         host = parsed_url.hostname or "127.0.0.1"
 
         cmd = [

@@ -1475,7 +1475,7 @@ def ensure_llama_cpp_server() -> None:
             
             "--no-webui",
             "--host", urllib.parse.urlparse(LLAMA_CPP_URL).hostname or "127.0.0.1",
-            "--port", str(urllib.parse.urlparse(LLAMA_CPP_URL).port or 8091),
+            "--port", str(urllib.parse.urlparse(LLAMA_CPP_URL).port or 9931),
         ]
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
         LLAMA_CPP_PROCESS = subprocess.Popen(
