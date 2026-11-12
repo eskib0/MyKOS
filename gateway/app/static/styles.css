@@ -1957,7 +1957,7 @@ textarea::placeholder { color: #748293; }
   margin-right: 20px; /* Dos huecos de separación clara con respecto al botón de permisos */
 }
 
-/* Estado: Sistema al día (luz apagada) */
+/* Estado: MyKOS Activo / Sistema al día (luz azul fija, sin parpadear) */
 .header-update-pill.up-to-date {
   background: rgba(53, 70, 81, .72);
   border: 1px solid var(--line);
@@ -1965,7 +1965,7 @@ textarea::placeholder { color: #748293; }
   box-shadow: none;
 }
 .header-update-pill.up-to-date:hover {
-  border-color: var(--accent);
+  border-color: #38bdf8;
   background: var(--panel-hover);
   color: var(--text-strong);
 }
@@ -1973,15 +1973,15 @@ textarea::placeholder { color: #748293; }
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #64748b;
-  box-shadow: none;
+  background: #38bdf8;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.75);
   animation: none;
-  opacity: 0.6;
-  transition: background 0.2s ease;
+  opacity: 1;
+  transition: all 0.2s ease;
 }
 .header-update-pill.up-to-date:hover .update-pulse-dot {
-  background: var(--accent);
-  opacity: 0.9;
+  background: #7dd3fc;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.95);
 }
 
 /* Estado: Actualización disponible (luz encendida y parpadeando) */
