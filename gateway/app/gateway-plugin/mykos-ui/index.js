@@ -536,7 +536,13 @@ function fetchGithubJson(apiPath) {
 }
 
 async function handleSystemUpdatesApi(req, res, cfg, apiUrl) {
-  const mykosRoot = path.resolve(cfg.projectDir || path.join(os.homedir(), "MyKOS"), "..", "..");
+  let mykosRoot = cfg.projectDir ? path.resolve(cfg.projectDir) : path.join(os.homedir(), "MyKOS");
+  if (!existsSync(path.join(mykosRoot, "version.json")) && !existsSync(path.join(mykosRoot, ".git"))) {
+    const parent = path.resolve(mykosRoot, "..", "..");
+    if (existsSync(path.join(parent, "version.json")) || existsSync(path.join(parent, ".git"))) {
+      mykosRoot = parent;
+    }
+  }
   const isGit = existsSync(path.join(mykosRoot, ".git"));
 
   // Leer versión local desde version.json
@@ -590,14 +596,23 @@ async function handleSystemUpdatesApi(req, res, cfg, apiUrl) {
     const relRes = await fetchGithubJson(`/repos/${repoName}/releases/latest`);
     if (relRes.status === 200 && relRes.body?.tag_name) {
       const remoteTag = relRes.body.tag_name;
-      const cleanRemote = remoteTag.replace(/^v/, "");
-      const cleanLocal = localVersion.replace(/^v/, "");
+      const cleanRemote = remoteTag.replace(/^v/, "").trim();
+      const cleanLocal = localVersion.replace(/^v/, "").trim();
       updateData.latest_version = remoteTag;
       updateData.release_name = relRes.body.name || remoteTag;
       updateData.release_notes = relRes.body.body || "";
       updateData.html_url = relRes.body.html_url || `https://github.com/${repoName}`;
       updateData.published_at = relRes.body.published_at || "";
-      updateData.update_available = cleanRemote !== cleanLocal;
+      const remoteParts = cleanRemote.split(".").map((n) => parseInt(n, 10) || 0);
+      const localParts = cleanLocal.split(".").map((n) => parseInt(n, 10) || 0);
+      let isNewer = false;
+      for (let i = 0; i < Math.max(remoteParts.length, localParts.length); i++) {
+        const r = remoteParts[i] || 0;
+        const l = localParts[i] || 0;
+        if (r > l) { isNewer = true; break; }
+        if (r < l) { isNewer = false; break; }
+      }
+      updateData.update_available = isNewer;
     } else {
       // 2. Si no hay release formal aún, comprobar último commit de la rama main
       const commitRes = await fetchGithubJson(`/repos/${repoName}/commits/main`);
@@ -610,7 +625,14 @@ async function handleSystemUpdatesApi(req, res, cfg, apiUrl) {
         updateData.html_url = commitRes.body.html_url || `https://github.com/${repoName}`;
         updateData.published_at = commitRes.body.commit?.author?.date || "";
         if (isGit && localCommit && remoteSha !== localCommit) {
-          updateData.update_available = true;
+          let isAncestor = false;
+          try {
+            const check = spawnSync("git", ["merge-base", "--is-ancestor", commitRes.body.sha, "HEAD"], { cwd: mykosRoot });
+            if (check.status === 0) isAncestor = true;
+          } catch {}
+          if (!isAncestor) {
+            updateData.update_available = true;
+          }
         }
       }
     }

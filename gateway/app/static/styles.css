@@ -1943,31 +1943,67 @@ textarea::placeholder { color: #748293; }
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  background: linear-gradient(135deg, rgba(0, 150, 255, 0.2), rgba(0, 230, 200, 0.2));
-  border: 1px solid rgba(0, 200, 255, 0.5);
-  color: #58c6ff;
+  height: 32px;
+  padding: 0 12px;
+  box-sizing: border-box;
   border-radius: 20px;
-  padding: 4px 12px;
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.25s ease;
-  box-shadow: 0 0 10px rgba(0, 180, 255, 0.2);
+  transition: all 0.2s ease;
+  user-select: none;
+  white-space: nowrap;
 }
-.header-update-pill:hover {
+
+/* Estado: Sistema al día (luz apagada) */
+.header-update-pill.up-to-date {
+  background: rgba(53, 70, 81, .72);
+  border: 1px solid var(--line);
+  color: var(--text-dim, #c4ccd4);
+  box-shadow: none;
+}
+.header-update-pill.up-to-date:hover {
+  border-color: var(--accent);
+  background: var(--panel-hover);
+  color: var(--text-strong);
+}
+.header-update-pill.up-to-date .update-pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #64748b;
+  box-shadow: none;
+  animation: none;
+  opacity: 0.6;
+  transition: background 0.2s ease;
+}
+.header-update-pill.up-to-date:hover .update-pulse-dot {
+  background: var(--accent);
+  opacity: 0.9;
+}
+
+/* Estado: Actualización disponible (luz encendida y parpadeando) */
+.header-update-pill.has-update {
+  background: linear-gradient(135deg, rgba(0, 150, 255, 0.2), rgba(0, 230, 200, 0.2));
+  border: 1px solid rgba(0, 200, 255, 0.55);
+  color: #58c6ff;
+  box-shadow: 0 0 10px rgba(0, 180, 255, 0.25);
+}
+.header-update-pill.has-update:hover {
   background: linear-gradient(135deg, rgba(0, 150, 255, 0.35), rgba(0, 230, 200, 0.35));
   border-color: #00ffff;
   color: #ffffff;
   transform: translateY(-1px);
   box-shadow: 0 0 15px rgba(0, 220, 255, 0.4);
 }
-.update-pulse-dot {
+.header-update-pill.has-update .update-pulse-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: #00ffff;
   box-shadow: 0 0 8px #00ffff;
   animation: update-pulse-anim 1.8s infinite;
+  opacity: 1;
 }
 @keyframes update-pulse-anim {
   0% { transform: scale(0.9); opacity: 0.8; box-shadow: 0 0 4px #00ffff; }

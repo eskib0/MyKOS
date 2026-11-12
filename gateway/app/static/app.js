@@ -157,6 +157,7 @@ const elements = {
   userProfileCharCount: document.querySelector("#user-profile-char-count"),
   headerUpdatePill: document.querySelector("#header-update-pill"),
   headerUpdateVersion: document.querySelector("#header-update-version"),
+  headerUpdateLabel: document.querySelector("#header-update-label"),
   systemUpdateBadge: document.querySelector("#system-update-badge"),
   updateCurrentVer: document.querySelector("#update-current-ver"),
   updateLatestVer: document.querySelector("#update-latest-ver"),
@@ -1294,9 +1295,16 @@ async function checkSystemUpdates(force = false) {
     }
 
     if (data.update_available) {
-      // Píldora del header visible
+      // Píldora del header visible con aviso y piloto encendido
       if (elements.headerUpdatePill) {
         elements.headerUpdatePill.hidden = false;
+        elements.headerUpdatePill.classList.remove("up-to-date");
+        elements.headerUpdatePill.classList.add("has-update");
+        elements.headerUpdatePill.title = "Actualización disponible para MyKOS (haz clic para ir a Gestión local)";
+        const vStr = data.latest_version ? ` v${data.latest_version.replace(/^v/, "")}` : "";
+        if (elements.headerUpdateLabel) {
+          elements.headerUpdateLabel.textContent = `Actualización${vStr}`;
+        }
         if (elements.headerUpdateVersion) {
           elements.headerUpdateVersion.textContent = data.latest_version ? `v${data.latest_version.replace(/^v/, "")}` : "";
         }
@@ -1328,8 +1336,16 @@ async function checkSystemUpdates(force = false) {
         elements.updateStatusMsg.className = "update-status-msg ok";
       }
     } else {
-      // Al día
-      if (elements.headerUpdatePill) elements.headerUpdatePill.hidden = true;
+      // Sistema al día: botón accesible con piloto apagado (gris estático)
+      if (elements.headerUpdatePill) {
+        elements.headerUpdatePill.hidden = false;
+        elements.headerUpdatePill.classList.remove("has-update");
+        elements.headerUpdatePill.classList.add("up-to-date");
+        elements.headerUpdatePill.title = "MyKOS está al día (haz clic para abrir Gestión local)";
+        if (elements.headerUpdateLabel) {
+          elements.headerUpdateLabel.textContent = "Sistema al día";
+        }
+      }
       if (elements.systemUpdateBadge) {
         elements.systemUpdateBadge.textContent = "Al día";
         elements.systemUpdateBadge.className = "settings-badge-ok";
@@ -1424,7 +1440,7 @@ function initSystemUpdates() {
   elements.btnApplyUpdate?.addEventListener("click", () => applySystemUpdate());
   elements.headerUpdatePill?.addEventListener("click", () => {
     setPage("settings");
-    switchSettingsTab("management");
+    setSettingsTab("management");
   });
 
   // Comprobar actualizaciones automáticamente 2.5s después de cargar la UI
@@ -5928,7 +5944,7 @@ if (initPage) {
   setTimeout(() => {
     setPage(initPage);
     const initTab = urlParams.get("tab");
-    if (initTab && typeof switchSettingsTab === "function") switchSettingsTab(initTab);
+    if (initTab && typeof setSettingsTab === "function") setSettingsTab(initTab);
   }, 350);
 }
 

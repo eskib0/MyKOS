@@ -412,6 +412,10 @@
           <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="Mostrar u ocultar panel MyKOS" aria-controls="sidebar" aria-expanded="true" title="Panel MyKOS">panel MyKOS</button>
         </div>
         <div class="session-actions" aria-label="Acciones de sesión">
+          <button id="header-update-pill" class="header-update-pill up-to-date" type="button" title="MyKOS está al día (clic para abrir Gestión local)">
+            <span class="update-pulse-dot" aria-hidden="true"></span>
+            <span id="header-update-label">Sistema al día</span>
+          </button>
           <label for="permission-mode-select" class="permission-mode-label" title="Controla qué puede hacer MyKOS sin tu intervención: solo leer, pedir tu aprobación cada vez, o acceso total con permiso permanente.">
             Permisos:
             <select id="permission-mode-select">
@@ -434,10 +438,6 @@
           </div>
         </div>
         <div class="chat-header-right">
-          <button id="header-update-pill" class="header-update-pill" type="button" hidden title="Nueva versión disponible para MyKOS">
-            <span class="update-pulse-dot"></span>
-            <span>Actualización <strong id="header-update-version"></strong></span>
-          </button>
           <button id="right-sidebar-toggle" class="right-sidebar-toggle-btn" type="button" title="Terminal Bash">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="4 17 10 11 4 5"></polyline>
