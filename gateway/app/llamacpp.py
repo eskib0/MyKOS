@@ -88,7 +88,16 @@ def llamacpp_status() -> dict[str, Any]:
             try:
                 models_data = llamacpp_request("/v1/models", timeout=2)
                 data_list = models_data.get("data", [])
-                if data_list and isinstance(data_list[0], dict):
+                for m in data_list:
+                    if isinstance(m, dict) and m.get("status", {}).get("value") == "loaded":
+                        loaded = m.get("id", "")
+                        break
+                if not loaded and data_list:
+                    for m in data_list:
+                        if isinstance(m, dict) and not m.get("status", {}).get("failed"):
+                            loaded = m.get("id", "")
+                            break
+                if not loaded and data_list and isinstance(data_list[0], dict):
                     loaded = data_list[0].get("id", "")
             except Exception:
                 pass
@@ -190,12 +199,15 @@ def llamacpp_model_catalog() -> list[dict[str, Any]]:
 
     # Si hay un modelo cargado y coincide con un modelo registrado en ~/models o HF
     matched = False
+    clean_loaded = loaded.lower().replace("-gguf", "").replace(":q4_k", "").replace(":q8_0", "").replace("_", "-")
     for key, info in available.items():
-        if loaded == key or loaded.endswith(f"/{key}") or loaded == info["path"]:
+        clean_key = key.lower().replace("-gguf", "").replace("_", "-")
+        if (loaded == key or loaded.endswith(f"/{key}") or loaded == info["path"]
+            or clean_key in clean_loaded or clean_loaded.endswith(f"/{clean_key}")):
             matched = True
             catalog.append({
-                "name": f"llama_cpp/{key}",
-                "label": info["label"],
+                "name": f"llama_cpp/{loaded}",
+                "label": f"llama.cpp 0.9 · {key}",
                 "provider": "llama_cpp",
                 "provider_label": "llama.cpp 0.9 · CUDA",
                 "size": info["size"],

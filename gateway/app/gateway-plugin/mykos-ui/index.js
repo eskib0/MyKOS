@@ -1171,8 +1171,48 @@ class ModelController {
     await this.unloadOllama();
   }
 
+  async resolveLlamaModelId(modelKey) {
+    if (!modelKey) return modelKey;
+    try {
+      const modelsRes = await probeJson(`${this.config.llamaUrl}/v1/models`, 2_000);
+      const list = Array.isArray(modelsRes?.json?.data) ? modelsRes.json.data : [];
+      if (!list.length) return modelKey;
+
+      let cleanKey = String(modelKey || "").trim();
+      if (cleanKey.startsWith("llama_cpp/")) cleanKey = cleanKey.slice("llama_cpp/".length);
+      if (cleanKey.startsWith("llamacpp/")) cleanKey = cleanKey.slice("llamacpp/".length);
+      const req = cleanKey.toLowerCase();
+
+      const loadedModels = list.filter((m) => m?.status?.value === "loaded");
+      const loadedExact = loadedModels.find((m) => String(m.id || "").toLowerCase() === req);
+      if (loadedExact) return loadedExact.id;
+
+      for (const m of loadedModels) {
+        const id = String(m.id || "").toLowerCase();
+        if (id.includes(req) || req.includes(id) || id.replace(/[^a-z0-9]/g, "").includes(req.replace(/[^a-z0-9]/g, ""))) {
+          return m.id;
+        }
+      }
+
+      const exact = list.find((m) => String(m.id || "").toLowerCase() === req);
+      if (exact) return exact.id;
+
+      for (const m of list) {
+        const id = String(m.id || "").toLowerCase();
+        if (id.includes(req) || req.includes(id) || id.replace(/[^a-z0-9]/g, "").includes(req.replace(/[^a-z0-9]/g, ""))) {
+          return m.id;
+        }
+      }
+    } catch {}
+    return modelKey;
+  }
+
   async request(provider, payload) {
     if (provider === "llama_cpp") {
+      const resolved = await this.resolveLlamaModelId(payload?.model);
+      if (resolved && payload) {
+        payload.model = resolved;
+      }
       await this.ensureLlama(payload?.model);
       return this.upstream(this.config.llamaUrl, payload);
     }
