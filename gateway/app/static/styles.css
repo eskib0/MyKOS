@@ -393,6 +393,61 @@ select:focus, textarea:focus { border-color: var(--accent); }
   background: var(--panel-hover);
   color: var(--text-strong);
 }
+/* Página de Modelos: Selector y navegación por pestañas */
+.models-selector-container {
+  max-width: 980px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.models-selector-container > .panel-section {
+  min-width: 0;
+  margin: 0;
+  padding: 18px 22px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(53, 70, 81, .72);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .14);
+}
+
+.models-subnav {
+  margin: 18px auto 0;
+}
+
+.models-tab-content-container {
+  max-width: 980px;
+  width: 100%;
+  margin: 14px auto 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.models-tab-panel {
+  display: none;
+  width: 100%;
+}
+
+.models-tab-panel.active {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.models-tab-panel > .panel-section {
+  min-width: 0;
+  margin: 0;
+  padding: 20px 22px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(53, 70, 81, .72);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .14);
+}
+
+.models-tab-panel > .panel-section > .section-heading button.text-button {
+  display: none;
+}
+
 .models-page-content { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; max-width: 980px; width: 100%; margin: 0 auto; }
 .models-page-content > .panel-section { min-width: 0; margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(53, 70, 81, .72); }
 .models-page-content > .panel-section:first-child { grid-column: 1 / -1; }

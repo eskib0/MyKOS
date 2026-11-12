@@ -507,8 +507,52 @@
           </div>
           <button id="models-back" class="text-button" type="button">Volver al chat</button>
         </header>
-        <div id="models-page-content" class="models-page-content">
+
+        <!-- Selector de modelo principal -->
+        <div class="models-selector-container"></div>
+
+        <!-- Barra de botones idéntica a configuración -->
+        <nav class="settings-subnav models-subnav" aria-label="Secciones de modelos">
+          <button class="settings-tab-btn models-tab-btn active" type="button" data-models-tab="tuning">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+            <span>Ajuste de modelo</span>
+          </button>
+          <button class="settings-tab-btn models-tab-btn" type="button" data-models-tab="benchmark">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+            <span>Rendimiento</span>
+          </button>
+          <button class="settings-tab-btn models-tab-btn" type="button" data-models-tab="library">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+            </svg>
+            <span>Biblioteca</span>
+          </button>
+          <button class="settings-tab-btn models-tab-btn" type="button" data-models-tab="ollama">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+              <line x1="12" y1="22.08" x2="12" y2="12"></line>
+            </svg>
+            <span>Gestión Ollama</span>
+          </button>
+        </nav>
+
+        <!-- Contenedor con las pestañas de contenido -->
+        <div class="models-tab-content-container settings-page-content">
+          <div id="models-tab-tuning" class="models-tab-panel settings-tab-panel active"></div>
+          <div id="models-tab-benchmark" class="models-tab-panel settings-tab-panel"></div>
+          <div id="models-tab-library" class="models-tab-panel settings-tab-panel"></div>
+          <div id="models-tab-ollama" class="models-tab-panel settings-tab-panel"></div>
         </div>
+
+        <!-- Contenedor temporal para proveedores de modelos (OAuth / APIs) -->
+        <div id="models-providers-container" class="models-providers-container" hidden></div>
       </section>
 
       <section id="permissions-page" class="app-page" hidden>

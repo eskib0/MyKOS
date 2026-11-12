@@ -461,23 +461,64 @@ async function pollActivity() {
 }
 
 function mountModelsPage() {
-  const panels = [
-    elements.model.closest(".panel-section"),
-    ...document.querySelectorAll(".oauth-manager"),
-    document.querySelector(".oauth-new-connection"),
-    document.querySelector(".nvidia-api-card"),
-    document.querySelector(".kimi-api-card"),
-    document.querySelector(".gemini-api-card"),
-    document.querySelector(".mistral-api-card"),
-    document.querySelector(".antigravity-cli-card"),
-    document.querySelector(".qwen-cli-card"),
-    ...document.querySelectorAll(".provider-manager"),
-    document.querySelector(".model-tuning"),
-    document.querySelector(".benchmark-manager"),
-    document.querySelector(".ollama-manager"),
-    document.querySelector(".library-manager"),
-  ].filter(Boolean);
-  for (const panel of new Set(panels)) elements.modelsPageContent.appendChild(panel);
+  const selectorContainer = document.querySelector(".models-selector-container");
+  const tuningTab = document.querySelector("#models-tab-tuning");
+  const benchmarkTab = document.querySelector("#models-tab-benchmark");
+  const libraryTab = document.querySelector("#models-tab-library");
+  const ollamaTab = document.querySelector("#models-tab-ollama");
+  const providersContainer = document.querySelector("#models-providers-container");
+
+  // 1. Selector de modelo principal
+  const modelSection = elements.model?.closest(".panel-section");
+  if (modelSection && selectorContainer) {
+    selectorContainer.appendChild(modelSection);
+  }
+
+  // 2. Pestaña: Ajuste de modelo
+  const tuningSection = document.querySelector(".model-tuning");
+  if (tuningSection && tuningTab) {
+    tuningTab.appendChild(tuningSection);
+    if (elements.modelTuning) elements.modelTuning.hidden = false;
+  }
+
+  // 3. Pestaña: Rendimiento
+  const benchmarkSection = document.querySelector(".benchmark-manager");
+  if (benchmarkSection && benchmarkTab) {
+    benchmarkTab.appendChild(benchmarkSection);
+    if (elements.benchmarkManager) elements.benchmarkManager.hidden = false;
+  }
+
+  // 4. Pestaña: Biblioteca
+  const librarySection = document.querySelector(".library-manager");
+  if (librarySection && libraryTab) {
+    libraryTab.appendChild(librarySection);
+    if (elements.libraryManager) elements.libraryManager.hidden = false;
+  }
+
+  // 5. Pestaña: Gestión Ollama
+  const ollamaSection = document.querySelector(".ollama-manager");
+  if (ollamaSection && ollamaTab) {
+    ollamaTab.appendChild(ollamaSection);
+    if (elements.ollamaManager) elements.ollamaManager.hidden = false;
+  }
+
+  // 6. Proveedores de modelos (OAuth y APIs) quedan en su contenedor listos para la siguiente fase
+  if (providersContainer) {
+    const providerPanels = [
+      ...document.querySelectorAll(".oauth-manager"),
+      document.querySelector(".oauth-new-connection"),
+      document.querySelector(".nvidia-api-card"),
+      document.querySelector(".kimi-api-card"),
+      document.querySelector(".gemini-api-card"),
+      document.querySelector(".mistral-api-card"),
+      document.querySelector(".antigravity-cli-card"),
+      document.querySelector(".qwen-cli-card"),
+      ...document.querySelectorAll(".provider-manager"),
+    ].filter(Boolean);
+    for (const panel of new Set(providerPanels)) {
+      providersContainer.appendChild(panel);
+    }
+  }
 }
 
 function mountPermissionsPage() {
@@ -807,9 +848,7 @@ function setPage(page) {
     else elements.settingsNavBtn.removeAttribute("aria-current");
   }
   if (models) {
-    syncModelGenerationControls();
-    renderBenchmarkResults();
-    renderOllamaInstalled();
+    setModelsTab(state.activeModelsTab || "tuning");
   } else if (permissions) {
     elements.permissionsManager.hidden = false;
     elements.permissionsToggle.textContent = "Cerrar";
@@ -866,6 +905,58 @@ function setSettingsTab(tabName) {
     loadMedia();
   } else if (targetTab === "nodes") {
     loadNodes();
+  }
+}
+
+function setModelsTab(tabName) {
+  const validTabs = ["tuning", "benchmark", "library", "ollama"];
+  const targetTab = validTabs.includes(tabName) ? tabName : "tuning";
+  state.activeModelsTab = targetTab;
+
+  const tabBtns = document.querySelectorAll(".models-tab-btn");
+  for (const btn of tabBtns) {
+    const active = btn.dataset.modelsTab === targetTab;
+    btn.classList.toggle("active", active);
+    if (active) btn.setAttribute("aria-selected", "true");
+    else btn.removeAttribute("aria-selected");
+  }
+
+  const panels = {
+    tuning: document.querySelector("#models-tab-tuning"),
+    benchmark: document.querySelector("#models-tab-benchmark"),
+    library: document.querySelector("#models-tab-library"),
+    ollama: document.querySelector("#models-tab-ollama"),
+  };
+
+  for (const [key, panel] of Object.entries(panels)) {
+    if (panel) {
+      panel.classList.toggle("active", key === targetTab);
+    }
+  }
+
+  if (targetTab === "tuning") {
+    if (elements.modelTuning) elements.modelTuning.hidden = false;
+    syncModelGenerationControls();
+  } else if (targetTab === "benchmark") {
+    if (elements.benchmarkManager) elements.benchmarkManager.hidden = false;
+    if (!state.benchmarks?.length) loadBenchmarks();
+    renderBenchmarkResults();
+  } else if (targetTab === "library") {
+    if (elements.libraryManager) elements.libraryManager.hidden = false;
+    loadLibraryRoots();
+  } else if (targetTab === "ollama") {
+    if (elements.ollamaManager) elements.ollamaManager.hidden = false;
+    loadOllamaInstalled();
+    renderOllamaInstalled();
+  }
+}
+
+function initModelsTabs() {
+  const tabBtns = document.querySelectorAll(".models-tab-btn");
+  for (const btn of tabBtns) {
+    btn.addEventListener("click", () => {
+      setModelsTab(btn.dataset.modelsTab);
+    });
   }
 }
 
@@ -4027,6 +4118,7 @@ initTheme();
 initChatDimensions();
 initVoiceSettings();
 initSettingsTabs();
+initModelsTabs();
 initUserProfile();
 initSystemUpdates();
 mountModelsPage();
