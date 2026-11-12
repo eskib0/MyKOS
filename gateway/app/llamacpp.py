@@ -21,7 +21,7 @@ from typing import Any
 
 logger = logging.getLogger("mykos.llamacpp")
 
-LLAMA_CPP_URL = os.environ.get("MYKOS_LLAMA_CPP_URL", "http://127.0.0.1:8091").rstrip("/")
+LLAMA_CPP_URL = os.environ.get("MYKOS_LLAMA_CPP_URL", "http://127.0.0.1:9931").rstrip("/")
 LLAMA_CPP_TIMEOUT_SECONDS = int(os.environ.get("MYKOS_LLAMA_CPP_TIMEOUT", "600"))
 LLAMA_CPP_START_TIMEOUT = int(os.environ.get("MYKOS_LLAMA_CPP_START_TIMEOUT", "60"))
 
@@ -175,47 +175,54 @@ def get_available_gguf_models() -> dict[str, dict[str, Any]]:
 
 
 def llamacpp_model_catalog() -> list[dict[str, Any]]:
-    """Devuelve los modelos de llama.cpp para el catálogo /api/models de MyKOS."""
-    if not Path(LLAMA_CPP_EXE).is_file():
+    """Devuelve los modelos de llama.cpp para el catálogo /api/models de MyKOS.
+    Solo muestra modelos si el servidor llama.cpp está ONLINE y activo.
+    Si llama.cpp está apagado, no se muestra ningún modelo fantasma en el selector.
+    """
+    status = llamacpp_status()
+    online = status.get("online", False)
+    if not online:
         return []
 
-    status = llamacpp_status()
-    online = status["online"]
     loaded = status.get("loaded_model", "")
-
     available = get_available_gguf_models()
     catalog = []
 
+    # Si hay un modelo cargado y coincide con un modelo registrado en ~/models o HF
+    matched = False
     for key, info in available.items():
-        is_active = online and (loaded == key or loaded.endswith(f"/{key}") or loaded == info["path"])
-        catalog.append({
-            "name": f"llama_cpp/{key}",
-            "label": info["label"],
-            "provider": "llama_cpp",
-            "provider_label": "llama.cpp 0.9 · CUDA",
-            "size": info["size"],
-            "parameter_size": info["parameter_size"],
-            "family": info["family"],
-            "quantization": "GGUF",
-            "modified_at": "",
-            "capabilities": ["chat", "completion", "thinking", "tools"],
-            "chat_capable": True,
-            "vision_capable": False,
-            "thinking_capable": True,
-            "tools_capable": True,
-            "context_length": info["ctx_size"],
-            "remote": False,
-            "remote_host": "",
-            "benchmark_capable": True,
-            "engine": "llama.cpp 0.9 (En línea)" if is_active else "llama.cpp 0.9 (Local en reposo)",
-            "status": "online" if is_active else "standby",
-        })
+        if loaded == key or loaded.endswith(f"/{key}") or loaded == info["path"]:
+            matched = True
+            catalog.append({
+                "name": f"llama_cpp/{key}",
+                "label": info["label"],
+                "provider": "llama_cpp",
+                "provider_label": "llama.cpp 0.9 · CUDA",
+                "size": info["size"],
+                "parameter_size": info["parameter_size"],
+                "family": info["family"],
+                "quantization": "GGUF",
+                "modified_at": "",
+                "capabilities": ["chat", "completion", "thinking", "tools"],
+                "chat_capable": True,
+                "vision_capable": False,
+                "thinking_capable": True,
+                "tools_capable": True,
+                "context_length": info["ctx_size"],
+                "remote": False,
+                "remote_host": "",
+                "benchmark_capable": True,
+                "engine": "llama.cpp 0.9 (En línea)",
+                "status": "online",
+            })
+            break
 
-    # Si hay un servidor llama.cpp corriendo con un modelo que no está en la carpeta models/
-    if online and loaded and not any(loaded in m["name"] for m in catalog):
-        catalog.insert(0, {
-            "name": f"llama_cpp/{loaded}",
-            "label": f"llama.cpp 0.9 · {loaded}",
+    # Si el servidor llama.cpp está online con un modelo genérico o alias directo
+    if not matched:
+        model_name = loaded or "llama-model"
+        catalog.append({
+            "name": f"llama_cpp/{model_name}",
+            "label": f"llama.cpp 0.9 · {model_name}",
             "provider": "llama_cpp",
             "provider_label": "llama.cpp 0.9 · CUDA",
             "size": 0,
@@ -228,7 +235,7 @@ def llamacpp_model_catalog() -> list[dict[str, Any]]:
             "vision_capable": False,
             "thinking_capable": True,
             "tools_capable": True,
-            "context_length": 4096,
+            "context_length": 32768,
             "remote": False,
             "remote_host": "",
             "benchmark_capable": True,
