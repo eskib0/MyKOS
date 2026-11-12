@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import time
 from typing import Any
+import urllib.error
+import urllib.request
 
 from nvidia import _decode_key, _encode_key
 
@@ -17,6 +19,7 @@ OAUTH_ROOT = Path(os.environ.get("MYKOS_CREDENTIALS_DIR", str(ROOT / "data" / "o
 META_AI_DIR = OAUTH_ROOT / "meta-ai"
 META_AI_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
 META_AI_CREDENTIALS_PATH = META_AI_DIR / "credentials.json"
+META_AI_API_KEY_PATH = META_AI_DIR / "api_key.json"
 META_AI_DGW_SCRIPT = Path(__file__).resolve().parent / "meta_ai_dgw.mjs"
 META_AI_OIDC_URL = "https://www.meta.ai/api/oidc/start"
 META_AI_WEB_URL = "https://www.meta.ai/"
@@ -297,14 +300,59 @@ def _invoke_dgw_bridge(payload: dict[str, Any], timeout: int = 75) -> dict[str, 
   raise RuntimeError(stderr or stdout or f"El puente DGW de Meta AI falló (código {proc.returncode}).")
 
 
+def save_meta_ai_api_key(key: str) -> dict[str, Any]:
+  value = str(key).strip()
+  if not value or len(value) < 8:
+    raise RuntimeError("Introduce una clave válida de Meta Model API.")
+  META_AI_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+  temporary = META_AI_API_KEY_PATH.with_suffix(".tmp")
+  temporary.write_text(json.dumps(_encode_key(value), ensure_ascii=False), encoding="utf-8")
+  try:
+    os.chmod(temporary, 0o600)
+  except OSError:
+    pass
+  temporary.replace(META_AI_API_KEY_PATH)
+  return {"ok": True, "provider": "meta_ai_oauth", "auth_method": "Meta Model API Key"}
+
+
+def get_meta_ai_api_key() -> str:
+  if not META_AI_API_KEY_PATH.is_file():
+    return ""
+  try:
+    data = json.loads(META_AI_API_KEY_PATH.read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+      return _decode_key(data)
+  except Exception:
+    pass
+  return ""
+
+
 def meta_ai_auth_status() -> dict[str, Any]:
   session = _load_meta_ai_session()
+  api_key = get_meta_ai_api_key()
+  authenticated = bool(session or api_key)
   token = str((session or {}).get("accessToken") or "")
   user_id = str((session or {}).get("abraUserId") or "")
-  masked = f"{token[:10]}...{token[-4:]}" if len(token) > 16 else None
+  if token and len(token) > 16:
+    masked = f"{token[:10]}...{token[-4:]}"
+  elif api_key and len(api_key) > 12:
+    masked = f"{api_key[:8]}...{api_key[-4:]}"
+  else:
+    masked = None
+
+  if session and api_key:
+    auth_method = "Meta AI (OAuth + API Key)"
+  elif api_key:
+    auth_method = "Meta Model API Key"
+  elif session:
+    auth_method = "Meta AI OAuth (ecto1 / DGW)"
+  else:
+    auth_method = ""
+
   return {
       "provider": "meta_ai_oauth",
-      "authenticated": bool(session),
+      "authenticated": authenticated,
+      "auth_method": auth_method,
       "credentials_path": str(META_AI_CREDENTIALS_PATH),
       "token_preview": masked,
       "abra_user_id": user_id[:12] + "..." if len(user_id) > 12 else (user_id or None),
@@ -373,6 +421,9 @@ def logout_meta_ai_oauth() -> dict[str, Any]:
   if META_AI_CREDENTIALS_PATH.exists():
     META_AI_CREDENTIALS_PATH.unlink()
     removed.append(str(META_AI_CREDENTIALS_PATH))
+  if META_AI_API_KEY_PATH.exists():
+    META_AI_API_KEY_PATH.unlink()
+    removed.append(str(META_AI_API_KEY_PATH))
   _LOGIN_STATE.update(
       {
           "running": False,
@@ -397,12 +448,18 @@ def logout_meta_ai_oauth() -> dict[str, Any]:
 def meta_ai_models(*, force: bool = False) -> list[dict[str, Any]]:
   _ = force
   has_oauth_session = bool(_load_meta_ai_session())
+  has_api_key = bool(get_meta_ai_api_key())
   result: list[dict[str, Any]] = []
   for item in META_AI_MODELS:
     provider = item.get("provider", "meta_ai_oauth")
-    if provider == "meta_ai_oauth" and not has_oauth_session:
+    if provider == "meta_ai_oauth" and not has_oauth_session and not has_api_key:
       continue
-    result.append(dict(item))
+    if provider == "meta_ai_api" and not has_api_key:
+      continue
+    row = dict(item)
+    row["chat_capable"] = bool(has_oauth_session or has_api_key)
+    row["auth_status"] = "autenticado" if (has_oauth_session or has_api_key) else "no autenticado"
+    result.append(row)
   return result
 
 
@@ -445,13 +502,45 @@ def meta_ai_chat_completion(
     max_tokens: int = 4096,
     temperature: float = 0.3,
 ) -> str:
-  _ = (max_tokens, temperature)
+  api_key = get_meta_ai_api_key()
   session = _load_meta_ai_session()
+  is_muse = "muse" in str(model or "").lower()
+  if api_key and (is_muse or not session):
+    clean_model = model.removeprefix("meta-ai/")
+    req_data = {
+        "model": clean_model,
+        "messages": messages,
+        "max_tokens": max(1, min(16384, int(max_tokens))),
+        "temperature": max(0.0, min(2.0, float(temperature))),
+        "stream": False,
+    }
+    body = json.dumps(req_data, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.meta.ai/v1/chat/completions",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+      with urllib.request.urlopen(req, timeout=75) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+      choices = data.get("choices", [])
+      if not choices:
+        raise RuntimeError("Meta Model API no devolvió choices válidas.")
+      return str(choices[0].get("message", {}).get("content", ""))
+    except Exception as exc:
+      raise RuntimeError(f"Error consultando Meta Model API: {exc}") from exc
+
+  _ = (max_tokens, temperature)
   if not session:
     start_meta_ai_oauth(open_browser=False)
     session = _load_meta_ai_session()
   if not session:
-    raise RuntimeError("Meta AI OAuth no está conectado. Pulsa «Conectar Meta AI OAuth» en la barra lateral.")
+    raise RuntimeError("Meta AI OAuth no está conectado ni hay clave API de Meta configurada.")
 
   enable_thinking = "reasoning" in str(model or "").lower() or "think" in str(model or "").lower()
   prompt = _format_messages_for_meta_ai(messages)

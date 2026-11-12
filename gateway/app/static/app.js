@@ -194,7 +194,12 @@ const elements = {
   privacyNote: document.querySelector("#privacy-note"),
   oauthStatus: document.querySelector("#oauth-status"),
   oauthOpenai: document.querySelector("#oauth-openai"),
+  openaiApiToggle: document.querySelector("#openai-api-toggle"),
   oauthOpenaiLogout: document.querySelector("#oauth-openai-logout"),
+  openaiApiKeyRow: document.querySelector("#openai-api-key-row"),
+  openaiApiKey: document.querySelector("#openai-api-key"),
+  openaiApiSave: document.querySelector("#openai-api-save"),
+  openaiModels: document.querySelector("#openai-models"),
   oauthRefresh: document.querySelector("#oauth-refresh"),
   oauthClaude: document.querySelector("#oauth-claude"),
   oauthClaudeLogout: document.querySelector("#oauth-claude-logout"),
@@ -206,12 +211,20 @@ const elements = {
   anthropicApiSave: document.querySelector("#anthropic-api-save"),
   anthropicApiModels: document.querySelector("#anthropic-api-models"),
   oauthOpenrouter: document.querySelector("#oauth-openrouter"),
+  openrouterApiToggle: document.querySelector("#openrouter-api-toggle"),
   oauthOpenrouterLogout: document.querySelector("#oauth-openrouter-logout"),
+  openrouterApiKeyRow: document.querySelector("#openrouter-api-key-row"),
+  openrouterApiKey: document.querySelector("#openrouter-api-key"),
+  openrouterApiSave: document.querySelector("#openrouter-api-save"),
   oauthOpenrouterRefresh: document.querySelector("#oauth-openrouter-refresh"),
   oauthOpenrouterStatus: document.querySelector("#oauth-openrouter-status"),
   oauthOpenrouterModels: document.querySelector("#oauth-openrouter-models"),
   oauthMeta: document.querySelector("#oauth-meta"),
+  metaApiToggle: document.querySelector("#meta-api-toggle"),
   oauthMetaLogout: document.querySelector("#oauth-meta-logout"),
+  metaApiKeyRow: document.querySelector("#meta-api-key-row"),
+  metaApiKey: document.querySelector("#meta-api-key"),
+  metaApiSave: document.querySelector("#meta-api-save"),
   oauthMetaRefresh: document.querySelector("#oauth-meta-refresh"),
   oauthMetaStatus: document.querySelector("#oauth-meta-status"),
   oauthMetaModels: document.querySelector("#oauth-meta-models"),
@@ -2667,10 +2680,19 @@ function renderOAuthStatus(data = {}) {
   const openai = providers.find((item) => item.id === "openai_codex_oauth") || {};
   const login = providers.find((item) => item.id === "openai_codex_oauth_login") || {};
   if (openai.authenticated) {
-    elements.oauthStatus.textContent = "OpenAI OAuth conectado en MyKOS.";
-    elements.oauthOpenai.textContent = "OpenAI conectado";
-    elements.oauthOpenai.disabled = true;
+    const isApiKey = openai.auth_method === "OpenAI API Key";
+    elements.oauthStatus.textContent = isApiKey
+      ? "OpenAI conectado mediante clave API personal."
+      : "OpenAI OAuth conectado en MyKOS.";
+    elements.oauthOpenai.textContent = isApiKey ? "OAuth (opcional)" : "OpenAI conectado";
+    elements.oauthOpenai.disabled = !isApiKey;
     elements.oauthOpenaiLogout.hidden = false;
+    if (elements.openaiApiKeyRow) elements.openaiApiKeyRow.hidden = true;
+    if (elements.openaiModels) {
+      elements.openaiModels.textContent = isApiKey
+        ? "Modelos GPT-4o, o1 y o3-mini listos en el selector principal."
+        : "Modelos GPT-5.6 (Codex OAuth) listos en el selector principal.";
+    }
   } else if (login.status === "running") {
     elements.oauthOpenaiLogout.hidden = true;
     elements.oauthStatus.replaceChildren();
@@ -2695,10 +2717,13 @@ function renderOAuthStatus(data = {}) {
     elements.oauthOpenai.textContent = "Esperando autorización…";
     elements.oauthOpenai.disabled = true;
   } else {
-    elements.oauthStatus.textContent = openai.error || "OpenAI todavía no está conectado.";
-    elements.oauthOpenai.textContent = "Conectar OpenAI por OAuth";
+    elements.oauthStatus.textContent = openai.error || "OpenAI todavía no está conectado en MyKOS.";
+    elements.oauthOpenai.textContent = "Iniciar sesión OAuth";
     elements.oauthOpenai.disabled = false;
     elements.oauthOpenaiLogout.hidden = true;
+    if (elements.openaiModels) {
+      elements.openaiModels.textContent = "Inicia sesión con OAuth oficial o introduce tu clave personal de OpenAI (sk-…).";
+    }
   }
 }
 
@@ -2755,10 +2780,14 @@ function renderOpenRouterOAuthStatus() {
   const login = state.oauthProviders.find((item) => item.id === "openrouter_oauth_login") || {};
   const connected = Boolean(oauth.authenticated) || models.some((item) => item.chat_capable && item.auth_status === "autenticado");
   if (connected) {
-    elements.oauthOpenrouterStatus.textContent = `OpenRouter conectado mediante OAuth propio de MyKOS. ${models.length} modelos disponibles.`;
+    const isApiKey = oauth.auth_method === "OpenRouter API Key";
+    elements.oauthOpenrouterStatus.textContent = isApiKey
+      ? `OpenRouter conectado mediante clave API personal. ${models.length} modelos disponibles.`
+      : `OpenRouter conectado mediante OAuth (PKCE). ${models.length} modelos disponibles.`;
     elements.oauthOpenrouter.textContent = "Actualizar modelos";
     elements.oauthOpenrouter.disabled = false;
     elements.oauthOpenrouterLogout.hidden = false;
+    if (elements.openrouterApiKeyRow) elements.openrouterApiKeyRow.hidden = true;
     elements.oauthOpenrouterModels.textContent = "Los modelos aparecerán en el selector principal de Modelo.";
   } else if (login.status === "running") {
     elements.oauthOpenrouterStatus.textContent = "Esperando la autorización de OpenRouter…";
@@ -2768,24 +2797,26 @@ function renderOpenRouterOAuthStatus() {
     elements.oauthOpenrouterModels.textContent = "Termina el acceso en la ventana de OpenRouter.";
   } else {
     elements.oauthOpenrouterStatus.textContent = oauth.error || "OpenRouter todavía no está conectado en MyKOS.";
-    elements.oauthOpenrouter.textContent = "Iniciar sesión";
+    elements.oauthOpenrouter.textContent = "Iniciar sesión OAuth";
     elements.oauthOpenrouter.disabled = false;
     elements.oauthOpenrouterLogout.hidden = true;
-    elements.oauthOpenrouterModels.textContent = "Se abrirá el OAuth oficial de OpenRouter.";
+    elements.oauthOpenrouterModels.textContent = "Inicia sesión con OAuth oficial o introduce tu clave personal de OpenRouter (sk-or-v1-…).";
   }
 }
 
 function renderMetaOAuthStatus() {
   if (!elements.oauthMetaStatus) return;
-  const models = state.models.filter((item) => item.provider === "meta_ai_oauth");
+  const models = state.models.filter((item) => item.provider === "meta_ai_oauth" || item.provider === "meta_ai_api");
   const oauth = state.oauthProviders.find((item) => item.id === "meta_ai_oauth") || {};
   const login = state.oauthProviders.find((item) => item.id === "meta_ai_oauth_login") || {};
   const connected = Boolean(oauth.authenticated) || models.some((item) => item.chat_capable && item.auth_status === "autenticado");
   if (connected) {
-    elements.oauthMetaStatus.textContent = `Meta AI conectado mediante OAuth (ecto1 / DGW). ${models.length} modelos Llama 4 disponibles.`;
+    const methodDesc = oauth.auth_method || "Meta AI (Conectado)";
+    elements.oauthMetaStatus.textContent = `Meta AI conectado mediante ${methodDesc}. ${models.length} modelos disponibles.`;
     elements.oauthMeta.textContent = "Actualizar modelos";
     elements.oauthMeta.disabled = false;
     elements.oauthMetaLogout.hidden = false;
+    if (elements.metaApiKeyRow) elements.metaApiKeyRow.hidden = true;
     elements.oauthMetaModels.textContent = models.length
       ? models.map((item) => item.label || item.name).join(" · ")
       : "Los modelos de Meta AI aparecerán en el selector principal de Modelo.";
@@ -2800,7 +2831,7 @@ function renderMetaOAuthStatus() {
     elements.oauthMeta.textContent = "Conectar Meta AI OAuth";
     elements.oauthMeta.disabled = false;
     elements.oauthMetaLogout.hidden = true;
-    elements.oauthMetaModels.textContent = "Vincula Meta AI (https://www.meta.ai/) por OAuth para usar Llama 4 Fast y Reasoning en el chat.";
+    elements.oauthMetaModels.textContent = "Vincula Meta AI por OAuth para Llama 4 gratis o introduce tu clave de Meta Model API para la serie Muse.";
   }
 }
 
@@ -3134,6 +3165,36 @@ async function startOpenAIAuth() {
 }
 
 elements.oauthOpenai?.addEventListener("click", startOpenAIAuth);
+elements.openaiApiToggle?.addEventListener("click", () => {
+  if (!elements.openaiApiKeyRow) return;
+  elements.openaiApiKeyRow.hidden = !elements.openaiApiKeyRow.hidden;
+  if (!elements.openaiApiKeyRow.hidden && elements.openaiApiKey) {
+    elements.openaiApiKey.focus();
+  }
+});
+elements.openaiApiSave?.addEventListener("click", async () => {
+  const key = elements.openaiApiKey?.value?.trim();
+  if (!key) {
+    elements.oauthStatus.textContent = "Introduce una clave válida de OpenAI (sk-…).";
+    return;
+  }
+  elements.openaiApiSave.disabled = true;
+  try {
+    elements.oauthStatus.textContent = "Validando y guardando clave de OpenAI…";
+    await api("/api/oauth/openai/start", {
+      method: "POST",
+      body: JSON.stringify({ provider: "openai_codex_oauth", api_key: key }),
+    });
+    elements.openaiApiKeyRow.hidden = true;
+    if (elements.openaiApiKey) elements.openaiApiKey.value = "";
+    await loadModels();
+    await loadOAuthStatus();
+  } catch (error) {
+    elements.oauthStatus.textContent = error.message;
+  } finally {
+    elements.openaiApiSave.disabled = false;
+  }
+});
 elements.oauthOpenaiLogout?.addEventListener("click", () => logoutOAuth("openai", elements.oauthStatus, elements.oauthOpenaiLogout));
 elements.oauthRefresh?.addEventListener("click", loadOAuthStatus);
 elements.oauthClaude?.addEventListener("click", startClaudeAuth);
@@ -3185,6 +3246,36 @@ elements.anthropicApiSave?.addEventListener("click", async () => {
   }
 });
 elements.oauthOpenrouter?.addEventListener("click", startOpenRouterAuth);
+elements.openrouterApiToggle?.addEventListener("click", () => {
+  if (!elements.openrouterApiKeyRow) return;
+  elements.openrouterApiKeyRow.hidden = !elements.openrouterApiKeyRow.hidden;
+  if (!elements.openrouterApiKeyRow.hidden && elements.openrouterApiKey) {
+    elements.openrouterApiKey.focus();
+  }
+});
+elements.openrouterApiSave?.addEventListener("click", async () => {
+  const key = elements.openrouterApiKey?.value?.trim();
+  if (!key) {
+    elements.oauthOpenrouterStatus.textContent = "Introduce una clave válida de OpenRouter (sk-or-v1-…).";
+    return;
+  }
+  elements.openrouterApiSave.disabled = true;
+  try {
+    elements.oauthOpenrouterStatus.textContent = "Validando y guardando credencial de OpenRouter…";
+    await api("/api/oauth/openrouter/start", {
+      method: "POST",
+      body: JSON.stringify({ provider: "openrouter", api_key: key }),
+    });
+    elements.openrouterApiKeyRow.hidden = true;
+    if (elements.openrouterApiKey) elements.openrouterApiKey.value = "";
+    await loadModels();
+    await loadOAuthStatus();
+  } catch (error) {
+    elements.oauthOpenrouterStatus.textContent = error.message;
+  } finally {
+    elements.openrouterApiSave.disabled = false;
+  }
+});
 elements.oauthOpenrouterLogout?.addEventListener("click", () => logoutOAuth("openrouter", elements.oauthOpenrouterStatus, elements.oauthOpenrouterLogout));
 elements.oauthOpenrouterRefresh?.addEventListener("click", async () => {
   try {
@@ -3199,7 +3290,7 @@ async function startMetaAuth() {
   if (!elements.oauthMeta) return;
   elements.oauthMeta.disabled = true;
   try {
-    const connected = state.models.some((item) => item.provider === "meta_ai_oauth" && item.auth_status === "autenticado");
+    const connected = state.models.some((item) => (item.provider === "meta_ai_oauth" || item.provider === "meta_ai_api") && item.auth_status === "autenticado");
     if (connected) {
       await api("/api/oauth/meta/refresh", { method: "POST", body: JSON.stringify({ provider: "meta_ai_oauth" }) });
       await loadModels();
@@ -3215,6 +3306,36 @@ async function startMetaAuth() {
 }
 
 elements.oauthMeta?.addEventListener("click", startMetaAuth);
+elements.metaApiToggle?.addEventListener("click", () => {
+  if (!elements.metaApiKeyRow) return;
+  elements.metaApiKeyRow.hidden = !elements.metaApiKeyRow.hidden;
+  if (!elements.metaApiKeyRow.hidden && elements.metaApiKey) {
+    elements.metaApiKey.focus();
+  }
+});
+elements.metaApiSave?.addEventListener("click", async () => {
+  const key = elements.metaApiKey?.value?.trim();
+  if (!key) {
+    elements.oauthMetaStatus.textContent = "Introduce una clave válida de Meta Model API.";
+    return;
+  }
+  elements.metaApiSave.disabled = true;
+  try {
+    elements.oauthMetaStatus.textContent = "Validando y guardando credencial de Meta AI…";
+    await api("/api/oauth/meta/start", {
+      method: "POST",
+      body: JSON.stringify({ provider: "meta_ai_oauth", api_key: key }),
+    });
+    elements.metaApiKeyRow.hidden = true;
+    if (elements.metaApiKey) elements.metaApiKey.value = "";
+    await loadModels();
+    await loadOAuthStatus();
+  } catch (error) {
+    elements.oauthMetaStatus.textContent = error.message;
+  } finally {
+    elements.metaApiSave.disabled = false;
+  }
+});
 elements.oauthMetaLogout?.addEventListener("click", () => logoutOAuth("meta", elements.oauthMetaStatus, elements.oauthMetaLogout));
 elements.oauthMetaRefresh?.addEventListener("click", async () => {
   try {

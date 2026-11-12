@@ -3221,7 +3221,11 @@ export default {
           if (!provider || (payload?.provider !== undefined && payload.provider !== provider && payload.provider !== name)) {
             sendJson(res, 400, { error: "Proveedor OAuth no compatible." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
           }
-          const started = await jsonRequest(`${backend.config.url}/mykos-control/oauth/${name}/start`, { provider }, 60_000, { "X-MyKOS-Control-Token": cfg.control.token });
+          const reqBody = { provider };
+          if (typeof payload?.api_key === "string" && payload.api_key.trim()) {
+            reqBody.api_key = payload.api_key.trim();
+          }
+          const started = await jsonRequest(`${backend.config.url}/mykos-control/oauth/${name}/start`, reqBody, 60_000, { "X-MyKOS-Control-Token": cfg.control.token });
           const status = started.status >= 400 ? started.status : 503;
           if (started.status >= 400 || !isObject(started.body)) {
             sendJson(res, status, { ok: false, error: String(started.body?.error || `No se pudo iniciar ${name}.`) }); recordApiResult(status, { owner: "mykos-gateway" }); return true;

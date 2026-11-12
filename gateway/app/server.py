@@ -69,10 +69,12 @@ from qwen_cli import (
     qwen_model_catalog,
 )
 from meta_ai import (
+    get_meta_ai_api_key,
     logout_meta_ai_oauth,
     meta_ai_auth_status,
     meta_ai_chat_completion,
     meta_ai_models,
+    save_meta_ai_api_key,
     start_meta_ai_oauth,
 )
 from grok import (
@@ -102,7 +104,9 @@ from llamacpp import (
     stop_llamacpp_server,
 )
 from oauth import (
+    _save_openrouter_key,
     complete_openrouter_oauth,
+    get_openai_api_key,
     logout_openai,
     logout_openrouter_oauth,
     openai_auth_status,
@@ -112,6 +116,7 @@ from oauth import (
     openrouter_models,
     oauth_status,
     run_openai_codex,
+    save_openai_api_key,
     start_openai_login,
     start_openrouter_oauth,
 )
@@ -2215,6 +2220,49 @@ def run_openai_until_result(
 ) -> dict[str, Any]:
     if not model.startswith("openai-codex-oauth/"):
         raise RuntimeError(f"Modelo OpenAI no reconocido: {model}")
+    api_key = get_openai_api_key()
+    if api_key and openai_auth_status().get("auth_method") == "OpenAI API Key":
+        clean_model = model.removeprefix("openai-codex-oauth/")
+        def _openai_api_complete(req_messages: list[dict[str, Any]]) -> str:
+            req_data = {
+                "model": clean_model,
+                "messages": req_messages,
+                "max_tokens": 4096,
+                "temperature": 0.3,
+                "stream": False,
+            }
+            body = json.dumps(req_data, ensure_ascii=False).encode("utf-8")
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/chat/completions",
+                data=body,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            choices = data.get("choices", [])
+            if not choices:
+                raise RuntimeError("OpenAI no devolvió texto.")
+            return str(choices[0].get("message", {}).get("content", ""))
+
+        return _run_openai_json_tool_loop(
+            model,
+            "openai_codex_oauth",
+            "OpenAI",
+            f"{model} · OpenAI mediante clave API oficial.",
+            messages,
+            conversation_id,
+            _openai_api_complete,
+            supports_vision=supports_vision or has_message_images(messages),
+            generation=generation,
+            activity_id=activity_id,
+            permission_mode=permission_mode,
+        )
+
     working_messages = [dict(item) for item in messages]
     source_cards = source_cards_from_messages(working_messages, current_turn_only=True)
     tool_names: list[str] = []
@@ -3927,6 +3975,25 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 if sent_provider and sent_provider not in accepted:
                     self.send_json({"ok": False, "error": "Proveedor OAuth no compatible."}, status=400)
                     return
+                api_key = str(payload.get("api_key", "")).strip()
+                if api_key:
+                    try:
+                        if path == "/mykos-control/oauth/openai/start":
+                            res = save_openai_api_key(api_key)
+                            self.send_json(res)
+                            return
+                        if path == "/mykos-control/oauth/openrouter/start":
+                            _save_openrouter_key(api_key, method="api_key")
+                            models = openrouter_models()
+                            self.send_json({"ok": True, "provider": "openrouter", "auth_method": "OpenRouter API Key", "status": "saved", "models": len(models)})
+                            return
+                        if path == "/mykos-control/oauth/meta/start":
+                            res = save_meta_ai_api_key(api_key)
+                            self.send_json(res)
+                            return
+                    except Exception as exc:
+                        self.send_json({"ok": False, "error": str(exc)}, status=400)
+                        return
                 try:
                     self.send_json(action())
                 except RuntimeError as error:

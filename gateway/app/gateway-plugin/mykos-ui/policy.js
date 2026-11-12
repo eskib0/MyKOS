@@ -97,7 +97,7 @@ export const POLICY_TABLE = [
   {
     method: "POST", path: "/api/oauth/openai/start", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
-    fields: { provider: oauthProvider("openai", "openai_codex_oauth") },
+    fields: { provider: oauthProvider("openai", "openai_codex_oauth"), api_key: { type: "string", required: false, pattern: OPAQUE_RE, max: 400, secret: true } },
   },
   {
     method: "POST", path: "/api/oauth/openai/logout", group: "credentials",
@@ -117,7 +117,7 @@ export const POLICY_TABLE = [
   {
     method: "POST", path: "/api/oauth/openrouter/start", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
-    fields: { provider: oauthProvider("openrouter", "openrouter") },
+    fields: { provider: oauthProvider("openrouter", "openrouter"), api_key: { type: "string", required: false, pattern: OPAQUE_RE, max: 400, secret: true } },
   },
   {
     method: "POST", path: "/api/oauth/openrouter/refresh", group: "credentials",
@@ -132,7 +132,7 @@ export const POLICY_TABLE = [
   {
     method: "POST", path: "/api/oauth/meta/start", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
-    fields: { provider: oauthProvider("meta", "meta_ai_oauth") },
+    fields: { provider: oauthProvider("meta", "meta_ai_oauth"), api_key: { type: "string", required: false, pattern: OPAQUE_RE, max: 400, secret: true } },
   },
   {
     method: "POST", path: "/api/oauth/meta/refresh", group: "credentials",
