@@ -22,6 +22,7 @@ META_AI_OIDC_URL = "https://www.meta.ai/api/oidc/start"
 META_AI_WEB_URL = "https://www.meta.ai/"
 
 META_AI_MODELS: list[dict[str, Any]] = [
+    # --- Modelos disponibles vía OAuth (puente DGW, gratuitos) ---
     {
         "name": "meta-ai/llama-4-fast",
         "label": "Meta AI · Llama 4 Fast",
@@ -57,6 +58,124 @@ META_AI_MODELS: list[dict[str, Any]] = [
         "recommended": False,
         "context_length": 128000,
         "enable_thinking": False,
+    },
+    # --- Modelos Muse (requieren Meta Model API con clave API) ---
+    {
+        "name": "meta-ai/muse-wonder",
+        "label": "Meta AI · Muse Wonder (Frontier Coding)",
+        "size": "meta-ai-api",
+        "modified": "remoto",
+        "provider": "meta_ai_api",
+        "remote": True,
+        "free": False,
+        "recommended": True,
+        "context_length": 128000,
+        "enable_thinking": True,
+        "description": "Codificación frontier, agentes de larga duración, planificación avanzada",
+    },
+    {
+        "name": "meta-ai/muse-wonder-full",
+        "label": "Meta AI · Muse Wonder Full (SOTA)",
+        "size": "meta-ai-api",
+        "modified": "remoto",
+        "provider": "meta_ai_api",
+        "remote": True,
+        "free": False,
+        "recommended": True,
+        "context_length": 128000,
+        "enable_thinking": True,
+        "description": "Rendimiento SOTA para flujos críticos y benchmarks",
+    },
+    {
+        "name": "meta-ai/muse-ember",
+        "label": "Meta AI · Muse Ember (Multimodal Eficiente)",
+        "size": "meta-ai-api",
+        "modified": "remoto",
+        "provider": "meta_ai_api",
+        "remote": True,
+        "free": False,
+        "recommended": True,
+        "context_length": 128000,
+        "enable_thinking": False,
+        "description": "Multimodal eficiente para codificación diaria y tool calling",
+    },
+    {
+        "name": "meta-ai/muse-spark-1.3",
+        "label": "Meta AI · Muse Spark 1.3",
+        "size": "meta-ai-api",
+        "modified": "remoto",
+        "provider": "meta_ai_api",
+        "remote": True,
+        "free": False,
+        "recommended": True,
+        "context_length": 128000,
+        "enable_thinking": False,
+        "description": "Codificación y flujos agénticos, código más limpio y menos tokens",
+    },
+    {
+        "name": "meta-ai/muse-spark-1.2",
+        "label": "Meta AI · Muse Spark 1.2",
+        "size": "meta-ai-api",
+        "modified": "remoto",
+        "provider": "meta_ai_api",
+        "remote": True,
+        "free": False,
+        "recommended": False,
+        "context_length": 128000,
+        "enable_thinking": False,
+        "description": "Optimizado para programación y flujos agénticos",
+    },
+    {
+        "name": "meta-ai/muse-spark-1.1",
+        "label": "Meta AI · Muse Spark 1.1",
+        "size": "meta-ai-api",
+        "modified": "remoto",
+        "provider": "meta_ai_api",
+        "remote": True,
+        "free": False,
+        "recommended": False,
+        "context_length": 128000,
+        "enable_thinking": False,
+        "description": "Flujos agénticos, programación y percepción multimodal",
+    },
+    {
+        "name": "meta-ai/muse-image",
+        "label": "Meta AI · Muse Image (Generación)",
+        "size": "meta-ai-api",
+        "modified": "remoto",
+        "provider": "meta_ai_api",
+        "remote": True,
+        "free": False,
+        "recommended": False,
+        "context_length": 128000,
+        "enable_thinking": False,
+        "description": "Generación de imágenes con autocorrección y planificación",
+    },
+    {
+        "name": "meta-ai/sam-3.1",
+        "label": "Meta AI · SAM 3.1 (Segmentación)",
+        "size": "meta-ai-api",
+        "modified": "remoto",
+        "provider": "meta_ai_api",
+        "remote": True,
+        "free": False,
+        "recommended": False,
+        "context_length": 128000,
+        "enable_thinking": False,
+        "description": "Segmentación y detección de objetos en imágenes y vídeo",
+    },
+    {
+        "name": "meta-ai/muse-voice-transcribe",
+        "label": "Meta AI · Muse Voice Transcribe",
+        "size": "meta-ai-api",
+        "modified": "remoto",
+        "provider": "meta_ai_api",
+        "remote": True,
+        "free": False,
+        "recommended": False,
+        "context_length": 128000,
+        "enable_thinking": False,
+        "description": "Transcripción con diarización y detección de turnos",
     },
 ]
 
@@ -277,9 +396,14 @@ def logout_meta_ai_oauth() -> dict[str, Any]:
 
 def meta_ai_models(*, force: bool = False) -> list[dict[str, Any]]:
   _ = force
-  if not _load_meta_ai_session():
-    return []
-  return [dict(item) for item in META_AI_MODELS]
+  has_oauth_session = bool(_load_meta_ai_session())
+  result: list[dict[str, Any]] = []
+  for item in META_AI_MODELS:
+    provider = item.get("provider", "meta_ai_oauth")
+    if provider == "meta_ai_oauth" and not has_oauth_session:
+      continue
+    result.append(dict(item))
+  return result
 
 
 def _format_messages_for_meta_ai(messages: list[dict[str, Any]]) -> str:

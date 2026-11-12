@@ -3341,12 +3341,44 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "Plano de control no autorizado."}, status=403)
                 return
             try:
-                models = get_models()
+                models, ollama_err = get_model_catalog()
+                ollama_models = [m for m in models if m.get("provider") == "ollama"]
+                engines = {
+                    "llamacpp": {"online": False, "loaded_model": "", "status": "offline", "endpoint": "http://127.0.0.1:9931"},
+                    "ollama": {
+                        "online": not bool(ollama_err),
+                        "models_count": len(ollama_models),
+                        "status": "offline" if ollama_err else "online",
+                        "endpoint": OLLAMA_URL,
+                    },
+                    "strata": {"online": False, "loaded_model": "", "status": "offline", "endpoint": "http://127.0.0.1:18080"},
+                }
+                try:
+                    l_status = llamacpp_status()
+                    engines["llamacpp"] = {
+                        "online": bool(l_status.get("online")),
+                        "status": l_status.get("status", "offline"),
+                        "loaded_model": l_status.get("loaded_model", ""),
+                        "endpoint": "http://127.0.0.1:9931",
+                    }
+                except Exception:
+                    pass
+                try:
+                    s_status = strata_status()
+                    engines["strata"] = {
+                        "online": bool(s_status.get("online")),
+                        "status": s_status.get("status", "offline"),
+                        "loaded_model": s_status.get("loaded_model", ""),
+                        "endpoint": "http://127.0.0.1:18080",
+                    }
+                except Exception:
+                    pass
                 self.send_json(
                     {
                         "ok": True,
                         "ollama_url": OLLAMA_URL,
                         "models": models,
+                        "engines": engines,
                         "default_model": DEFAULT_MODEL or choose_default_model(models),
                         "tools": tool_catalog(),
                         "allowed_roots": allowed_root_catalog(),

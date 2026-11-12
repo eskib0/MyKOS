@@ -406,36 +406,52 @@ def refresh_openrouter_models() -> dict[str, Any]:
 def meta_ai_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool, str]:
     auth = meta_ai_auth_status()
     authenticated = bool(auth.get("authenticated"))
-    if not authenticated:
-        return [], False, ""
     rows = meta_ai_models(force=force)
-    models = [
-        {
+    models = []
+    for row in rows:
+        provider = str(row.get("provider", "meta_ai_oauth")).strip()
+        is_api = provider == "meta_ai_api"
+        family = "Muse (Meta AI)" if is_api else "Llama 4 (Meta AI)"
+        remote_host = (
+            "Meta Model API (compatible OpenAI SDK)"
+            if is_api
+            else "Meta AI (gateway.meta.ai DGW) mediante sesión OAuth de MyKOS"
+        )
+        auth_method = "Meta Model API Key" if is_api else "Meta AI OAuth (ecto1 / OIDC)"
+        auth_status = "requiere clave API" if is_api else ("autenticado" if authenticated else "no autenticado")
+        caps = ["chat", "completion", "tools"]
+        if row.get("enable_thinking"):
+            caps.append("thinking")
+        if is_api and "image" in str(row.get("name", "")).lower():
+            caps.append("image_generation")
+        models.append({
             "name": str(row.get("name", "")).strip(),
             "label": str(row.get("label") or row.get("name", "")).strip(),
-            "provider": "meta_ai_oauth",
-            "provider_label": "Meta AI · OAuth",
+            "provider": provider,
+            "provider_label": "Meta AI · API" if is_api else "Meta AI · OAuth",
             "size": 0,
             "parameter_size": "",
-            "family": "Llama 4 (Meta AI)",
+            "family": family,
             "quantization": "",
             "modified_at": "",
-            "capabilities": ["chat", "completion", "tools", *(["thinking"] if row.get("enable_thinking") else [])],
+            "capabilities": caps,
             "chat_capable": True,
             "vision_capable": False,
             "thinking_capable": bool(row.get("enable_thinking")),
             "tools_capable": True,
             "context_length": int(row.get("context_length", 128000)),
             "remote": True,
-            "remote_host": "Meta AI (gateway.meta.ai DGW) mediante sesión OAuth de MyKOS",
+            "remote_host": remote_host,
             "benchmark_capable": False,
-            "auth_method": "Meta AI OAuth (ecto1 / OIDC)",
-            "auth_status": "autenticado",
+            "auth_method": auth_method,
+            "auth_status": auth_status,
             "auth_error": "",
-        }
-        for row in rows
-    ]
-    return models, True, ""
+            "free": bool(row.get("free", False)),
+            "recommended": bool(row.get("recommended", False)),
+            "description": str(row.get("description", "")).strip() or "",
+        })
+    has_any = bool(models)
+    return models, authenticated or any(m["provider"] == "meta_ai_api" for m in models), ""
 
 
 def start_meta_ai_login() -> dict[str, Any]:

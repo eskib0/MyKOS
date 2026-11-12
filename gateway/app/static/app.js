@@ -81,6 +81,8 @@ const state = {
   geminiLiveClosing: false,
   geminiLiveTranscriptCounter: 0,
   helpLoaded: false,
+  activeModelsTab: null,
+  engines: null,
 };
 
 const elements = {
@@ -466,7 +468,8 @@ function mountModelsPage() {
   const benchmarkTab = document.querySelector("#models-tab-benchmark");
   const libraryTab = document.querySelector("#models-tab-library");
   const ollamaTab = document.querySelector("#models-tab-ollama");
-  const providersContainer = document.querySelector("#models-providers-container");
+  const localCliContainer = document.querySelector("#local-cli-container");
+  const cloudProvidersContainer = document.querySelector("#cloud-providers-container");
 
   // 1. Selector de modelo principal
   const modelSection = elements.model?.closest(".panel-section");
@@ -502,21 +505,42 @@ function mountModelsPage() {
     if (elements.ollamaManager) elements.ollamaManager.hidden = false;
   }
 
-  // 6. Proveedores de modelos (OAuth y APIs) quedan en su contenedor listos para la siguiente fase
-  if (providersContainer) {
-    const providerPanels = [
-      ...document.querySelectorAll(".oauth-manager"),
-      document.querySelector(".oauth-new-connection"),
+  // 6. Proveedores locales CLI
+  if (localCliContainer) {
+    const localClis = [
+      document.querySelector(".antigravity-cli-card"),
+      document.querySelector(".qwen-cli-card"),
+    ].filter(Boolean);
+    for (const card of localClis) {
+      localCliContainer.appendChild(card);
+    }
+  }
+
+  // 7. Proveedores en la nube (OAuth y APIs)
+  if (cloudProvidersContainer) {
+    const localCliCards = new Set([
+      document.querySelector(".antigravity-cli-card"),
+      document.querySelector(".qwen-cli-card"),
+    ]);
+    const cloudPanels = [
+      document.querySelector(".openai-oauth-card"),
+      document.querySelector(".claude-oauth-card"),
+      document.querySelector(".openrouter-oauth-card"),
+      document.querySelector(".meta-oauth-card"),
+      document.querySelector(".grok-card"),
       document.querySelector(".nvidia-api-card"),
       document.querySelector(".kimi-api-card"),
       document.querySelector(".gemini-api-card"),
       document.querySelector(".mistral-api-card"),
-      document.querySelector(".antigravity-cli-card"),
-      document.querySelector(".qwen-cli-card"),
+      document.querySelector(".oauth-new-connection"),
+      ...document.querySelectorAll(".oauth-manager"),
       ...document.querySelectorAll(".provider-manager"),
     ].filter(Boolean);
-    for (const panel of new Set(providerPanels)) {
-      providersContainer.appendChild(panel);
+
+    for (const panel of new Set(cloudPanels)) {
+      if (!localCliCards.has(panel)) {
+        cloudProvidersContainer.appendChild(panel);
+      }
     }
   }
 }
@@ -848,7 +872,7 @@ function setPage(page) {
     else elements.settingsNavBtn.removeAttribute("aria-current");
   }
   if (models) {
-    setModelsTab(state.activeModelsTab || "tuning");
+    setModelsTab(state.activeModelsTab || null);
   } else if (permissions) {
     elements.permissionsManager.hidden = false;
     elements.permissionsToggle.textContent = "Cerrar";
@@ -909,13 +933,13 @@ function setSettingsTab(tabName) {
 }
 
 function setModelsTab(tabName) {
-  const validTabs = ["tuning", "benchmark", "library", "ollama"];
-  const targetTab = validTabs.includes(tabName) ? tabName : "tuning";
+  const validTabs = ["tuning", "benchmark", "library", "ollama", "local-providers", "cloud-providers"];
+  const targetTab = validTabs.includes(tabName) ? tabName : null;
   state.activeModelsTab = targetTab;
 
   const tabBtns = document.querySelectorAll(".models-tab-btn");
   for (const btn of tabBtns) {
-    const active = btn.dataset.modelsTab === targetTab;
+    const active = targetTab !== null && btn.dataset.modelsTab === targetTab;
     btn.classList.toggle("active", active);
     if (active) btn.setAttribute("aria-selected", "true");
     else btn.removeAttribute("aria-selected");
@@ -926,13 +950,19 @@ function setModelsTab(tabName) {
     benchmark: document.querySelector("#models-tab-benchmark"),
     library: document.querySelector("#models-tab-library"),
     ollama: document.querySelector("#models-tab-ollama"),
+    "local-providers": document.querySelector("#models-tab-local-providers"),
+    "cloud-providers": document.querySelector("#models-tab-cloud-providers"),
   };
 
   for (const [key, panel] of Object.entries(panels)) {
     if (panel) {
-      panel.classList.toggle("active", key === targetTab);
+      const active = targetTab !== null && key === targetTab;
+      panel.classList.toggle("active", active);
+      panel.hidden = !active;
     }
   }
+
+  if (!targetTab) return;
 
   if (targetTab === "tuning") {
     if (elements.modelTuning) elements.modelTuning.hidden = false;
@@ -948,6 +978,105 @@ function setModelsTab(tabName) {
     if (elements.ollamaManager) elements.ollamaManager.hidden = false;
     loadOllamaInstalled();
     renderOllamaInstalled();
+  } else if (targetTab === "local-providers") {
+    updateLocalEnginesStatus();
+  } else if (targetTab === "cloud-providers") {
+    loadOAuthStatus();
+  }
+}
+
+async function updateLocalEnginesStatus(forceReload = false) {
+  const pilotLlama = document.querySelector("#pilot-llamacpp");
+  const badgeLlama = document.querySelector("#badge-llamacpp");
+  const infoLlama = document.querySelector("#model-info-llamacpp");
+
+  const pilotOllama = document.querySelector("#pilot-ollama");
+  const badgeOllama = document.querySelector("#badge-ollama");
+  const infoOllama = document.querySelector("#model-info-ollama");
+
+  const pilotStrata = document.querySelector("#pilot-strata");
+  const badgeStrata = document.querySelector("#badge-strata");
+  const infoStrata = document.querySelector("#model-info-strata");
+
+  if (forceReload || !state.engines) {
+    try {
+      const statusData = await api("/api/status");
+      if (statusData && statusData.engines) {
+        state.engines = statusData.engines;
+      }
+      if (statusData && Array.isArray(statusData.models)) {
+        state.models = statusData.models;
+      }
+    } catch (_e) {
+      // ignore
+    }
+  }
+
+  const engines = state.engines || {};
+
+  // 1. llama.cpp 0.9 (CUDA)
+  const llama = engines.llamacpp;
+  const llamaModel = state.models?.find((m) => m.provider === "llama_cpp" || m.provider === "llamacpp");
+  const llamaOnline = Boolean(llama?.online || llamaModel);
+  const llamaLoaded = llama?.loaded_model || (llamaModel ? (llamaModel.label || llamaModel.name) : "");
+
+  if (pilotLlama && badgeLlama && infoLlama) {
+    if (llamaOnline) {
+      pilotLlama.className = "engine-pilot on";
+      pilotLlama.title = "Estado: ON · Aceleración CUDA en RTX 5060";
+      badgeLlama.className = "engine-status-badge on";
+      badgeLlama.textContent = "ON";
+      infoLlama.textContent = llamaLoaded ? `Cargado: ${llamaLoaded}` : "En línea (CUDA RTX 5060)";
+    } else {
+      pilotLlama.className = "engine-pilot off";
+      pilotLlama.title = "Estado: OFF · Servidor detenido";
+      badgeLlama.className = "engine-status-badge off";
+      badgeLlama.textContent = "OFF";
+      infoLlama.textContent = "Servidor detenido";
+    }
+  }
+
+  // 2. Ollama
+  const ollama = engines.ollama;
+  const ollamaModels = state.models?.filter((m) => m.provider === "ollama") || [];
+  const ollamaOnline = Boolean((ollama && ollama.online) || ollamaModels.length > 0);
+
+  if (pilotOllama && badgeOllama && infoOllama) {
+    if (ollamaOnline) {
+      pilotOllama.className = "engine-pilot on";
+      pilotOllama.title = "Estado: ON · Servidor Ollama activo";
+      badgeOllama.className = "engine-status-badge on";
+      badgeOllama.textContent = "ON";
+      const count = ollama?.models_count !== undefined ? ollama.models_count : ollamaModels.length;
+      infoOllama.textContent = `${count} modelo${count === 1 ? "" : "s"} instalado${count === 1 ? "" : "s"}`;
+    } else {
+      pilotOllama.className = "engine-pilot off";
+      pilotOllama.title = "Estado: OFF · Servidor detenido";
+      badgeOllama.className = "engine-status-badge off";
+      badgeOllama.textContent = "OFF";
+      infoOllama.textContent = "Servidor detenido";
+    }
+  }
+
+  // 3. Strata GPU
+  const strata = engines.strata;
+  const strataModel = state.models?.find((m) => m.provider === "strata");
+  const strataOnline = Boolean((strata && strata.online) || strataModel);
+
+  if (pilotStrata && badgeStrata && infoStrata) {
+    if (strataOnline) {
+      pilotStrata.className = "engine-pilot on";
+      pilotStrata.title = "Estado: ON · Strata GPU activo";
+      badgeStrata.className = "engine-status-badge on";
+      badgeStrata.textContent = "ON";
+      infoStrata.textContent = strata?.loaded_model ? `Cargado: ${strata.loaded_model}` : "En línea";
+    } else {
+      pilotStrata.className = "engine-pilot off";
+      pilotStrata.title = "Estado: OFF · Desconectado";
+      badgeStrata.className = "engine-status-badge off";
+      badgeStrata.textContent = "OFF";
+      infoStrata.textContent = "Desconectado";
+    }
   }
 }
 
@@ -955,7 +1084,18 @@ function initModelsTabs() {
   const tabBtns = document.querySelectorAll(".models-tab-btn");
   for (const btn of tabBtns) {
     btn.addEventListener("click", () => {
-      setModelsTab(btn.dataset.modelsTab);
+      const clickedTab = btn.dataset.modelsTab;
+      if (state.activeModelsTab === clickedTab) {
+        setModelsTab(null);
+      } else {
+        setModelsTab(clickedTab);
+      }
+    });
+  }
+  const refreshBtn = document.querySelector("#local-engines-refresh");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", () => {
+      updateLocalEnginesStatus(true);
     });
   }
 }
@@ -3416,6 +3556,7 @@ async function loadModels() {
   try {
     const data = await api("/api/status");
     state.models = data.models || [];
+    state.engines = data.engines || null;
     state.allowedRoots = data.allowed_roots || [];
     state.benchmarkProfiles = data.benchmark_profiles || [];
     elements.model.replaceChildren();
@@ -3466,6 +3607,7 @@ async function loadModels() {
     elements.memoryMeta.textContent = `${memoryCount} recuerdo${memoryCount === 1 ? "" : "s"} persistente${memoryCount === 1 ? "" : "s"}`;
     updateModelMeta();
     syncModelGenerationControls();
+    updateLocalEnginesStatus();
     renderBenchmarkResults();
     renderNvidiaApiStatus();
     renderKimiApiStatus();

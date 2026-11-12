@@ -513,7 +513,7 @@
 
         <!-- Barra de botones idéntica a configuración -->
         <nav class="settings-subnav models-subnav" aria-label="Secciones de modelos">
-          <button class="settings-tab-btn models-tab-btn active" type="button" data-models-tab="tuning">
+          <button class="settings-tab-btn models-tab-btn" type="button" data-models-tab="tuning">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="3"></circle>
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -541,18 +541,108 @@
             </svg>
             <span>Gestión Ollama</span>
           </button>
+          <button class="settings-tab-btn models-tab-btn" type="button" data-models-tab="local-providers">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+              <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+              <line x1="6" y1="6" x2="6.01" y2="6"></line>
+              <line x1="6" y1="18" x2="6.01" y2="18"></line>
+            </svg>
+            <span>Proveedores local</span>
+          </button>
+          <button class="settings-tab-btn models-tab-btn" type="button" data-models-tab="cloud-providers">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+            </svg>
+            <span>Proveedores en la nube</span>
+          </button>
         </nav>
 
         <!-- Contenedor con las pestañas de contenido -->
         <div class="models-tab-content-container settings-page-content">
-          <div id="models-tab-tuning" class="models-tab-panel settings-tab-panel active"></div>
-          <div id="models-tab-benchmark" class="models-tab-panel settings-tab-panel"></div>
-          <div id="models-tab-library" class="models-tab-panel settings-tab-panel"></div>
-          <div id="models-tab-ollama" class="models-tab-panel settings-tab-panel"></div>
-        </div>
+          <!-- Pestaña 1: Ajuste de modelo -->
+          <div id="models-tab-tuning" class="models-tab-panel settings-tab-panel"></div>
 
-        <!-- Contenedor temporal para proveedores de modelos (OAuth / APIs) -->
-        <div id="models-providers-container" class="models-providers-container" hidden></div>
+          <!-- Pestaña 2: Rendimiento -->
+          <div id="models-tab-benchmark" class="models-tab-panel settings-tab-panel"></div>
+
+          <!-- Pestaña 3: Biblioteca -->
+          <div id="models-tab-library" class="models-tab-panel settings-tab-panel"></div>
+
+          <!-- Pestaña 4: Gestión Ollama -->
+          <div id="models-tab-ollama" class="models-tab-panel settings-tab-panel"></div>
+
+          <!-- Pestaña 5: Proveedores local (3 motores con pilotos ON/OFF) -->
+          <div id="models-tab-local-providers" class="models-tab-panel settings-tab-panel">
+            <div class="settings-tab-header">
+              <p class="settings-hint">Motores de inferencia locales ejecutándose en este equipo.</p>
+              <button id="local-engines-refresh" class="text-button" type="button">Actualizar estado</button>
+            </div>
+            <div class="local-engines-grid">
+              <!-- Motor 1: llama.cpp -->
+              <div class="local-engine-card" id="engine-card-llamacpp">
+                <div class="engine-card-header">
+                  <div class="engine-title-row">
+                    <span class="engine-pilot on" id="pilot-llamacpp" title="Estado: ON"></span>
+                    <strong>llama.cpp 0.9 (CUDA)</strong>
+                  </div>
+                  <span class="engine-status-badge on" id="badge-llamacpp">ON</span>
+                </div>
+                <p class="engine-desc">Motor local de alto rendimiento con aceleración CUDA en RTX 5060 (8GB VRAM).</p>
+                <div class="engine-meta-row">
+                  <span class="engine-endpoint">http://127.0.0.1:9931</span>
+                  <span class="engine-model-info" id="model-info-llamacpp">Comprobando…</span>
+                </div>
+              </div>
+
+              <!-- Motor 2: Ollama -->
+              <div class="local-engine-card" id="engine-card-ollama">
+                <div class="engine-card-header">
+                  <div class="engine-title-row">
+                    <span class="engine-pilot on" id="pilot-ollama" title="Estado: ON"></span>
+                    <strong>Ollama</strong>
+                  </div>
+                  <span class="engine-status-badge on" id="badge-ollama">ON</span>
+                </div>
+                <p class="engine-desc">Servidor de inferencia local y gestión automatizada de modelos GGUF.</p>
+                <div class="engine-meta-row">
+                  <span class="engine-endpoint">http://127.0.0.1:11434</span>
+                  <span class="engine-model-info" id="model-info-ollama">Comprobando…</span>
+                </div>
+              </div>
+
+              <!-- Motor 3: Strata -->
+              <div class="local-engine-card" id="engine-card-strata">
+                <div class="engine-card-header">
+                  <div class="engine-title-row">
+                    <span class="engine-pilot off" id="pilot-strata" title="Estado: OFF"></span>
+                    <strong>Strata GPU</strong>
+                  </div>
+                  <span class="engine-status-badge off" id="badge-strata">OFF</span>
+                </div>
+                <p class="engine-desc">Motor acelerador local Strata para inferencia de ultra-baja latencia.</p>
+                <div class="engine-meta-row">
+                  <span class="engine-endpoint">http://127.0.0.1:18080</span>
+                  <span class="engine-model-info" id="model-info-strata">Desconectado</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Asistentes y herramientas CLI locales -->
+            <div class="settings-tab-header" style="margin-top: 14px;">
+              <p class="settings-hint">Conexiones locales mediante herramientas de línea de comandos (CLI).</p>
+            </div>
+            <div id="local-cli-container" class="cloud-providers-grid"></div>
+          </div>
+
+          <!-- Pestaña 6: Proveedores en la nube -->
+          <div id="models-tab-cloud-providers" class="models-tab-panel settings-tab-panel">
+            <div class="settings-tab-header">
+              <p class="settings-hint">Conecta tus cuentas OAuth y claves API personales para usar modelos en la nube.</p>
+            </div>
+            <div id="cloud-providers-container" class="cloud-providers-grid"></div>
+          </div>
+        </div>
       </section>
 
       <section id="permissions-page" class="app-page" hidden>
