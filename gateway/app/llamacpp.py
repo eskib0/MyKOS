@@ -142,7 +142,7 @@ def get_available_gguf_models() -> dict[str, dict[str, Any]]:
         lower_key = key.lower()
         section = ini[key] if key in ini else (ini[lower_key] if lower_key in ini else default_section)
         n_gpu_layers = int(section.get("n-gpu-layers", section.get("ngl", 6 if ("35b" in lower_key or "glm" in lower_key or "74b" in lower_key) else 20)))
-        ctx_size = int(section.get("ctx-size", section.get("c", 16384)))
+        ctx_size = int(section.get("ctx-size", section.get("c", 32768)))
         reasoning = str(section.get("reasoning", "auto")).strip().lower()
 
         # Determinar familia y parámetros a partir del nombre
