@@ -373,11 +373,13 @@ function updateModelMeta() {
     ? model.provider === "anthropic_oauth"
       ? "Claude se ejecuta a través de Claude Code usando tu sesión OAuth de claude.ai; no se guarda ninguna API key en MyKOS."
       : model.remote
-      ? "Este modelo puede enviar las peticiones fuera de este equipo."
+      ? (model.provider === "qwen_cli"
+        ? "Este modelo se conecta vía Qwen Code CLI y razona en la nube de Alibaba Cloud DashScope."
+        : model.provider === "antigravity" || model.provider === "antigravity_cli"
+        ? "Este modelo se conecta vía Antigravity CLI y razona en la nube de Google."
+        : "Este modelo puede enviar las peticiones fuera de este equipo a servidores en la nube.")
       : model.provider === "llama_cpp"
       ? "Este modelo se ejecuta localmente mediante llama.cpp con CUDA."
-      : model.provider === "qwen_cli"
-      ? "Este modelo se ejecuta localmente mediante el CLI de Qwen Code."
       : "Este modelo se ejecuta localmente mediante Ollama."
     : "";
   elements.privacyNote.className = `privacy-note${model && model.remote ? " remote" : ""}`;
@@ -468,7 +470,6 @@ function mountModelsPage() {
   const benchmarkTab = document.querySelector("#models-tab-benchmark");
   const libraryTab = document.querySelector("#models-tab-library");
   const ollamaTab = document.querySelector("#models-tab-ollama");
-  const localCliContainer = document.querySelector("#local-cli-container");
   const cloudProvidersContainer = document.querySelector("#cloud-providers-container");
 
   // 1. Selector de modelo principal
@@ -505,23 +506,8 @@ function mountModelsPage() {
     if (elements.ollamaManager) elements.ollamaManager.hidden = false;
   }
 
-  // 6. Proveedores locales CLI
-  if (localCliContainer) {
-    const localClis = [
-      document.querySelector(".antigravity-cli-card"),
-      document.querySelector(".qwen-cli-card"),
-    ].filter(Boolean);
-    for (const card of localClis) {
-      localCliContainer.appendChild(card);
-    }
-  }
-
-  // 7. Proveedores en la nube (OAuth y APIs)
+  // 6. Proveedores en la nube (OAuth, APIs y asistentes CLI remotos)
   if (cloudProvidersContainer) {
-    const localCliCards = new Set([
-      document.querySelector(".antigravity-cli-card"),
-      document.querySelector(".qwen-cli-card"),
-    ]);
     const cloudPanels = [
       document.querySelector(".openai-oauth-card"),
       document.querySelector(".claude-oauth-card"),
@@ -532,15 +518,15 @@ function mountModelsPage() {
       document.querySelector(".kimi-api-card"),
       document.querySelector(".gemini-api-card"),
       document.querySelector(".mistral-api-card"),
+      document.querySelector(".antigravity-cli-card"),
+      document.querySelector(".qwen-cli-card"),
       document.querySelector(".oauth-new-connection"),
       ...document.querySelectorAll(".oauth-manager"),
       ...document.querySelectorAll(".provider-manager"),
     ].filter(Boolean);
 
     for (const panel of new Set(cloudPanels)) {
-      if (!localCliCards.has(panel)) {
-        cloudProvidersContainer.appendChild(panel);
-      }
+      cloudProvidersContainer.appendChild(panel);
     }
   }
 }
