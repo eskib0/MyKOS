@@ -1300,13 +1300,13 @@ async function checkSystemUpdates(force = false) {
         elements.headerUpdatePill.hidden = false;
         elements.headerUpdatePill.classList.remove("up-to-date");
         elements.headerUpdatePill.classList.add("has-update");
-        elements.headerUpdatePill.title = "Actualización disponible para MyKOS (haz clic para ir a Gestión local)";
-        const vStr = data.latest_version ? ` v${data.latest_version.replace(/^v/, "")}` : "";
+        const newVer = data.latest_version ? `v${data.latest_version.replace(/^v/, "")}` : "nueva versión";
+        elements.headerUpdatePill.title = `Actualización ${newVer} disponible para MyKOS (haz clic para ir a Gestión local)`;
         if (elements.headerUpdateLabel) {
-          elements.headerUpdateLabel.textContent = `Actualización${vStr}`;
+          elements.headerUpdateLabel.textContent = `Actualizar (${newVer})`;
         }
         if (elements.headerUpdateVersion) {
-          elements.headerUpdateVersion.textContent = data.latest_version ? `v${data.latest_version.replace(/^v/, "")}` : "";
+          elements.headerUpdateVersion.textContent = newVer;
         }
       }
       if (elements.systemUpdateBadge) {
@@ -1336,14 +1336,15 @@ async function checkSystemUpdates(force = false) {
         elements.updateStatusMsg.className = "update-status-msg ok";
       }
     } else {
-      // Sistema al día: botón accesible con piloto apagado (gris estático)
+      // Sistema al día: botón accesible con piloto apagado (gris estático) mostrando la versión actual
       if (elements.headerUpdatePill) {
         elements.headerUpdatePill.hidden = false;
         elements.headerUpdatePill.classList.remove("has-update");
         elements.headerUpdatePill.classList.add("up-to-date");
-        elements.headerUpdatePill.title = "MyKOS está al día (haz clic para abrir Gestión local)";
+        const curVer = data.current_version ? `v${data.current_version.replace(/^v/, "")}` : "v2.0.0";
+        elements.headerUpdatePill.title = `MyKOS ${curVer} · Sistema al día (haz clic para abrir Gestión local)`;
         if (elements.headerUpdateLabel) {
-          elements.headerUpdateLabel.textContent = "Sistema al día";
+          elements.headerUpdateLabel.textContent = curVer;
         }
       }
       if (elements.systemUpdateBadge) {
