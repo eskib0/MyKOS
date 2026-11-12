@@ -1209,6 +1209,7 @@ class ModelController {
 
   async request(provider, payload) {
     if (provider === "llama_cpp") {
+      await this.unloadOllama().catch(() => {});
       const resolved = await this.resolveLlamaModelId(payload?.model);
       if (resolved && payload) {
         payload.model = resolved;

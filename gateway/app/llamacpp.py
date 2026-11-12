@@ -111,7 +111,7 @@ def get_available_gguf_models() -> dict[str, dict[str, Any]]:
     """Devuelve los modelos GGUF encontrados en MODELS_DIR y en la caché de Hugging Face de llama.cpp."""
     models: dict[str, dict[str, Any]] = {}
     ini = _load_ini_presets()
-    default_section = ini["default"] if "default" in ini else {}
+    default_section = ini["*"] if "*" in ini else (ini["default"] if "default" in ini else {})
 
     candidates: list[Path] = []
     if MODELS_DIR.is_dir():
