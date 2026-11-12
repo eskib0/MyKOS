@@ -185,6 +185,8 @@ const elements = {
   contextMeterDetail: document.querySelector("#context-meter-detail"),
   connection: document.querySelector("#connection"),
   newChat: document.querySelector("#new-chat"),
+  historySection: document.querySelector("#history-section"),
+  toggleConversations: document.querySelector("#toggle-conversations"),
   conversationList: document.querySelector("#conversation-list"),
   conversationCount: document.querySelector("#conversation-count"),
   privacyNote: document.querySelector("#privacy-note"),
@@ -1427,26 +1429,30 @@ function initVoiceSettings() {
 
 function restoreSidebarState() {
   const hidden = localStorage.getItem("mykos-sidebar-hidden") === "true";
+  const updateToggleButtons = (isCollapsed) => {
+    document.querySelectorAll(".sidebar-toggle").forEach((btn) => {
+      btn.textContent = "panel MyKOS";
+      btn.title = isCollapsed ? "Mostrar panel lateral" : "Ocultar panel lateral";
+      btn.setAttribute("aria-label", isCollapsed ? "Mostrar panel lateral" : "Ocultar panel lateral");
+      btn.setAttribute("aria-expanded", String(!isCollapsed));
+    });
+  };
   const closeSidebar = () => {
     document.querySelector(".app-shell").classList.add("sidebar-collapsed");
     localStorage.setItem("mykos-sidebar-hidden", "true");
-    elements.sidebarToggle.textContent = "panel MyKOS";
-    elements.sidebarToggle.title = "Mostrar panel lateral";
-    elements.sidebarToggle.setAttribute("aria-label", "Mostrar panel lateral");
-    elements.sidebarToggle.setAttribute("aria-expanded", "false");
+    updateToggleButtons(true);
   };
   const openSidebar = () => {
     document.querySelector(".app-shell").classList.remove("sidebar-collapsed");
     localStorage.setItem("mykos-sidebar-hidden", "false");
-    elements.sidebarToggle.textContent = "panel MyKOS";
-    elements.sidebarToggle.title = "Ocultar panel lateral";
-    elements.sidebarToggle.setAttribute("aria-label", "Ocultar panel lateral");
-    elements.sidebarToggle.setAttribute("aria-expanded", "true");
+    updateToggleButtons(false);
   };
-  elements.sidebarToggle.addEventListener("click", () => {
-    const isCollapsed = document.querySelector(".app-shell").classList.contains("sidebar-collapsed");
-    if (isCollapsed) openSidebar();
-    else closeSidebar();
+  document.addEventListener("click", (event) => {
+    if (event.target.closest(".sidebar-toggle")) {
+      const isCollapsed = document.querySelector(".app-shell").classList.contains("sidebar-collapsed");
+      if (isCollapsed) openSidebar();
+      else closeSidebar();
+    }
   });
   document.querySelector("#sidebar-close")?.addEventListener("click", closeSidebar);
   if (hidden) {
@@ -2217,6 +2223,31 @@ function renderConversationList() {
     entry.append(button, deleteButton);
     elements.conversationList.appendChild(entry);
   }
+}
+
+function toggleConversationList(forceState) {
+  if (!elements.historySection) return;
+  const isCurrentlyCollapsed = elements.historySection.classList.contains("collapsed");
+  const willBeCollapsed = typeof forceState === "boolean" ? !forceState : !isCurrentlyCollapsed;
+  elements.historySection.classList.toggle("collapsed", willBeCollapsed);
+  if (elements.toggleConversations) {
+    elements.toggleConversations.setAttribute("aria-expanded", String(!willBeCollapsed));
+    elements.toggleConversations.title = willBeCollapsed ? "Mostrar conversaciones" : "Ocultar conversaciones";
+    elements.toggleConversations.setAttribute("aria-label", elements.toggleConversations.title);
+  }
+  try {
+    localStorage.setItem("mykos_conversations_collapsed", willBeCollapsed ? "1" : "0");
+  } catch (_e) {}
+}
+
+function initConversationToggle() {
+  if (!elements.toggleConversations || !elements.historySection) return;
+  elements.toggleConversations.addEventListener("click", () => toggleConversationList());
+  try {
+    if (localStorage.getItem("mykos_conversations_collapsed") === "1") {
+      toggleConversationList(false);
+    }
+  } catch (_e) {}
 }
 
 function sourceDomain(url) {
@@ -3955,6 +3986,7 @@ async function sendMessage(event) {
 
 async function newConversation() {
   try {
+    toggleConversationList(true);
     const data = await api("/api/conversations/new", { method: "POST", body: "{}" });
     state.conversationId = data.conversation.id;
     setPage("chat");
@@ -5512,8 +5544,11 @@ document.addEventListener("keydown", (event) => {
     if (!document.querySelector(".app-shell")?.classList.contains("sidebar-collapsed")) {
       document.querySelector(".app-shell")?.classList.add("sidebar-collapsed");
       localStorage.setItem("mykos-sidebar-hidden", "true");
-      elements.sidebarToggle?.setAttribute("aria-expanded", "false");
-      if (elements.sidebarToggle) elements.sidebarToggle.title = "Mostrar panel lateral";
+      document.querySelectorAll(".sidebar-toggle").forEach((btn) => {
+        btn.setAttribute("aria-expanded", "false");
+        btn.title = "Mostrar panel lateral";
+        btn.setAttribute("aria-label", "Mostrar panel lateral");
+      });
     }
   }
 });
@@ -5532,6 +5567,7 @@ elements.dropzone.addEventListener("drop", (event) => {
 });
 
 showWelcome();
+initConversationToggle();
 loadBenchmarkResults();
 loadModels();
 loadConversations();

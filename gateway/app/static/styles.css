@@ -203,8 +203,34 @@ button { cursor: pointer; }
   background: rgba(74, 171, 202, .15);
   font-weight: 600;
 }
-.history-section { display: flex; min-height: 160px; flex: 1 1 240px; flex-direction: column; margin-top: 24px; }
+.history-section { display: flex; min-height: 160px; flex: 1 1 240px; flex-direction: column; margin-top: 24px; transition: flex .2s ease, min-height .2s ease; }
+.history-section.collapsed { min-height: 0; flex: 0 0 auto; }
+.history-section.collapsed .conversation-list { display: none; }
+.history-section.collapsed .section-toggle-btn .toggle-icon { transform: rotate(-90deg); }
 .section-heading { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
+.section-heading-main { display: flex; align-items: center; gap: 8px; }
+.section-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  transition: all .2s ease;
+}
+.section-toggle-btn:hover {
+  border-color: var(--line);
+  color: var(--text-strong);
+  background: var(--panel-hover);
+}
+.section-toggle-btn .toggle-icon {
+  transition: transform .25s cubic-bezier(0.4, 0, 0.2, 1);
+}
 .section-count { min-width: 19px; padding: 1px 5px; border: 1px solid var(--line); border-radius: 999px; text-align: center; letter-spacing: 0; }
 .conversation-list { min-height: 0; overflow-y: auto; padding-right: 3px; }
 .conversation-entry { display: flex; align-items: stretch; gap: 3px; margin-bottom: 5px; }
@@ -310,8 +336,13 @@ select:focus, textarea:focus { border-color: var(--accent); }
 .attachment-remove { border: 0; padding: 0 2px; color: var(--muted); background: transparent; font-size: 14px; line-height: 1; }
 .attachment-remove:hover { color: #ff8585; }
 .attachment-error { color: #ffb0b0; font-size: 11px; }
-.sidebar-bottom { margin-top: 20px; color: var(--muted); font-size: 12px; }
-.sidebar-bottom p { margin: 12px 0 0; line-height: 1.45; }
+.sidebar > .voice-mode-manager {
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.sidebar-bottom { margin-top: 14px; color: var(--muted); font-size: 12px; }
+.sidebar-bottom p { margin: 8px 0 0; line-height: 1.45; }
 .connection { display: flex; align-items: center; gap: 8px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .connection.ok .status-dot { background: var(--accent); box-shadow: 0 0 12px var(--accent-glow); }
@@ -333,6 +364,30 @@ select:focus, textarea:focus { border-color: var(--accent); }
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; max-width: 980px; width: 100%; margin: 0 auto; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
 .page-header h2 { margin: 4px 0 3px; color: var(--text-strong); font-size: 25px; font-weight: 600; }
 .page-header p { margin: 0; color: var(--muted); font-size: 12px; }
+.page-header-actions { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.page-header-actions .text-button {
+  height: 30px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  letter-spacing: 0;
+  box-sizing: border-box;
+  white-space: nowrap;
+  transition: all .15s ease;
+}
+.page-header-actions .text-button:hover {
+  border-color: var(--accent);
+  background: var(--panel-hover);
+  color: var(--text-strong);
+}
 .models-page-content { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; max-width: 980px; width: 100%; margin: 0 auto; }
 .models-page-content > .panel-section { min-width: 0; margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(53, 70, 81, .72); }
 .models-page-content > .panel-section:first-child { grid-column: 1 / -1; }
@@ -1143,7 +1198,7 @@ textarea::placeholder { color: #748293; }
    ========================================================================== */
 
 .sidebar-footer {
-  margin-top: auto;
+  margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid var(--line);
   display: flex;

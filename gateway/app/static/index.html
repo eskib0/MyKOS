@@ -7,7 +7,7 @@
   <link rel="manifest" href="/static/manifest.json">
   <title>MyKOS · MyKOS</title>
   <link rel="icon" type="image/jpeg" href="/static/logo-mykos.jpg?v=20260924-1">
-  <link rel="stylesheet" href="/static/styles.css?v=20261101-overlay-sidebar-1">
+  <link rel="stylesheet" href="/static/styles.css?v=20261112-sidebar-toggle-1">
 </head>
 <body>
   <div class="app-shell">
@@ -31,10 +31,17 @@
         <button class="app-nav-item" type="button" data-page="permissions" title="Gestionar permisos del PC">Permisos</button>
       </nav>
 
-      <section class="history-section">
+      <section class="history-section" id="history-section">
         <div class="section-heading">
-          <span>Conversaciones</span>
-          <span id="conversation-count" class="section-count">0</span>
+          <div class="section-heading-main">
+            <span>Conversaciones</span>
+            <span id="conversation-count" class="section-count">0</span>
+          </div>
+          <button id="toggle-conversations" class="section-toggle-btn" type="button" aria-expanded="true" aria-controls="conversation-list" title="Ocultar conversaciones" aria-label="Ocultar conversaciones">
+            <svg class="toggle-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
         </div>
         <div id="conversation-list" class="conversation-list" aria-label="Historial de conversaciones"></div>
       </section>
@@ -497,7 +504,10 @@
             <h2>Modelos</h2>
             <p>Selecciona, conecta y prueba los modelos disponibles para MyKOS.</p>
           </div>
-          <button id="models-back" class="text-button" type="button">Volver al chat</button>
+          <div class="page-header-actions">
+            <button class="sidebar-toggle" type="button" aria-label="Mostrar u ocultar panel MyKOS" aria-controls="sidebar" aria-expanded="true" title="Panel MyKOS">panel MyKOS</button>
+            <button id="models-back" class="text-button" type="button">Volver al chat</button>
+          </div>
         </header>
         <div id="models-page-content" class="models-page-content">
         </div>
@@ -510,7 +520,10 @@
             <h2>Permisos del PC</h2>
             <p>Revisa, limita y revoca los permisos concedidos a MyKOS.</p>
           </div>
-          <button id="permissions-back" class="text-button" type="button">Volver al chat</button>
+          <div class="page-header-actions">
+            <button class="sidebar-toggle" type="button" aria-label="Mostrar u ocultar panel MyKOS" aria-controls="sidebar" aria-expanded="true" title="Panel MyKOS">panel MyKOS</button>
+            <button id="permissions-back" class="text-button" type="button">Volver al chat</button>
+          </div>
         </header>
         <div id="permissions-page-content" class="permissions-page-content"></div>
       </section>
@@ -522,7 +535,10 @@
             <h2>Recordatorios</h2>
             <p>Recordatorios propios de MyKOS. Añadir o borrar pide una aprobación de un clic (sin pasar por el chat).</p>
           </div>
-          <button id="automations-back" class="text-button" type="button">Volver al chat</button>
+          <div class="page-header-actions">
+            <button class="sidebar-toggle" type="button" aria-label="Mostrar u ocultar panel MyKOS" aria-controls="sidebar" aria-expanded="true" title="Panel MyKOS">panel MyKOS</button>
+            <button id="automations-back" class="text-button" type="button">Volver al chat</button>
+          </div>
         </header>
         <div class="automations-page-content">
           <section class="automation-panel">
@@ -563,7 +579,10 @@
             <h2>Configuración de MyKOS</h2>
             <p>Personaliza la apariencia, diagnostica el estado del sistema, gestiona motores multimedia y dispositivos.</p>
           </div>
-          <button id="settings-back" class="text-button" type="button">Volver al chat</button>
+          <div class="page-header-actions">
+            <button class="sidebar-toggle" type="button" aria-label="Mostrar u ocultar panel MyKOS" aria-expanded="true" title="Panel MyKOS">panel MyKOS</button>
+            <button id="settings-back" class="text-button" type="button">Volver al chat</button>
+          </div>
         </header>
 
         <nav class="settings-subnav" aria-label="Secciones de configuración">
@@ -1164,7 +1183,7 @@
   </div>
   <script src="/static/call-visual.js?v=20260927-1"></script>
   <script src="/static/call-transcript.js?v=20260927-1"></script>
-  <script src="/static/app.js?v=20261101-voice-chat-2"></script>
+  <script src="/static/app.js?v=20261112-sidebar-toggle-1"></script>
 </body>
 </html>
 
