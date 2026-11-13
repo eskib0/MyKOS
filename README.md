@@ -2,22 +2,6 @@
 
 > **MyKOS**: Plataforma personal de inteligencia artificial, pasarela multimodelo gobernada por políticas, motor de voz bidireccional y suite de aplicaciones para **Linux** y **Windows**.
 
-[![GitHub Release](https://img.shields.io/github/v/release/eskib0/MyKOS?style=flat-square&color=00d4ff)](https://github.com/eskib0/MyKOS/releases/latest)
-[![GitHub Stars](https://img.shields.io/github/stars/eskib0/MyKOS?style=flat-square&color=ffd700&label=estrellas%20%E2%AD%90)](https://github.com/eskib0/MyKOS/stargazers)
-[![Total Downloads](https://img.shields.io/github/downloads/eskib0/MyKOS/total?style=flat-square&color=2ea44f&label=descargas%20oficiales)](https://github.com/eskib0/MyKOS/releases)
-[![Git Clones](https://img.shields.io/badge/clones%20semanales-200%2B-blueviolet?style=flat-square&logo=git)](https://github.com/eskib0/MyKOS)
-[![Windows](https://img.shields.io/badge/Windows-MyKOS--Setup--2.0.0.exe-0078d4?style=flat-square&logo=windows)](https://github.com/eskib0/MyKOS/releases/latest/download/MyKOS-Setup-2.0.0.exe)
-[![Linux](https://img.shields.io/badge/Linux-mykos__2.0.0__amd64.deb-e95420?style=flat-square&logo=ubuntu)](https://github.com/eskib0/MyKOS/releases/latest/download/mykos_2.0.0_amd64.deb)
-[![Web Oficial](https://img.shields.io/badge/Web%20Oficial-eskib0.github.io%2Fmykos--web-10b981?style=flat-square&logo=googlechrome)](https://eskib0.github.io/mykos-web/)
-[![Demo Teaser](https://img.shields.io/badge/Demo%20Teaser-Ver%20V%C3%ADdeo%20%E2%96%B6-00e5ff?style=flat-square&logo=youtube)](https://eskib0.github.io/mykos-web/)
-
-### ⚡ Descarga Rápida (Instaladores Oficiales v2.0.0)
-
-| Sistema Operativo | Formato | Enlace de Descarga Directa | Modo de Instalación |
-| :--- | :--- | :--- | :--- |
-| **Windows 10 / 11** | `.exe` (Setup) | [**Descargar `MyKOS-Setup-2.0.0.exe`**](https://github.com/eskib0/MyKOS/releases/latest/download/MyKOS-Setup-2.0.0.exe) | Doble clic, asistente visual y acceso directo en el Escritorio. |
-| **Linux (Ubuntu / Debian / Mint)** | `.deb` | [**Descargar `mykos_2.0.0_amd64.deb`**](https://github.com/eskib0/MyKOS/releases/latest/download/mykos_2.0.0_amd64.deb) | Doble clic en el centro de software o `sudo apt install ./mykos_2.0.0_amd64.deb`. |
-
 ---
 
 ## 🏛️ Estructura del Repositorio
@@ -141,9 +125,10 @@ flowchart LR
 ## 🛠️ Instalación Rápida (Linux y Windows)
 
 ### En Linux:
-Ejecuta el instalador incluido en la raíz del proyecto:
+Clona el repositorio e inicia el asistente de instalación:
 
 ```bash
+git clone https://github.com/eskib0/MyKOS.git ~/MyKOS
 cd ~/MyKOS
 ./install.sh
 ```
@@ -156,9 +141,11 @@ cd ~/MyKOS
 5. *(Opcional)* Con `./install.sh --systemd`, crea y habilita el servicio de usuario `mykos-gateway.service` para que arranque automáticamente con tu sesión.
 
 ### En Windows (PowerShell):
-Abre PowerShell en la carpeta del proyecto y ejecuta:
+Clona el repositorio y ejecuta el instalador en PowerShell:
 
 ```powershell
+git clone https://github.com/eskib0/MyKOS.git "$HOME\MyKOS"
+cd "$HOME\MyKOS"
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
