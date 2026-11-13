@@ -108,6 +108,26 @@ const elements = {
   sidebar: document.querySelector("#sidebar"),
   sidebarToggle: document.querySelector("#sidebar-toggle"),
   chatPanel: document.querySelector(".chat-panel"),
+  cortexBtn: document.querySelector("#cortex-btn"),
+  cortexPage: document.querySelector("#cortex-page"),
+  cortexRefresh: document.querySelector("#cortex-refresh"),
+  cortexBack: document.querySelector("#cortex-back"),
+  cortexSearch: document.querySelector("#cortex-search"),
+  cortexStats: document.querySelector("#cortex-stats"),
+  cortexFit: document.querySelector("#cortex-fit"),
+  cortexCanvas: document.querySelector("#cortex-canvas"),
+  cortexTooltip: document.querySelector("#cortex-tooltip"),
+  cortexNotePane: document.querySelector("#cortex-note-pane"),
+  cortexNoteTitle: document.querySelector("#cortex-note-title"),
+  cortexNotePath: document.querySelector("#cortex-note-path"),
+  cortexModeToggle: document.querySelector("#cortex-mode-toggle"),
+  cortexNoteSave: document.querySelector("#cortex-note-save"),
+  cortexNoteTags: document.querySelector("#cortex-note-tags"),
+  cortexNoteStatus: document.querySelector("#cortex-note-status"),
+  cortexNoteViewer: document.querySelector("#cortex-note-viewer"),
+  cortexNoteEditor: document.querySelector("#cortex-note-editor"),
+  cortexBacklinksCount: document.querySelector("#cortex-backlinks-count"),
+  cortexBacklinksList: document.querySelector("#cortex-backlinks-list"),
   modelsPage: document.querySelector("#models-page"),
   modelsPageContent: document.querySelector("#models-page-content"),
   modelsBack: document.querySelector("#models-back"),
@@ -850,16 +870,23 @@ async function loadNodes() {
 }
 
 function setPage(page) {
+  const cortex = page === "cortex";
   const models = page === "models";
   const permissions = page === "permissions";
   const automations = page === "automations";
   const isSettings = page === "settings" || page === "voice" || page === "management" || page === "media" || page === "nodes";
-  const configPage = models || permissions || automations || isSettings;
+  const configPage = cortex || models || permissions || automations || isSettings;
   elements.chatPanel.classList.toggle("models-active", configPage);
+  if (elements.cortexPage) elements.cortexPage.hidden = !cortex;
   elements.modelsPage.hidden = !models;
   elements.permissionsPage.hidden = !permissions;
   elements.automationsPage.hidden = !automations;
   if (elements.settingsPage) elements.settingsPage.hidden = !isSettings;
+  if (elements.cortexBtn) {
+    elements.cortexBtn.classList.toggle("active", cortex);
+    if (cortex) elements.cortexBtn.setAttribute("aria-current", "page");
+    else elements.cortexBtn.removeAttribute("aria-current");
+  }
   for (const item of elements.navItems) {
     const active = item.dataset.page === page;
     item.classList.toggle("active", active);
@@ -871,6 +898,11 @@ function setPage(page) {
     if (isSettings) elements.settingsNavBtn.setAttribute("aria-current", "page");
     else elements.settingsNavBtn.removeAttribute("aria-current");
   }
+  if (cortex) {
+    openCortexPage();
+    return;
+  }
+  stopCortexLoop();
   if (models) {
     setModelsTab(state.activeModelsTab || null);
   } else if (permissions) {
@@ -4367,6 +4399,9 @@ elements.compactContext.addEventListener("click", compactCurrentContext);
 elements.helpCommands.addEventListener("click", openHelpPanel);
 elements.helpClose.addEventListener("click", closeHelpPanel);
 elements.modelsBack.addEventListener("click", () => setPage("chat"));
+elements.cortexBack?.addEventListener("click", () => setPage("chat"));
+elements.cortexRefresh?.addEventListener("click", () => loadCortexGraph({ fitOnFirst: false }));
+elements.cortexFit?.addEventListener("click", () => fitCortexGraph());
 elements.permissionsBack.addEventListener("click", () => setPage("chat"));
 elements.automationsBack.addEventListener("click", () => setPage("chat"));
 elements.automationCreateForm.addEventListener("submit", submitAutomationCreate);
@@ -4375,6 +4410,10 @@ elements.managementRefresh.addEventListener("click", () => loadManagement());
 elements.mediaRefresh.addEventListener("click", () => loadMedia());
 elements.nodesRefresh.addEventListener("click", () => loadNodes());
 for (const item of elements.navItems) item.addEventListener("click", () => setPage(item.dataset.page));
+elements.cortexBtn?.addEventListener("click", () => {
+  setPage("cortex");
+  if (window.innerWidth <= 720) document.querySelector("#sidebar-close")?.click();
+});
 elements.settingsNavBtn?.addEventListener("click", () => {
   setPage("settings");
   if (window.innerWidth <= 720) document.querySelector("#sidebar-close")?.click();
@@ -5948,4 +5987,831 @@ if (initPage) {
     if (initTab && typeof setSettingsTab === "function") setSettingsTab(initTab);
   }, 350);
 }
+
+// ───────────────────────── Cortex (Grafo & Cerebro) ─────────────────────────
+const cortexState = {
+  initialized: false,
+  loading: false,
+  nodes: [],
+  nodeMap: new Map(),
+  edges: [],
+  adjMap: new Map(),
+  stats: { notes: 0, ghosts: 0, edges: 0 },
+  camera: { x: 0, y: 0, zoom: 1 },
+  viewport: { width: 800, height: 600, dpr: 1 },
+  alpha: 0,
+  rafId: 0,
+  dragNode: null,
+  panning: false,
+  panOrigin: null,
+  pointerDown: null,
+  didMove: false,
+  hoverNode: null,
+  selectedId: null,
+  activePath: null,
+  editMode: false,
+  searchQuery: "",
+  matchedIds: new Set(),
+  searchTimer: null,
+  resizeObserver: null,
+};
+
+function setCortexStatus(message = "", isError = false) {
+  if (!elements.cortexNoteStatus) return;
+  if (!message) {
+    elements.cortexNoteStatus.hidden = true;
+    elements.cortexNoteStatus.textContent = "";
+    elements.cortexNoteStatus.classList.remove("is-error");
+    return;
+  }
+  elements.cortexNoteStatus.hidden = false;
+  elements.cortexNoteStatus.textContent = message;
+  elements.cortexNoteStatus.classList.toggle("is-error", Boolean(isError));
+}
+
+function setCortexEditMode(editing) {
+  cortexState.editMode = Boolean(editing);
+  if (elements.cortexNoteViewer) {
+    elements.cortexNoteViewer.hidden = cortexState.editMode;
+    elements.cortexNoteViewer.style.display = cortexState.editMode ? "none" : "block";
+  }
+  if (elements.cortexNoteEditor) {
+    elements.cortexNoteEditor.hidden = !cortexState.editMode;
+    elements.cortexNoteEditor.style.display = cortexState.editMode ? "block" : "none";
+  }
+  if (elements.cortexNoteSave) {
+    elements.cortexNoteSave.hidden = !cortexState.editMode;
+    elements.cortexNoteSave.style.display = cortexState.editMode ? "inline-block" : "none";
+    elements.cortexNoteSave.disabled = !cortexState.editMode;
+  }
+  if (elements.cortexModeToggle) {
+    elements.cortexModeToggle.textContent = cortexState.editMode ? "Cancelar" : "Editar";
+    elements.cortexModeToggle.classList.toggle("danger-text-button", cortexState.editMode);
+  }
+  if (cortexState.editMode && elements.cortexNoteEditor) {
+    elements.cortexNoteEditor.focus();
+  }
+}
+
+function appendInlineMarkdown(parent, text) {
+  const tokenRe = /(\[\[[^\]]+\]\]|`[^`\n]+`|\*\*[^*\n]+\*\*)/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = tokenRe.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parent.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+    }
+    const token = match[0];
+    if (token.startsWith("[[") && token.endsWith("]]")) {
+      const inner = token.slice(2, -2);
+      const bar = inner.indexOf("|");
+      const targetName = (bar > 0 ? inner.slice(0, bar) : inner).split("#")[0].trim();
+      const display = (bar > 0 ? inner.slice(bar + 1) : inner).trim();
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cortex-wikilink";
+      btn.textContent = display || targetName;
+      btn.addEventListener("click", () => navigateCortexByName(targetName));
+      parent.appendChild(btn);
+    } else if (token.startsWith("`") && token.endsWith("`")) {
+      const code = document.createElement("code");
+      code.textContent = token.slice(1, -1);
+      parent.appendChild(code);
+    } else if (token.startsWith("**") && token.endsWith("**")) {
+      const strong = document.createElement("strong");
+      strong.textContent = token.slice(2, -2);
+      parent.appendChild(strong);
+    }
+    lastIndex = tokenRe.lastIndex;
+  }
+  if (lastIndex < text.length) {
+    parent.appendChild(document.createTextNode(text.slice(lastIndex)));
+  }
+}
+
+function renderCortexMarkdown(container, markdown) {
+  if (!container) return;
+  container.replaceChildren();
+  let body = String(markdown || "");
+  if (body.startsWith("---\n") || body.startsWith("---\r\n")) {
+    const endIdx = body.indexOf("\n---", 3);
+    if (endIdx !== -1) {
+      const after = body.indexOf("\n", endIdx + 4);
+      body = after !== -1 ? body.slice(after + 1) : "";
+    }
+  }
+  const lines = body.replace(/\r\n/g, "\n").split("\n");
+  let inCode = false;
+  let codeLines = [];
+  let listEl = null;
+
+  const flushList = () => {
+    if (listEl) {
+      container.appendChild(listEl);
+      listEl = null;
+    }
+  };
+
+  for (const line of lines) {
+    if (line.trim().startsWith("```")) {
+      flushList();
+      if (!inCode) {
+        inCode = true;
+        codeLines = [];
+      } else {
+        inCode = false;
+        const pre = document.createElement("pre");
+        const code = document.createElement("code");
+        code.textContent = codeLines.join("\n");
+        pre.appendChild(code);
+        container.appendChild(pre);
+      }
+      continue;
+    }
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+    const headingMatch = line.match(/^(#{1,4})\s+(.*)$/);
+    if (headingMatch) {
+      flushList();
+      const level = headingMatch[1].length;
+      const h = document.createElement(`h${level}`);
+      appendInlineMarkdown(h, headingMatch[2]);
+      container.appendChild(h);
+      continue;
+    }
+    const listMatch = line.match(/^\s*[-*]\s+(.*)$/);
+    if (listMatch) {
+      if (!listEl) listEl = document.createElement("ul");
+      const li = document.createElement("li");
+      appendInlineMarkdown(li, listMatch[1]);
+      listEl.appendChild(li);
+      continue;
+    }
+    flushList();
+    if (!line.trim()) continue;
+    const p = document.createElement("p");
+    appendInlineMarkdown(p, line);
+    container.appendChild(p);
+  }
+  flushList();
+  if (!container.childNodes.length) {
+    const empty = document.createElement("p");
+    empty.className = "cortex-empty-hint";
+    empty.textContent = "Nota vacía. Pulsa «Editar» para añadir contenido.";
+    container.appendChild(empty);
+  }
+}
+
+function navigateCortexByName(name) {
+  const clean = String(name || "").trim();
+  if (!clean) return;
+  const low = clean.toLowerCase();
+  const match = cortexState.nodes.find((node) => (
+    node.label.toLowerCase() === low ||
+    (node.path && node.path.toLowerCase() === low) ||
+    (node.path && node.path.toLowerCase() === `${low}.md`)
+  ));
+  if (match) {
+    selectCortexNode(match);
+  } else {
+    openGhostDraft(clean);
+  }
+}
+
+function openGhostDraft(label) {
+  const safeName = String(label || "Nueva Nota").replace(/[\\:*?"<>|]/g, "").trim() || "Nueva Nota";
+  const draftPath = safeName.toLowerCase().endsWith(".md") ? safeName : `${safeName}.md`;
+  cortexState.activePath = draftPath;
+  cortexState.originalContent = `# ${safeName}\n\n`;
+  if (elements.cortexNoteTitle) elements.cortexNoteTitle.textContent = safeName;
+  if (elements.cortexNotePath) elements.cortexNotePath.textContent = `${draftPath} (nueva nota desde fantasma)`;
+  if (elements.cortexNoteTags) {
+    elements.cortexNoteTags.replaceChildren();
+    elements.cortexNoteTags.hidden = true;
+  }
+  if (elements.cortexNoteEditor) {
+    elements.cortexNoteEditor.value = cortexState.originalContent;
+  }
+  if (elements.cortexModeToggle) elements.cortexModeToggle.disabled = false;
+  if (elements.cortexNoteSave) elements.cortexNoteSave.disabled = false;
+  if (elements.cortexBacklinksCount) elements.cortexBacklinksCount.textContent = "0";
+  if (elements.cortexBacklinksList) elements.cortexBacklinksList.replaceChildren();
+  renderCortexMarkdown(elements.cortexNoteViewer, cortexState.originalContent);
+  setCortexEditMode(true);
+  setCortexStatus("Nodo fantasma listo: edita y pulsa Guardar para crear la nota.");
+}
+
+async function loadCortexNote(relativePath) {
+  if (!relativePath) return;
+  setCortexStatus("Cargando nota...");
+  try {
+    const note = await api(`/api/cortex/note?path=${encodeURIComponent(relativePath)}`);
+    cortexState.activePath = note.path;
+    cortexState.originalContent = note.content || "";
+    if (elements.cortexNoteTitle) elements.cortexNoteTitle.textContent = note.title || note.path;
+    if (elements.cortexNotePath) elements.cortexNotePath.textContent = note.path;
+    if (elements.cortexNoteEditor) elements.cortexNoteEditor.value = note.content || "";
+    if (elements.cortexModeToggle) elements.cortexModeToggle.disabled = false;
+    if (elements.cortexNoteSave) elements.cortexNoteSave.disabled = true;
+
+    if (elements.cortexNoteTags) {
+      elements.cortexNoteTags.replaceChildren();
+      const tags = Array.isArray(note.tags) ? note.tags : [];
+      for (const tag of tags) {
+        const pill = document.createElement("span");
+        pill.className = "cortex-tag-pill";
+        pill.textContent = tag;
+        elements.cortexNoteTags.appendChild(pill);
+      }
+      elements.cortexNoteTags.hidden = tags.length === 0;
+    }
+
+    renderCortexMarkdown(elements.cortexNoteViewer, note.content || "");
+    setCortexEditMode(false);
+
+    const backlinks = Array.isArray(note.backlinks) ? note.backlinks : [];
+    if (elements.cortexBacklinksCount) elements.cortexBacklinksCount.textContent = String(backlinks.length);
+    if (elements.cortexBacklinksList) {
+      elements.cortexBacklinksList.replaceChildren();
+      if (backlinks.length === 0) {
+        const empty = document.createElement("span");
+        empty.className = "cortex-empty-hint";
+        empty.textContent = "Sin enlaces entrantes.";
+        elements.cortexBacklinksList.appendChild(empty);
+      } else {
+        for (const bl of backlinks) {
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "cortex-backlink-chip";
+          chip.textContent = bl.source.replace(/\.md$/i, "");
+          chip.title = bl.source;
+          chip.addEventListener("click", () => {
+            const targetNode = cortexState.nodeMap.get(bl.id) || cortexState.nodes.find((n) => n.path === bl.source);
+            if (targetNode) selectCortexNode(targetNode);
+            else loadCortexNote(bl.source);
+          });
+          elements.cortexBacklinksList.appendChild(chip);
+        }
+      }
+    }
+    setCortexStatus("");
+  } catch (error) {
+    setCortexStatus(error.message || "No se pudo cargar la nota.", true);
+  }
+}
+
+async function saveCortexNote() {
+  if (!cortexState.activePath || !elements.cortexNoteEditor) return;
+  const pathToSave = cortexState.activePath;
+  const content = elements.cortexNoteEditor.value;
+  if (elements.cortexNoteSave) elements.cortexNoteSave.disabled = true;
+  setCortexStatus("Guardando nota y actualizando grafo...");
+  try {
+    await api("/api/cortex/note", {
+      method: "POST",
+      body: JSON.stringify({ path: pathToSave, content }),
+    });
+    renderCortexMarkdown(elements.cortexNoteViewer, content);
+    await loadCortexGraph({ fitOnFirst: false });
+    await loadCortexNote(pathToSave);
+    const updatedNode = cortexState.nodes.find((n) => n.path === pathToSave);
+    if (updatedNode) cortexState.selectedId = updatedNode.id;
+    setCortexStatus("Nota guardada y grafo actualizado.");
+  } catch (error) {
+    setCortexStatus(error.message || "Error al guardar la nota.", true);
+    if (elements.cortexNoteSave) elements.cortexNoteSave.disabled = false;
+  }
+}
+
+function selectCortexNode(node) {
+  if (!node) return;
+  cortexState.selectedId = node.id;
+  ensureCortexLoop();
+  if (node.type === "unresolved" || !node.path) {
+    openGhostDraft(node.label);
+  } else {
+    loadCortexNote(node.path);
+  }
+}
+
+function applyCortexGraphData(data, { fitOnFirst = false } = {}) {
+  const prevPositions = new Map(cortexState.nodes.map((n) => [n.id, { x: n.x, y: n.y, vx: n.vx, vy: n.vy }]));
+  const rawNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+  const rawEdges = Array.isArray(data?.edges) ? data.edges : [];
+  const hadNodes = prevPositions.size > 0;
+
+  const nodes = rawNodes.map((n, index) => {
+    const prev = prevPositions.get(n.id);
+    const angle = (index / Math.max(1, rawNodes.length)) * Math.PI * 2;
+    const radius = 140 + (index % 5) * 35;
+    return {
+      ...n,
+      r: Math.max(5.5, Math.min(15, 5 + Math.sqrt((n.weight || 0) + 1) * 1.65)),
+      x: prev ? prev.x : Math.cos(angle) * radius + (Math.random() - 0.5) * 24,
+      y: prev ? prev.y : Math.sin(angle) * radius + (Math.random() - 0.5) * 24,
+      vx: prev ? prev.vx : 0,
+      vy: prev ? prev.vy : 0,
+    };
+  });
+
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const edges = rawEdges
+    .map((e) => ({ ...e, src: nodeMap.get(e.source), dst: nodeMap.get(e.target) }))
+    .filter((e) => e.src && e.dst);
+
+  const adjMap = new Map();
+  for (const e of edges) {
+    if (!adjMap.has(e.source)) adjMap.set(e.source, new Set());
+    if (!adjMap.has(e.target)) adjMap.set(e.target, new Set());
+    adjMap.get(e.source).add(e.target);
+    adjMap.get(e.target).add(e.source);
+  }
+
+  cortexState.nodes = nodes;
+  cortexState.nodeMap = nodeMap;
+  cortexState.edges = edges;
+  cortexState.adjMap = adjMap;
+  cortexState.stats = data?.stats || {
+    notes: nodes.filter((n) => n.type === "note").length,
+    ghosts: nodes.filter((n) => n.type === "unresolved").length,
+    edges: edges.length,
+  };
+
+  if (elements.cortexStats) {
+    const s = cortexState.stats;
+    elements.cortexStats.textContent = `${s.notes ?? 0} notas · ${s.edges ?? 0} enlaces · ${s.ghosts ?? 0} fantasmas`;
+  }
+
+  if (cortexState.searchQuery) updateLocalSearchMatches();
+  cortexState.alpha = hadNodes ? 0.45 : 1.0;
+  if (!hadNodes || fitOnFirst) fitCortexGraph();
+  ensureCortexLoop();
+}
+
+async function loadCortexGraph({ fitOnFirst = false } = {}) {
+  if (cortexState.loading) return;
+  cortexState.loading = true;
+  if (elements.cortexRefresh) elements.cortexRefresh.disabled = true;
+  try {
+    const data = await api("/api/cortex/graph");
+    applyCortexGraphData(data, { fitOnFirst });
+  } catch (error) {
+    setCortexStatus(error.message || "No se pudo cargar el grafo de Cortex.", true);
+  } finally {
+    cortexState.loading = false;
+    if (elements.cortexRefresh) elements.cortexRefresh.disabled = false;
+  }
+}
+
+function fitCortexGraph() {
+  const { width, height } = cortexState.viewport;
+  if (!cortexState.nodes.length || !width || !height) {
+    cortexState.camera = { x: 0, y: 0, zoom: 1 };
+    return;
+  }
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const n of cortexState.nodes) {
+    if (n.x < minX) minX = n.x;
+    if (n.x > maxX) maxX = n.x;
+    if (n.y < minY) minY = n.y;
+    if (n.y > maxY) maxY = n.y;
+  }
+  const spanX = Math.max(120, maxX - minX + 120);
+  const spanY = Math.max(120, maxY - minY + 120);
+  const zoom = Math.max(0.25, Math.min(2.0, Math.min(width / spanX, height / spanY) * 0.85));
+  cortexState.camera.x = (minX + maxX) / 2;
+  cortexState.camera.y = (minY + maxY) / 2;
+  cortexState.camera.zoom = zoom;
+  drawCortexGraph();
+}
+
+function resizeCortexCanvas() {
+  const canvas = elements.cortexCanvas;
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cortexState.viewport = { width: rect.width, height: rect.height, dpr };
+  const targetW = Math.round(rect.width * dpr);
+  const targetH = Math.round(rect.height * dpr);
+  if (canvas.width !== targetW || canvas.height !== targetH) {
+    canvas.width = targetW;
+    canvas.height = targetH;
+  }
+  drawCortexGraph();
+}
+
+function screenToWorld(sx, sy) {
+  const { width, height } = cortexState.viewport;
+  const { x, y, zoom } = cortexState.camera;
+  return {
+    x: (sx - width / 2) / zoom + x,
+    y: (sy - height / 2) / zoom + y,
+  };
+}
+
+function findNodeAtScreen(sx, sy) {
+  const w = screenToWorld(sx, sy);
+  const hitPad = 6 / Math.max(0.4, cortexState.camera.zoom);
+  for (let i = cortexState.nodes.length - 1; i >= 0; i -= 1) {
+    const n = cortexState.nodes[i];
+    const dx = w.x - n.x;
+    const dy = w.y - n.y;
+    const r = n.r + hitPad;
+    if (dx * dx + dy * dy <= r * r) return n;
+  }
+  return null;
+}
+
+function stepCortexPhysics() {
+  const nodes = cortexState.nodes;
+  const edges = cortexState.edges;
+  const alpha = cortexState.alpha;
+  if (!nodes.length || (alpha <= 0.002 && !cortexState.dragNode)) return false;
+
+  const nCount = nodes.length;
+  // Repulsión entre pares + gravedad suave al origen
+  for (let i = 0; i < nCount; i += 1) {
+    const a = nodes[i];
+    a.vx += -a.x * 0.015 * alpha;
+    a.vy += -a.y * 0.015 * alpha;
+    for (let j = i + 1; j < nCount; j += 1) {
+      const b = nodes[j];
+      let dx = b.x - a.x;
+      let dy = b.y - a.y;
+      let distSq = dx * dx + dy * dy;
+      if (distSq < 1) {
+        dx = (Math.random() - 0.5) * 2;
+        dy = (Math.random() - 0.5) * 2;
+        distSq = dx * dx + dy * dy + 1;
+      }
+      const clampedSq = Math.max(324, distSq);
+      const force = (2600 / clampedSq) * alpha;
+      const dist = Math.sqrt(distSq);
+      const fx = (dx / dist) * force;
+      const fy = (dy / dist) * force;
+      a.vx -= fx;
+      a.vy -= fy;
+      b.vx += fx;
+      b.vy += fy;
+    }
+  }
+
+  // Muelles en aristas
+  const targetLen = 125;
+  for (const e of edges) {
+    const a = e.src;
+    const b = e.dst;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const displacement = (dist - targetLen) * 0.055 * alpha;
+    const fx = (dx / dist) * displacement;
+    const fy = (dy / dist) * displacement;
+    a.vx += fx;
+    a.vy += fy;
+    b.vx -= fx;
+    b.vy -= fy;
+  }
+
+  // Integración y amortiguación
+  for (const n of nodes) {
+    if (n === cortexState.dragNode) {
+      n.vx = 0;
+      n.vy = 0;
+      continue;
+    }
+    n.vx *= 0.8;
+    n.vy *= 0.8;
+    n.x += n.vx;
+    n.y += n.vy;
+  }
+
+  if (!cortexState.dragNode) {
+    cortexState.alpha *= 0.982;
+  }
+  return true;
+}
+
+function drawCortexGraph() {
+  const canvas = elements.cortexCanvas;
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const { width, height, dpr } = cortexState.viewport;
+  const { x: camX, y: camY, zoom } = cortexState.camera;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  ctx.save();
+  ctx.translate(width / 2, height / 2);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-camX, -camY);
+
+  const focusId = cortexState.hoverNode?.id || cortexState.selectedId;
+  const focusNeighbors = focusId ? cortexState.adjMap.get(focusId) : null;
+  const hasSearch = cortexState.searchQuery.length > 0;
+
+  // Aristas
+  for (const e of cortexState.edges) {
+    const connected = focusId && (e.source === focusId || e.target === focusId);
+    const searchDim = hasSearch && !cortexState.matchedIds.has(e.source) && !cortexState.matchedIds.has(e.target);
+    ctx.beginPath();
+    ctx.moveTo(e.src.x, e.src.y);
+    ctx.lineTo(e.dst.x, e.dst.y);
+    if (connected) {
+      ctx.strokeStyle = "rgba(6, 182, 212, 0.78)";
+      ctx.lineWidth = 1.8 / zoom;
+    } else if (searchDim || (focusId && !connected)) {
+      ctx.strokeStyle = "rgba(6, 182, 212, 0.08)";
+      ctx.lineWidth = 1 / zoom;
+    } else {
+      ctx.strokeStyle = "rgba(6, 182, 212, 0.25)";
+      ctx.lineWidth = 1.15 / zoom;
+    }
+    ctx.stroke();
+  }
+
+  // Nodos
+  for (const n of cortexState.nodes) {
+    const isGhost = n.type === "unresolved";
+    const isSelected = n.id === cortexState.selectedId;
+    const isHovered = n.id === cortexState.hoverNode?.id;
+    const isNeighbor = Boolean(focusNeighbors && focusNeighbors.has(n.id));
+    const isMatched = hasSearch && cortexState.matchedIds.has(n.id);
+
+    let alpha = 1;
+    if (hasSearch && !isMatched && !isSelected && !isHovered) {
+      alpha = 0.18;
+    } else if (focusId && !isSelected && !isHovered && !isNeighbor) {
+      alpha = 0.35;
+    }
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    if (isMatched || isSelected || isHovered) {
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.r + 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = isMatched ? "rgba(250, 204, 21, 0.28)" : "rgba(6, 182, 212, 0.25)";
+      ctx.fill();
+    }
+
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+    ctx.fillStyle = isGhost ? "#06b6d4" : (isHovered || isSelected ? "#f87171" : "#ef4444");
+    ctx.fill();
+    ctx.lineWidth = (isSelected || isHovered || isMatched ? 2.2 : 1.2) / Math.max(0.7, zoom);
+    ctx.strokeStyle = isMatched ? "#facc15" : (isGhost ? "#0891b2" : "#dc2626");
+    ctx.stroke();
+
+    // Etiquetas legibles según zoom o foco
+    if (zoom >= 0.62 || isHovered || isSelected || isMatched) {
+      const fontSize = Math.max(9.5, Math.min(13, 11.5 / Math.sqrt(Math.max(0.45, zoom))));
+      ctx.font = `${isSelected || isHovered || isMatched ? "600 " : ""}${fontSize}px system-ui, -apple-system, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillStyle = isMatched ? "#fef08a" : "rgba(226, 232, 240, 0.92)";
+      ctx.fillText(n.label, n.x, n.y + n.r + 4);
+    }
+
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+function runCortexFrame() {
+  cortexState.rafId = 0;
+  if (!elements.cortexPage || elements.cortexPage.hidden) return;
+  const active = stepCortexPhysics();
+  drawCortexGraph();
+  if (active) {
+    cortexState.rafId = window.requestAnimationFrame(runCortexFrame);
+  }
+}
+
+function ensureCortexLoop() {
+  if (cortexState.rafId || !elements.cortexPage || elements.cortexPage.hidden) return;
+  cortexState.rafId = window.requestAnimationFrame(runCortexFrame);
+}
+
+function stopCortexLoop() {
+  if (cortexState.rafId) {
+    window.cancelAnimationFrame(cortexState.rafId);
+    cortexState.rafId = 0;
+  }
+}
+
+function updateCortexTooltip(node, sx, sy) {
+  const tip = elements.cortexTooltip;
+  if (!tip) return;
+  if (!node) {
+    tip.hidden = true;
+    return;
+  }
+  tip.replaceChildren();
+  const title = document.createElement("strong");
+  title.textContent = node.label;
+  const typeSpan = document.createElement("span");
+  typeSpan.className = "cortex-tooltip-type";
+  typeSpan.textContent = node.type === "unresolved" ? "Fantasma (sin crear)" : "Nota";
+  tip.appendChild(title);
+  tip.appendChild(typeSpan);
+  tip.style.left = `${Math.min(cortexState.viewport.width - 190, Math.max(8, sx + 14))}px`;
+  tip.style.top = `${Math.min(cortexState.viewport.height - 54, Math.max(8, sy + 14))}px`;
+  tip.hidden = false;
+}
+
+function updateLocalSearchMatches() {
+  const q = cortexState.searchQuery.toLowerCase();
+  const matched = new Set();
+  if (q) {
+    for (const n of cortexState.nodes) {
+      const inLabel = n.label.toLowerCase().includes(q);
+      const inPath = n.path && n.path.toLowerCase().includes(q);
+      const inTags = Array.isArray(n.tags) && n.tags.some((t) => t.toLowerCase().includes(q));
+      const inAliases = Array.isArray(n.aliases) && n.aliases.some((a) => a.toLowerCase().includes(q));
+      if (inLabel || inPath || inTags || inAliases) matched.add(n.id);
+    }
+  }
+  cortexState.matchedIds = matched;
+}
+
+async function runCortexSearch(query) {
+  cortexState.searchQuery = String(query || "").trim();
+  updateLocalSearchMatches();
+  drawCortexGraph();
+
+  if (cortexState.searchTimer) window.clearTimeout(cortexState.searchTimer);
+  if (!cortexState.searchQuery) return;
+
+  const snapshotQuery = cortexState.searchQuery;
+  cortexState.searchTimer = window.setTimeout(async () => {
+    try {
+      const data = await api(`/api/cortex/search?q=${encodeURIComponent(snapshotQuery)}`);
+      if (cortexState.searchQuery !== snapshotQuery) return;
+      for (const item of data?.results || []) {
+        if (item.id) cortexState.matchedIds.add(item.id);
+      }
+      drawCortexGraph();
+    } catch {
+      // Mantiene las coincidencias locales si falla la consulta remota
+    }
+  }, 160);
+}
+
+function initCortexCanvasEvents() {
+  if (cortexState.initialized) return;
+  cortexState.initialized = true;
+
+  const canvas = elements.cortexCanvas;
+  if (canvas) {
+    if (typeof ResizeObserver === "function") {
+      cortexState.resizeObserver = new ResizeObserver(() => resizeCortexCanvas());
+      cortexState.resizeObserver.observe(canvas.parentElement || canvas);
+    }
+    window.addEventListener("resize", () => {
+      if (elements.cortexPage && !elements.cortexPage.hidden) resizeCortexCanvas();
+    });
+
+    canvas.addEventListener("pointerdown", (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const sx = event.clientX - rect.left;
+      const sy = event.clientY - rect.top;
+      canvas.setPointerCapture(event.pointerId);
+      cortexState.pointerDown = { x: sx, y: sy };
+      cortexState.didMove = false;
+      const hit = findNodeAtScreen(sx, sy);
+      if (hit) {
+        cortexState.dragNode = hit;
+        cortexState.alpha = Math.max(cortexState.alpha, 0.35);
+        canvas.classList.add("is-dragging");
+        ensureCortexLoop();
+      } else {
+        cortexState.panning = true;
+        cortexState.panOrigin = { x: sx, y: sy, camX: cortexState.camera.x, camY: cortexState.camera.y };
+        canvas.classList.add("is-dragging");
+      }
+    });
+
+    canvas.addEventListener("pointermove", (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const sx = event.clientX - rect.left;
+      const sy = event.clientY - rect.top;
+
+      if (cortexState.pointerDown) {
+        const dx = sx - cortexState.pointerDown.x;
+        const dy = sy - cortexState.pointerDown.y;
+        if (dx * dx + dy * dy > 16) cortexState.didMove = true;
+      }
+
+      if (cortexState.dragNode) {
+        const w = screenToWorld(sx, sy);
+        cortexState.dragNode.x = w.x;
+        cortexState.dragNode.y = w.y;
+        cortexState.alpha = Math.max(cortexState.alpha, 0.25);
+        updateCortexTooltip(cortexState.dragNode, sx, sy);
+        ensureCortexLoop();
+        return;
+      }
+
+      if (cortexState.panning && cortexState.panOrigin) {
+        const zoom = cortexState.camera.zoom;
+        cortexState.camera.x = cortexState.panOrigin.camX - (sx - cortexState.panOrigin.x) / zoom;
+        cortexState.camera.y = cortexState.panOrigin.camY - (sy - cortexState.panOrigin.y) / zoom;
+        drawCortexGraph();
+        return;
+      }
+
+      const hit = findNodeAtScreen(sx, sy);
+      if (hit !== cortexState.hoverNode) {
+        cortexState.hoverNode = hit;
+        canvas.classList.toggle("is-hovering", Boolean(hit));
+        drawCortexGraph();
+      }
+      updateCortexTooltip(hit, sx, sy);
+    });
+
+    const endPointer = (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const sx = event.clientX - rect.left;
+      const sy = event.clientY - rect.top;
+      const clickedNode = !cortexState.didMove ? (cortexState.dragNode || findNodeAtScreen(sx, sy)) : null;
+      cortexState.dragNode = null;
+      cortexState.panning = false;
+      cortexState.panOrigin = null;
+      cortexState.pointerDown = null;
+      canvas.classList.remove("is-dragging");
+      if (clickedNode) selectCortexNode(clickedNode);
+    };
+
+    canvas.addEventListener("pointerup", endPointer);
+    canvas.addEventListener("pointercancel", () => {
+      cortexState.dragNode = null;
+      cortexState.panning = false;
+      cortexState.panOrigin = null;
+      cortexState.pointerDown = null;
+      canvas.classList.remove("is-dragging");
+    });
+    canvas.addEventListener("pointerleave", () => {
+      if (!cortexState.dragNode && !cortexState.panning) {
+        cortexState.hoverNode = null;
+        canvas.classList.remove("is-hovering");
+        updateCortexTooltip(null, 0, 0);
+        drawCortexGraph();
+      }
+    });
+
+    canvas.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const sx = event.clientX - rect.left;
+      const sy = event.clientY - rect.top;
+      const before = screenToWorld(sx, sy);
+      const factor = event.deltaY < 0 ? 1.12 : 0.89;
+      const nextZoom = Math.max(0.15, Math.min(5, cortexState.camera.zoom * factor));
+      cortexState.camera.zoom = nextZoom;
+      const after = screenToWorld(sx, sy);
+      cortexState.camera.x += before.x - after.x;
+      cortexState.camera.y += before.y - after.y;
+      drawCortexGraph();
+    }, { passive: false });
+  }
+
+  elements.cortexSearch?.addEventListener("input", (event) => runCortexSearch(event.target.value));
+  elements.cortexModeToggle?.addEventListener("click", () => {
+    if (!cortexState.editMode) {
+      setCortexEditMode(true);
+    } else {
+      if (elements.cortexNoteEditor && cortexState.originalContent !== undefined) {
+        elements.cortexNoteEditor.value = cortexState.originalContent;
+      }
+      renderCortexMarkdown(elements.cortexNoteViewer, cortexState.originalContent || "");
+      setCortexEditMode(false);
+      setCortexStatus("");
+    }
+  });
+  elements.cortexNoteSave?.addEventListener("click", saveCortexNote);
+}
+
+function openCortexPage() {
+  initCortexCanvasEvents();
+  window.requestAnimationFrame(() => {
+    resizeCortexCanvas();
+    if (!cortexState.nodes.length) {
+      loadCortexGraph({ fitOnFirst: true });
+    } else {
+      ensureCortexLoop();
+      drawCortexGraph();
+    }
+  });
+}
+
 

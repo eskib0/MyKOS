@@ -178,6 +178,11 @@ from .memory import (
     _search_memory,
     memory_catalog,
 )
+from .cortex_tools import (
+    _search_cortex,
+    _read_cortex_note,
+    _save_cortex_note,
+)
 from .ollama import (
     _execute_delete_ollama_model,
     _execute_pull_ollama_model,
@@ -404,11 +409,49 @@ def execute_tool(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
         if name == "list_ollama_models":
             return _list_ollama_models()
         if name == "search_memory":
-            return _search_memory(arguments)
+            # Redirigir a Cortex (camino único de memoria) manteniendo compatibilidad hacia atrás
+            c_args = {"query": arguments.get("query", "")}
+            if "max_results" in arguments:
+                c_args["limit"] = arguments["max_results"]
+            cortex_res = _search_cortex(c_args)
+            entries = [
+                {
+                    "id": r["path"],
+                    "title": r["title"],
+                    "category": "cortex",
+                    "tags": r.get("tags", []),
+                    "preview": r.get("snippet", ""),
+                    "text": f"{r['title']}: {r.get('snippet', '')}",
+                }
+                for r in cortex_res.get("results", [])
+            ]
+            cortex_res["entries"] = entries
+            return cortex_res
         if name == "read_memory":
-            return _read_memory(arguments)
+            target = str(arguments.get("memory_id") or arguments.get("id") or arguments.get("path") or "").strip()
+            return _read_cortex_note({"path": target})
         if name == "list_memory":
-            return _list_memory(arguments)
+            from cortex import get_cortex
+            cortex_engine = get_cortex()
+            files = [p for p, fi in cortex_engine.files.items() if fi.ext == "md"]
+            limit = int(arguments.get("max_results", 20) or 20)
+            entries = [
+                {
+                    "id": p,
+                    "title": Path(p).stem,
+                    "category": "cortex",
+                    "tags": [],
+                    "preview": p,
+                }
+                for p in files[:limit]
+            ]
+            return {"ok": True, "count": len(entries), "entries": entries}
+        if name == "search_cortex":
+            return _search_cortex(arguments)
+        if name == "read_cortex_note":
+            return _read_cortex_note(arguments)
+        if name == "save_cortex_note":
+            return _save_cortex_note(arguments)
         if name == "list_project_files":
             return _list_project_files(arguments)
         if name == "read_project_file":

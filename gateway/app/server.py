@@ -87,6 +87,7 @@ from grok import (
     start_grok_oauth,
 )
 from gemini_live import create_ephemeral_token
+from cortex import get_cortex
 from automations import start_scheduler, stop_scheduler
 from media import MediaError, kokoro_audio, list_media, media_status, transcribe_audio_file
 from management import local_status
@@ -507,9 +508,9 @@ Entorno y herramientas:
 - Solo tienes acceso al equipo mediante las herramientas declaradas. Si necesitas una herramienta, llámala en este turno. Las herramientas sensibles crean una solicitud pendiente que requiere aprobación explícita del usuario.
 - `run_powershell` ejecuta **bash** en Linux. Para abrir visualmente una carpeta, archivo o web en pantalla usa `run_powershell` con `xdg-open "/ruta/absoluta"`.
 - Para modificar un archivo existente, léelo primero con `read_project_file` y usa `edit_project_file` con el fragmento exacto que cambia. Usa `write_project_file` solo para crear archivos nuevos.
-- Tienes dos sistemas de memoria separados:
-  (A) Memoria interna rápida (`search_memory`, `read_memory`, `list_memory`, `save_memory`, `delete_memory`) para datos puntuales y hechos cortos.
-  (B) Memoria estructural y documentos (`root: "workspace"`): guarda notas, fichas de investigación (`research/`), diario (`memory/`) y proyectos del usuario en la raíz `workspace` (~/.mykos/workspace). Nunca guardes documentos en la raíz `mykos` para no ensuciar el repositorio de código.
+- Tienes acceso a tu cerebro Cortex (tu única memoria real del sistema):
+  (A) Cortex (`search_cortex`, `read_cortex_note`, `save_cortex_note`): Tu cerebro central de conocimiento local y notas Markdown con grafo interactivo. Todo tu conocimiento persistente, hechos, preferencias, bitácora y proyectos residen en notas Markdown de tu bóveda de Cortex. Para consultar hechos o notas busca con `search_cortex` y lee con `read_cortex_note`. Para recordar algo nuevo o guardar resúmenes e ideas usa `save_cortex_note`.
+  (B) Memoria estructural y documentos (`root: "workspace"`): guarda archivos generales, protocolos, fichas de investigación (`research/`) y proyectos en la raíz `workspace` (~/.mykos/workspace). Nunca guardes documentos en la raíz `mykos` para no ensuciar el repositorio de código.
 - Git: `git_status`, `git_diff`, `git_log` y `git_remote_status` son de solo lectura. `git_commit`, `git_branch`, `git_remote_fetch`, `git_remote_pull` (`--ff-only`) y `git_remote_push` (sin force push) requieren aprobación explícita.
 - Investigación web: haz una búsqueda principal con `web_search`, lee hasta 3 fuentes con `web_fetch` y usa `save_research_note` solo con URLs verificadas por esas herramientas (se guardan por defecto en `root: "workspace"`).
 - Multimedia: para generar imágenes usa `generate_image` con motor FLUX; para crear vídeos cinemáticos en MP4 usa `generate_video`. Ambas herramientas están completamente disponibles y requieren aprobación explícita.
@@ -3535,6 +3536,56 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                         result = library_preview(root, item_path)
                 except ApiError as error:
                     self.send_json({"ok": False, "error": str(error)}, status=400)
+                    return
+                self.send_json(result)
+                return
+            if path in {"/mykos-control/cortex/graph", "/mykos-control/cortex/note", "/mykos-control/cortex/save", "/mykos-control/cortex/search"}:
+                token = self.headers.get("X-MyKOS-Control-Token", "").strip()
+                if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
+                    self.send_json({"ok": False, "error": "Plano de control no autorizado."}, status=403)
+                    return
+                payload = self.read_json()
+                try:
+                    engine = get_cortex()
+                    if path == "/mykos-control/cortex/graph":
+                        result = engine.get_graph(
+                            show_tags=bool(payload.get("show_tags", False)),
+                            show_attachments=bool(payload.get("show_attachments", False)),
+                            hide_unresolved=bool(payload.get("hide_unresolved", False)),
+                            show_orphans=bool(payload.get("show_orphans", True)),
+                        )
+                    elif path == "/mykos-control/cortex/note":
+                        note_path = payload.get("path", "")
+                        if not isinstance(note_path, str) or not note_path.strip():
+                            self.send_json({"ok": False, "error": "Falta la ruta de la nota."}, status=400)
+                            return
+                        result = engine.get_note(note_path)
+                    elif path == "/mykos-control/cortex/save":
+                        note_path = payload.get("path", "")
+                        content = payload.get("content", "")
+                        if not isinstance(note_path, str) or not note_path.strip():
+                            self.send_json({"ok": False, "error": "Falta la ruta de la nota."}, status=400)
+                            return
+                        if not isinstance(content, str):
+                            self.send_json({"ok": False, "error": "El contenido de la nota debe ser texto."}, status=400)
+                            return
+                        result = engine.save_note(note_path, content)
+                    else:
+                        query_text = payload.get("query", "")
+                        if not isinstance(query_text, str):
+                            self.send_json({"ok": False, "error": "La consulta debe ser texto."}, status=400)
+                            return
+                        limit = payload.get("limit", 50)
+                        limit_int = limit if isinstance(limit, int) else (int(limit) if isinstance(limit, str) and limit.isdigit() else 50)
+                        result = {"ok": True, "query": query_text, "results": engine.search_notes(query_text, limit=limit_int)}
+                except FileNotFoundError as error:
+                    self.send_json({"ok": False, "error": str(error)}, status=404)
+                    return
+                except ValueError as error:
+                    self.send_json({"ok": False, "error": str(error)}, status=400)
+                    return
+                except Exception as error:
+                    self.send_json({"ok": False, "error": str(error)}, status=500)
                     return
                 self.send_json(result)
                 return

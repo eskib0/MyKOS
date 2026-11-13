@@ -179,22 +179,18 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "search_memory",
-            "description": "Busca recuerdos persistentes guardados por MyKOS. Solo lectura y búsqueda local por palabras clave.",
+            "name": "search_cortex",
+            "description": "Busca en la memoria y cerebro Cortex por palabras clave, proyectos o tags. Devuelve notas coincidentes con su título, ruta, fragmento relevante y tags.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Palabras o frase que se quieren buscar en la memoria.",
+                        "description": "Texto o palabras clave a buscar en las notas de Cortex.",
                     },
-                    "category": {
-                        "type": "string",
-                        "description": "Categoría opcional: fact, preference, project, decision, task o reference.",
-                    },
-                    "max_results": {
+                    "limit": {
                         "type": "integer",
-                        "description": "Número máximo de resultados, entre 1 y 20.",
+                        "description": "Número máximo de resultados (por defecto 10).",
                     },
                 },
                 "required": ["query"],
@@ -205,17 +201,17 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "read_memory",
-            "description": "Lee el contenido completo de un recuerdo persistente mediante su identificador.",
+            "name": "read_cortex_note",
+            "description": "Lee el contenido completo de una nota en Cortex mediante su ruta o título (por ejemplo '00 - Dashboard MyKOS.md' o 'Dashboard'). Devuelve el texto Markdown completo, tags y backlinks.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "memory_id": {
+                    "path": {
                         "type": "string",
-                        "description": "Identificador devuelto por search_memory o list_memory.",
+                        "description": "Ruta relativa o nombre de la nota a leer (ej: '00 - Centro de Mando/00 - Dashboard MyKOS.md' o '04 - Bitácora y Diario/2026-11-11.md').",
                     },
                 },
-                "required": ["memory_id"],
+                "required": ["path"],
                 "additionalProperties": False,
             },
         },
@@ -223,73 +219,21 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "list_memory",
-            "description": "Lista recuerdos persistentes sin mostrar todo su contenido.",
+            "name": "save_cortex_note",
+            "description": "Crea o actualiza una nota Markdown en Cortex (tu cerebro y base de conocimiento local). Actualiza el grafo y los enlaces automáticamente.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "category": {
+                    "path": {
                         "type": "string",
-                        "description": "Categoría opcional del recuerdo.",
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "description": "Número máximo de recuerdos, entre 1 y 50.",
-                    },
-                },
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "save_memory",
-            "description": "Prepara un recuerdo persistente nuevo o una actualización. Nunca guarda directamente: requiere aprobación explícita de Usuario.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "memory_id": {
-                        "type": "string",
-                        "description": "Identificador existente para actualizar; vacío para crear un recuerdo nuevo.",
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "Título breve y descriptivo.",
+                        "description": "Ruta relativa del archivo .md en la bóveda (ej: '04 - Bitácora y Diario/Resumen-Chat.md' o 'Notas/Idea.md').",
                     },
                     "content": {
                         "type": "string",
-                        "description": "Contenido duradero que se quiere recordar.",
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": "fact, preference, project, decision, task o reference.",
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Etiquetas breves para facilitar búsquedas.",
+                        "description": "Contenido completo de la nota en formato Markdown con enlaces [[wikilinks]] o tags si aplica.",
                     },
                 },
-                "required": ["title", "content"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_memory",
-            "description": "Prepara la eliminación de un recuerdo persistente. Nunca borra directamente: requiere aprobación explícita de Usuario.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "memory_id": {
-                        "type": "string",
-                        "description": "Identificador del recuerdo que se quiere eliminar.",
-                    },
-                },
-                "required": ["memory_id"],
+                "required": ["path", "content"],
                 "additionalProperties": False,
             },
         },
@@ -1296,29 +1240,19 @@ def tool_catalog() -> list[dict[str, str]]:
             "scope": "Ejecución real · requiere aprobación",
         },
         {
-            "name": "search_memory",
-            "description": "Busca recuerdos persistentes por palabras clave.",
-            "scope": "Solo lectura · memoria local",
+            "name": "search_cortex",
+            "description": "Busca notas, proyectos e ideas en el cerebro local Cortex.",
+            "scope": "Solo lectura · memoria local Cortex",
         },
         {
-            "name": "read_memory",
-            "description": "Lee un recuerdo persistente completo.",
-            "scope": "Solo lectura · memoria local",
+            "name": "read_cortex_note",
+            "description": "Lee una nota completa de Cortex con sus enlaces y backlinks.",
+            "scope": "Solo lectura · memoria local Cortex",
         },
         {
-            "name": "list_memory",
-            "description": "Lista recuerdos persistentes.",
-            "scope": "Solo lectura · memoria local",
-        },
-        {
-            "name": "save_memory",
-            "description": "Prepara un recuerdo nuevo o una actualización.",
-            "scope": "Cambio real · requiere aprobación",
-        },
-        {
-            "name": "delete_memory",
-            "description": "Prepara la eliminación de un recuerdo.",
-            "scope": "Borrado real · requiere aprobación",
+            "name": "save_cortex_note",
+            "description": "Guarda o actualiza una nota en Cortex y sincroniza el grafo.",
+            "scope": "Memoria local · guardado directo en bóveda",
         },
         {
             "name": "search_project_files",

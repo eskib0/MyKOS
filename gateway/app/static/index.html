@@ -24,6 +24,10 @@
       </div>
 
       <button id="new-chat" class="new-chat" type="button">+ Nueva conversación</button>
+      <button id="cortex-btn" class="cortex-btn" type="button" data-page="cortex" title="Cortex · Grafo y Cerebro de Conocimiento">
+        <span class="cortex-btn-dot"></span>
+        <span class="cortex-btn-label">Cortex · Cerebro</span>
+      </button>
 
       <nav class="app-nav" aria-label="Secciones de MyKOS">
         <button class="app-nav-item active" type="button" data-page="chat" aria-current="page">Chat</button>
@@ -518,6 +522,61 @@
           <button id="send-button" type="submit">Enviar</button>
         </div>
       </form>
+
+      <section id="cortex-page" class="app-page" hidden>
+        <button class="sidebar-toggle page-sidebar-toggle" type="button" aria-label="Mostrar u ocultar panel MyKOS" aria-controls="sidebar" aria-expanded="true" title="Panel MyKOS">panel MyKOS</button>
+        <header class="page-header cortex-header">
+          <div>
+            <div class="eyebrow">Conocimiento</div>
+            <h2>Cortex</h2>
+            <p>Grafo interactivo de notas, enlaces bidireccionales y bóveda Obsidian local.</p>
+          </div>
+          <div class="cortex-header-actions">
+            <button id="cortex-refresh" class="text-button" type="button">Actualizar</button>
+            <button id="cortex-back" class="text-button" type="button">Volver al chat</button>
+          </div>
+        </header>
+
+        <div class="cortex-container">
+          <div class="cortex-toolbar">
+            <input id="cortex-search" class="cortex-search-input" type="search" placeholder="Buscar notas, #tags o contenido..." aria-label="Buscar en Cortex" />
+            <div class="cortex-toolbar-right">
+              <span id="cortex-stats" class="cortex-stats">0 notas · 0 enlaces · 0 fantasmas</span>
+              <button id="cortex-fit" class="text-button" type="button" title="Ajustar y centrar el grafo">Centrar</button>
+            </div>
+          </div>
+
+          <div class="cortex-workspace">
+            <div class="cortex-graph-wrapper">
+              <canvas id="cortex-canvas" class="cortex-canvas"></canvas>
+              <div id="cortex-tooltip" class="cortex-tooltip" hidden></div>
+            </div>
+
+            <aside id="cortex-note-pane" class="cortex-note-pane" aria-label="Inspector de nota">
+              <div class="cortex-note-header">
+                <div class="cortex-note-meta">
+                  <strong id="cortex-note-title">Selecciona una nota</strong>
+                  <span id="cortex-note-path" class="cortex-note-path">Haz clic en cualquier nodo del grafo</span>
+                </div>
+                <div class="cortex-note-actions">
+                  <button id="cortex-mode-toggle" class="text-button" type="button" disabled>Editar</button>
+                  <button id="cortex-note-save" class="cortex-save-btn" type="button" hidden disabled>Guardar</button>
+                </div>
+              </div>
+              <div id="cortex-note-tags" class="cortex-note-tags" hidden></div>
+              <div id="cortex-note-status" class="cortex-note-status" hidden></div>
+              <div id="cortex-note-viewer" class="cortex-note-viewer">
+                <p class="cortex-empty-hint">Haz clic en un nodo rojo para ver o editar una nota, o en un nodo cian (fantasma) para crearla.</p>
+              </div>
+              <textarea id="cortex-note-editor" class="cortex-note-editor" hidden spellcheck="false" placeholder="Contenido Markdown..."></textarea>
+              <div id="cortex-backlinks-box" class="cortex-backlinks-box">
+                <div class="cortex-backlinks-title">Backlinks (<span id="cortex-backlinks-count">0</span>)</div>
+                <div id="cortex-backlinks-list" class="cortex-backlinks-list"></div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
 
       <section id="models-page" class="app-page" hidden>
         <button class="sidebar-toggle page-sidebar-toggle" type="button" aria-label="Mostrar u ocultar panel MyKOS" aria-controls="sidebar" aria-expanded="true" title="Panel MyKOS">panel MyKOS</button>

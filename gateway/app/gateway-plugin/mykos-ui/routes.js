@@ -58,6 +58,12 @@ export const ROUTE_TABLE = [
   { method: "GET", pattern: "/api/library/search", domain: "library", action: "search", risk: "read", owner: "gateway" },
   { method: "GET", pattern: "/api/library/preview", domain: "library", action: "preview", risk: "read", owner: "gateway" },
 
+  // Cortex (grafo de conocimiento y notas Markdown)
+  { method: "GET", pattern: "/api/cortex/graph", domain: "cortex", action: "graph", risk: "read", owner: "gateway" },
+  { method: "GET", pattern: "/api/cortex/note", domain: "cortex", action: "note_get", risk: "read", owner: "gateway" },
+  { method: "POST", pattern: "/api/cortex/note", domain: "cortex", action: "note_save", risk: "write", owner: "gateway" },
+  { method: "GET", pattern: "/api/cortex/search", domain: "cortex", action: "search", risk: "read", owner: "gateway" },
+
   // Permisos, aprobaciones y auditoría (los decide y guarda el Gateway)
   { method: "GET", pattern: "/api/permissions", domain: "permissions", action: "list", risk: "read", owner: "gateway" },
   { method: "GET", pattern: "/api/audit", domain: "permissions", action: "audit", risk: "read", owner: "gateway" },

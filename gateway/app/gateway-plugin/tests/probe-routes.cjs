@@ -69,7 +69,7 @@ function pythonRoutes() {
   const sensitive = new Set(ROUTE_TABLE.filter((r) => r.risk === "sensitive").map((r) => `${r.method} ${r.pattern}`));
   check("chat, aprobaciones, benchmark, descargas de modelos, voz y transcripción son «sensitive»", ["POST /api/chat", "POST /api/approvals/:id/(approve|reject)", "POST /api/benchmark", "POST /api/ollama/pull-request", "POST /api/ollama/delete-request", "POST /api/tts", "POST /api/transcribe"].every((r) => sensitive.has(r)), "");
   const gatewayOwned = ROUTE_TABLE.filter((r) => r.owner === "gateway").map((r) => `${r.method} ${r.pattern}`).sort();
-  check("propiedad del Gateway: conversaciones, memoria, biblioteca, modelos, Ollama, OAuth, proveedores, automatizaciones, subagentes, nodos, actividad, gestión, herramientas, permisos, aprobaciones, benchmark, llamadas, medios, Realtime, modo de voz, perfil de usuario y actualizaciones del sistema", gatewayOwned.length === 96 && ["POST /api/benchmark", "POST /api/approvals/:id/(approve|reject)", "POST /api/ollama/pull-request", "POST /api/ollama/delete-request", "POST /api/nodes/heartbeat", "GET /api/oauth/status", "GET /api/approvals", "GET /api/memory", "POST /api/transcribe", "POST /api/tts", "POST /api/voice/mode", "POST /api/calls/:callid/gemini-tools", "GET /api/user-profile", "POST /api/user-profile", "GET /api/system/updates", "POST /api/system/update"].every((r) => gatewayOwned.includes(r)), gatewayOwned.join(", "));
+  check("propiedad del Gateway: conversaciones, memoria, biblioteca, cortex, modelos, Ollama, OAuth, proveedores, automatizaciones, subagentes, nodos, actividad, gestión, herramientas, permisos, aprobaciones, benchmark, llamadas, medios, Realtime, modo de voz, perfil de usuario y actualizaciones del sistema", gatewayOwned.length === 100 && ["POST /api/benchmark", "POST /api/approvals/:id/(approve|reject)", "POST /api/ollama/pull-request", "POST /api/ollama/delete-request", "POST /api/nodes/heartbeat", "GET /api/oauth/status", "GET /api/approvals", "GET /api/memory", "GET /api/cortex/graph", "GET /api/cortex/note", "POST /api/cortex/note", "GET /api/cortex/search", "POST /api/transcribe", "POST /api/tts", "POST /api/voice/mode", "POST /api/calls/:callid/gemini-tools", "GET /api/user-profile", "POST /api/user-profile", "GET /api/system/updates", "POST /api/system/update"].every((r) => gatewayOwned.includes(r)), gatewayOwned.join(", "));
 
   // 3. Clasificación
   const c = classifyRoute;
@@ -138,6 +138,7 @@ function pythonRoutes() {
     "POST /api/system/update", // aplica actualizaciones del sistema y reinicia; lo ejecuta el Gateway
     "POST /api/conversations/new", "POST /api/conversations/compact", // datos de conversación, ya en el almacén del Gateway
     "DELETE /api/conversations", "DELETE /api/conversations/messages",
+    "POST /api/cortex/note", // guarda nota Markdown en la bóveda Cortex vía plano de control interno (/mykos-control/cortex/save)
   ]);
   const ungoverned = ROUTE_TABLE
     .filter((r) => r.method !== "GET" && (r.risk === "sensitive" || r.risk === "write"))

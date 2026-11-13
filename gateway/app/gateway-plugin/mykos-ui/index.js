@@ -3125,6 +3125,81 @@ export default {
           recordApiResult(200, { owner: "mykos-gateway" });
           return true;
         }
+        if (req.method === "GET" && apiPath === "/api/cortex/graph") {
+          const boolParam = (name, fallback) => {
+            const raw = apiUrl.searchParams.get(name);
+            if (raw === null) return fallback;
+            return ["1", "true", "yes"].includes(raw.toLowerCase());
+          };
+          const payload = {
+            show_tags: boolParam("showTags", boolParam("show_tags", false)),
+            show_attachments: boolParam("showAttachments", boolParam("show_attachments", false)),
+            hide_unresolved: boolParam("hideUnresolved", boolParam("hide_unresolved", false)),
+            show_orphans: boolParam("showOrphans", boolParam("show_orphans", true)),
+          };
+          const result = await jsonRequest(`${backend.config.url}/mykos-control/cortex/graph`, payload, 30_000, { "X-MyKOS-Control-Token": cfg.control.token });
+          if (result.status >= 400 || !isObject(result.body)) {
+            const status = result.status >= 400 ? result.status : 503;
+            sendJson(res, status, { ok: false, error: String(result.body?.error || "Cortex no está disponible.") });
+            recordApiResult(status, { owner: "mykos-gateway" });
+            return true;
+          }
+          sendJson(res, 200, result.body);
+          recordApiResult(200, { owner: "mykos-gateway" });
+          return true;
+        }
+        if (req.method === "GET" && apiPath === "/api/cortex/note") {
+          const notePath = apiUrl.searchParams.get("path") || "";
+          const result = await jsonRequest(`${backend.config.url}/mykos-control/cortex/note`, { path: notePath }, 30_000, { "X-MyKOS-Control-Token": cfg.control.token });
+          if (result.status >= 400 || !isObject(result.body)) {
+            const status = result.status >= 400 ? result.status : 503;
+            sendJson(res, status, { ok: false, error: String(result.body?.error || "La nota no está disponible.") });
+            recordApiResult(status, { owner: "mykos-gateway" });
+            return true;
+          }
+          sendJson(res, 200, result.body);
+          recordApiResult(200, { owner: "mykos-gateway" });
+          return true;
+        }
+        if (req.method === "POST" && apiPath === "/api/cortex/note") {
+          let payload = {};
+          try {
+            const raw = await readBody(req, MAX_JSON_API_BYTES);
+            payload = JSON.parse(raw.toString("utf8") || "{}");
+          } catch {
+            sendJson(res, 400, { ok: false, error: "Cuerpo JSON inválido." });
+            recordApiResult(400, { owner: "mykos-gateway" });
+            return true;
+          }
+          const result = await jsonRequest(`${backend.config.url}/mykos-control/cortex/save`, {
+            path: payload?.path ?? "",
+            content: payload?.content ?? "",
+          }, 30_000, { "X-MyKOS-Control-Token": cfg.control.token });
+          if (result.status >= 400 || !isObject(result.body)) {
+            const status = result.status >= 400 ? result.status : 503;
+            sendJson(res, status, { ok: false, error: String(result.body?.error || "No se pudo guardar la nota.") });
+            recordApiResult(status, { owner: "mykos-gateway" });
+            return true;
+          }
+          sendJson(res, 200, result.body);
+          recordApiResult(200, { owner: "mykos-gateway" });
+          return true;
+        }
+        if (req.method === "GET" && apiPath === "/api/cortex/search") {
+          const query = apiUrl.searchParams.get("q") ?? apiUrl.searchParams.get("query") ?? "";
+          const limitRaw = Number.parseInt(apiUrl.searchParams.get("limit") || "50", 10);
+          const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 50;
+          const result = await jsonRequest(`${backend.config.url}/mykos-control/cortex/search`, { query, limit }, 30_000, { "X-MyKOS-Control-Token": cfg.control.token });
+          if (result.status >= 400 || !isObject(result.body)) {
+            const status = result.status >= 400 ? result.status : 503;
+            sendJson(res, status, { ok: false, error: String(result.body?.error || "La búsqueda en Cortex no está disponible.") });
+            recordApiResult(status, { owner: "mykos-gateway" });
+            return true;
+          }
+          sendJson(res, 200, result.body);
+          recordApiResult(200, { owner: "mykos-gateway" });
+          return true;
+        }
         if (req.method === "GET" && apiPath === "/api/tools") {
           const catalog = await jsonRequest(`${backend.config.url}/mykos-control/tools-catalog`, null, 10_000, { "X-MyKOS-Control-Token": cfg.control.token });
           if (catalog.status >= 400 || !catalog.body?.ok || !Array.isArray(catalog.body.tools) || !Array.isArray(catalog.body.allowed_roots)) {
