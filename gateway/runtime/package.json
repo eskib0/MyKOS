@@ -1,6 +1,6 @@
 {
   "name": "mykos-gateway-runtime",
-  "version": "2.0.0",
+  "version": "2.0.5",
   "private": true,
   "description": "Servidor y supervisor ligero nativo para MyKOS Gateway",
   "type": "module",

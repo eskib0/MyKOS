@@ -1373,7 +1373,7 @@ async function checkSystemUpdates(force = false) {
         elements.headerUpdatePill.hidden = false;
         elements.headerUpdatePill.classList.remove("has-update");
         elements.headerUpdatePill.classList.add("up-to-date");
-        const curVer = data.current_version ? `v${data.current_version.replace(/^v/, "")}` : "v2.0.0";
+        const curVer = data.current_version ? `v${data.current_version.replace(/^v/, "")}` : "v2.0.5";
         elements.headerUpdatePill.title = `MyKOS ${curVer} · En línea (haz clic para abrir Gestión local)`;
         if (elements.headerUpdateLabel) {
           elements.headerUpdateLabel.textContent = curVer;
