@@ -89,6 +89,9 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
 fi
 
+# Detener cualquier instancia previa en memoria para que el próximo arranque cargue la versión nueva
+pkill -f "mykos-gateway\.mjs" >/dev/null 2>&1 || true
+
 echo "============================================================"
 echo "  ¡MyKOS instalado con éxito!"
 echo "  Ejecuta 'mykos open' o búscalo en tu menú de aplicaciones."

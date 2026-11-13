@@ -101,14 +101,53 @@ if [[ "$WITH_VENV" -eq 1 ]]; then
   echo "✔ Entorno virtual listo en $VENV_DIR"
 fi
 
-# 5. Enlaces simbólicos en ~/.local/bin
+# 5. Enlaces simbólicos en ~/.local/bin y prioridad en PATH
 ln -sf "$MYKOS_ROOT/bin/mykos" "$LOCAL_BIN/mykos"
 ln -sf "$MYKOS_ROOT/apps/monitor/mykos-monitor" "$LOCAL_BIN/mykos-monitor"
 ln -sf "$MYKOS_ROOT/apps/analizador/analizador-mykos" "$LOCAL_BIN/analizador-mykos"
+for rc_file in "$HOME/.bashrc" "$HOME/.profile"; do
+  if [[ -f "$rc_file" ]] && ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$rc_file" 2>/dev/null; then
+    printf '\n# MyKOS CLI priority path\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$rc_file"
+  fi
+done
+export PATH="$LOCAL_BIN:$PATH"
 echo "✔ Comandos enlazados en $LOCAL_BIN:"
 echo "  • mykos"
 echo "  • mykos-monitor"
 echo "  • analizador-mykos"
+
+# 5b. Sincronizar rutas en mykos-gateway.json hacia esta instalación ($MYKOS_ROOT)
+CONFIG_FILE="$STATE_DIR/mykos-gateway.json"
+python3 - "$CONFIG_FILE" "$HOME/.mykos/workspace" "$MYKOS_ROOT/gateway/app" "$VENV_DIR/bin/python" <<'PY'
+import json, os, sys
+cfg_path, ws_dir, app_dir, venv_py = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+plugin_dir = os.path.join(app_dir, "gateway-plugin", "mykos-ui")
+py_bin = venv_py if os.path.exists(venv_py) else "python3"
+cfg = {}
+if os.path.exists(cfg_path):
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        cfg = {}
+cfg.setdefault("gateway", {"host": "127.0.0.1", "port": 3210})
+cfg.setdefault("agents", {"defaults": {"workspace": ws_dir}})
+cfg.setdefault("plugins", {})["load"] = {"paths": [plugin_dir]}
+entry = cfg["plugins"].setdefault("entries", {}).setdefault("mykos-ui", {"enabled": True, "config": {}})
+ecfg = entry.setdefault("config", {})
+ecfg["projectDir"] = app_dir
+ecfg["staticDir"] = os.path.join(app_dir, "static")
+ecfg.setdefault("store", {"enabled": True})
+ecfg.setdefault("chatLoop", {"enabled": True})
+b = ecfg.setdefault("backend", {"url": "http://127.0.0.1:3211", "spawn": True})
+b["python"] = py_bin
+b["script"] = os.path.join(app_dir, "server.py")
+with open(cfg_path, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+os.chmod(cfg_path, 0o600)
+PY
+echo "✔ Configuración del Gateway sincronizada hacia $MYKOS_ROOT/gateway/app"
 
 # 6. Accesos directos de escritorio (.desktop)
 if [[ "$WITH_DESKTOP" -eq 1 ]]; then
@@ -162,6 +201,12 @@ EOF
   systemctl --user daemon-reload || true
   systemctl --user enable mykos-gateway.service || true
   echo "✔ Servicio systemd instalado: systemctl --user start mykos-gateway"
+fi
+
+# 8. Si había un proceso previo corriendo en memoria, reiniciarlo con la nueva versión
+if pgrep -f "mykos-gateway\.mjs" >/dev/null 2>&1; then
+  echo "▶ Detectada instancia previa de MyKOS en ejecución; reiniciando con la versión nueva..."
+  "$MYKOS_ROOT/bin/mykos" restart || true
 fi
 
 echo ""

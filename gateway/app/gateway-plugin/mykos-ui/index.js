@@ -613,17 +613,14 @@ async function handleSystemUpdatesApi(req, res, cfg, apiUrl) {
         if (r < l) { isNewer = false; break; }
       }
       updateData.update_available = isNewer;
-    } else {
-      // 2. Si no hay release formal aún, comprobar último commit de la rama main
+    }
+
+    // 2. Si la release coincide pero es un clon Git (o no hay release), comprobar último commit de main
+    if (!updateData.update_available) {
       const commitRes = await fetchGithubJson(`/repos/${repoName}/commits/main`);
       if (commitRes.status === 200 && commitRes.body?.sha) {
         const remoteSha = commitRes.body.sha.slice(0, 7);
         updateData.latest_commit = remoteSha;
-        updateData.latest_version = remoteSha;
-        updateData.release_name = commitRes.body.commit?.message?.split("\n")[0] || "Actualización disponible";
-        updateData.release_notes = commitRes.body.commit?.message || "";
-        updateData.html_url = commitRes.body.html_url || `https://github.com/${repoName}`;
-        updateData.published_at = commitRes.body.commit?.author?.date || "";
         if (isGit && localCommit && remoteSha !== localCommit) {
           let isAncestor = false;
           try {
@@ -632,7 +629,18 @@ async function handleSystemUpdatesApi(req, res, cfg, apiUrl) {
           } catch {}
           if (!isAncestor) {
             updateData.update_available = true;
+            updateData.latest_version = `v${localVersion.replace(/^v/, "")} (${remoteSha})`;
+            updateData.release_name = commitRes.body.commit?.message?.split("\n")[0] || "Actualización disponible";
+            updateData.release_notes = commitRes.body.commit?.message || "";
+            updateData.html_url = commitRes.body.html_url || `https://github.com/${repoName}`;
+            updateData.published_at = commitRes.body.commit?.author?.date || "";
           }
+        } else if (!relRes?.body?.tag_name) {
+          updateData.latest_version = remoteSha;
+          updateData.release_name = commitRes.body.commit?.message?.split("\n")[0] || "Actualización disponible";
+          updateData.release_notes = commitRes.body.commit?.message || "";
+          updateData.html_url = commitRes.body.html_url || `https://github.com/${repoName}`;
+          updateData.published_at = commitRes.body.commit?.author?.date || "";
         }
       }
     }

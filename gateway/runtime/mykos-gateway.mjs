@@ -26,12 +26,14 @@ function parseCliArgs(argv) {
 
 const cli = parseCliArgs(process.argv.slice(2));
 const homeDir = os.homedir();
+const defaultStateDir = path.resolve(path.join(homeDir, ".mykos", "gateway-state"));
 const stateDir = path.resolve(
-  process.env.MYKOS_GATEWAY_STATE_DIR || path.join(homeDir, ".mykos", "gateway-state"),
+  process.env.MYKOS_GATEWAY_STATE_DIR || defaultStateDir,
 );
 const workspaceDir = path.resolve(
   process.env.MYKOS_GATEWAY_WORKSPACE_DIR || path.join(homeDir, ".mykos", "workspace"),
 );
+const isDefaultLiveConfig = !cli.configPath && !process.env.MYKOS_GATEWAY_CONFIG && stateDir === defaultStateDir;
 const configPath = path.resolve(
   cli.configPath || process.env.MYKOS_GATEWAY_CONFIG || path.join(stateDir, "mykos-gateway.json"),
 );
@@ -92,28 +94,33 @@ function loadOrCreateConfig(filePath) {
       let mutated = false;
       if (Array.isArray(existing?.plugins?.load?.paths)) {
         const validPaths = existing.plugins.load.paths.filter((p) => fs.existsSync(p));
-        if (validPaths.length === 0) {
+        if (validPaths.length === 0 || (isDefaultLiveConfig && (validPaths.length !== 1 || validPaths[0] !== defaultPluginDir))) {
           existing.plugins.load.paths = [defaultPluginDir];
           mutated = true;
         }
       }
       const uiCfg = existing?.plugins?.entries?.["mykos-ui"]?.config;
       if (uiCfg && typeof uiCfg === "object") {
-        if (!uiCfg.projectDir || !fs.existsSync(uiCfg.projectDir)) {
+        const expectedStaticDir = path.join(defaultAppDir, "static");
+        const expectedScript = path.join(defaultAppDir, "server.py");
+        if (!uiCfg.projectDir || !fs.existsSync(uiCfg.projectDir) || (isDefaultLiveConfig && uiCfg.projectDir !== defaultAppDir)) {
           uiCfg.projectDir = defaultAppDir;
           mutated = true;
         }
-        if (!uiCfg.staticDir || !fs.existsSync(uiCfg.staticDir)) {
-          uiCfg.staticDir = path.join(defaultAppDir, "static");
+        if (!uiCfg.staticDir || !fs.existsSync(uiCfg.staticDir) || (isDefaultLiveConfig && uiCfg.staticDir !== expectedStaticDir)) {
+          uiCfg.staticDir = expectedStaticDir;
           mutated = true;
         }
         if (uiCfg.backend && typeof uiCfg.backend === "object") {
-          if (!uiCfg.backend.script || !fs.existsSync(uiCfg.backend.script)) {
-            uiCfg.backend.script = path.join(defaultAppDir, "server.py");
+          if (!uiCfg.backend.script || !fs.existsSync(uiCfg.backend.script) || (isDefaultLiveConfig && uiCfg.backend.script !== expectedScript)) {
+            uiCfg.backend.script = expectedScript;
             mutated = true;
           }
           if (process.env.MYKOS_BACKEND_PYTHON && uiCfg.backend.python !== process.env.MYKOS_BACKEND_PYTHON) {
             uiCfg.backend.python = process.env.MYKOS_BACKEND_PYTHON;
+            mutated = true;
+          } else if (isDefaultLiveConfig && uiCfg.backend.python !== defaultPython && fs.existsSync(defaultPython)) {
+            uiCfg.backend.python = defaultPython;
             mutated = true;
           } else if (
             uiCfg.backend.python &&
