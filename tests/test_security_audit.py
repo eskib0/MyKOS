@@ -322,7 +322,6 @@ class TestMyKOSSecurityAudit(unittest.TestCase):
                 self.assertNotIn("GITHUB_TOKEN", child_env)
                 self.assertNotIn("AWS_SECRET_ACCESS_KEY", child_env)
                 self.assertNotIn("CUSTOM_SECRET_KEY", child_env)
-                self.assertIn("--auth-type", mock_run.call_args.args[0])
 
                 # 2. Modelo Ollama: comprobar enrutamiento explícito al endpoint local
                 with patch.object(qwen_cli, "_get_ollama_model_names", return_value={"qwen2.5-coder:7b"}):

@@ -287,14 +287,23 @@ def _is_within_allowed_roots(path: Path) -> bool:
 
 def _is_system_binary(path: Path) -> bool:
     try:
-        resolved = path.resolve()
-        for b_dir in SYSTEM_BIN_DIRS:
+        candidates = [path.expanduser(), path.expanduser().resolve()]
+        bin_dirs = []
+        for b in SYSTEM_BIN_DIRS:
+            bin_dirs.append(b)
             try:
-                resolved.relative_to(b_dir)
-                if os.access(resolved, os.X_OK) and not resolved.is_dir():
-                    return True
-            except (ValueError, OSError):
-                continue
+                bin_dirs.append(b.resolve())
+            except Exception:
+                pass
+        for cand in candidates:
+            for b_dir in bin_dirs:
+                try:
+                    cand.relative_to(b_dir)
+                    target = cand.resolve()
+                    if os.access(target, os.X_OK) and not target.is_dir():
+                        return True
+                except (ValueError, OSError):
+                    continue
     except Exception:
         pass
     return False
@@ -336,7 +345,7 @@ def resolve_rea_target(target: str) -> str:
             pass
         if _is_within_allowed_roots(expanded):
             return str(expanded)
-        if _is_system_binary(expanded):
+        if _is_system_binary(Path(raw).expanduser()) or _is_system_binary(expanded):
             return str(expanded)
         raise ReaError(f"Acceso denegado: «{expanded}» queda fuera de las raíces autorizadas del proyecto y no es un ejecutable del sistema.")
 
@@ -351,8 +360,9 @@ def resolve_rea_target(target: str) -> str:
     full_path = os.pathsep.join(extra_dirs + ([search_path] if search_path else []))
     found = shutil.which(raw, path=full_path)
     if found:
-        found_path = Path(found).resolve()
-        if _is_system_binary(found_path) or _is_within_allowed_roots(found_path):
+        raw_found = Path(found)
+        found_path = raw_found.resolve()
+        if _is_system_binary(raw_found) or _is_system_binary(found_path) or _is_within_allowed_roots(found_path):
             return str(found_path)
     raise ReaError(f"No se encontró el programa o archivo «{raw}» dentro del perímetro autorizado de MyKOS.")
 

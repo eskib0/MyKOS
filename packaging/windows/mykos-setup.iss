@@ -1,11 +1,11 @@
 ; ==============================================================================
 ; Script de Inno Setup 6 para MyKOS Ecosystem (Instalador Oficial de Windows)
-; Genera: dist\MyKOS-Setup-1.0.0.exe (Instalador para usuario, sin requerir admin)
+; Genera: dist\MyKOS-Setup-2.0.5.exe (Instalador para usuario, sin requerir admin)
 ; ==============================================================================
 
 #define MyAppName "MyKOS"
 #define MyAppFullName "MyKOS Ecosystem"
-#define MyAppVersion "2.0.0"
+#define MyAppVersion "2.0.5"
 #define MyAppPublisher "Ruben (eskib0)"
 #define MyAppURL "https://github.com/eskib0/MyKOS"
 #define MyAppExeName "MyKOS.vbs"
@@ -32,6 +32,7 @@ PrivilegesRequired=lowest
 DisableDirPage=no
 DisableProgramGroupPage=no
 ChangesEnvironment=yes
+CloseApplications=force
 
 [Languages]
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
@@ -54,7 +55,7 @@ Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Gateway (Node.js runtime, plugins y SPA frontend)
-Source: "..\..\gateway\*"; DestDir: "{app}\gateway"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "gateway\app\data\*.log,gateway\app\data\*.json,gateway\app\data\*.bak*,gateway\app\data\oauth\*,gateway\app\data\media\*,gateway\app\data\uploads\*,*.tmp,*.pyc,__pycache__"
+Source: "..\..\gateway\*"; DestDir: "{app}\gateway"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "gateway\app\data\*.log,gateway\app\data\*.json,gateway\app\data\*.bak*,gateway\app\data\oauth\*,gateway\app\data\media\*,gateway\app\data\uploads\*,gateway\runtime\antigravity-home\*,gateway\runtime\qwen-home\*,gateway\runtime\state\*,*.tmp,*.pyc,__pycache__"
 
 ; Aplicaciones de escritorio (Monitor, Analizador)
 Source: "..\..\apps\*"; DestDir: "{app}\apps"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -102,4 +103,17 @@ begin
     exit;
   end;
   Result := Pos(';' + UpperCase(Param) + ';', ';' + UpperCase(OrigPath) + ';') = 0;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+  StopCmd: String;
+begin
+  Result := '';
+  StopCmd := ExpandConstant('{app}\bin\mykos.cmd');
+  if FileExists(StopCmd) then
+  begin
+    Exec(StopCmd, 'stop', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
 end;

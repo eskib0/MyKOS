@@ -98,7 +98,33 @@ if ($pathItems -notcontains $BinDir) {
     Write-Host "✔ $BinDir ya está en el PATH de tu usuario." -ForegroundColor Green
 }
 
-# 5. Crear acceso directo en el Escritorio (opcional)
+# 5. Sincronizar configuración viva del Gateway hacia este directorio de instalación
+$ConfigJson = Join-Path $StateDir "mykos-gateway.json"
+if (Test-Path $ConfigJson) {
+    try {
+        $cfg = Get-Content $ConfigJson -Raw -Encoding UTF8 | ConvertFrom-Json
+        $appDir = Join-Path $MykosRoot "gateway\app"
+        $staticDir = Join-Path $appDir "static"
+        $serverPy = Join-Path $appDir "server.py"
+        $pyBin = if (-not $NoVenv -and (Test-Path (Join-Path $VenvDir "Scripts\python.exe"))) { Join-Path $VenvDir "Scripts\python.exe" } elseif (Test-Path (Join-Path $RuntimeDir "python\python.exe")) { Join-Path $RuntimeDir "python\python.exe" } else { "python" }
+        if ($cfg.plugins -and $cfg.plugins.load) { $cfg.plugins.load.paths = @($appDir) }
+        if ($cfg.plugins -and $cfg.plugins.entries -and $cfg.plugins.entries.'mykos-ui' -and $cfg.plugins.entries.'mykos-ui'.config) {
+            $uCfg = $cfg.plugins.entries.'mykos-ui'.config
+            $uCfg.projectDir = $appDir
+            $uCfg.staticDir = $staticDir
+            if ($uCfg.backend) {
+                $uCfg.backend.script = $serverPy
+                $uCfg.backend.python = $pyBin
+            }
+        }
+        $cfg | ConvertTo-Json -Depth 10 | Set-Content -Path $ConfigJson -Encoding UTF8
+        Write-Host "✔ Configuración viva sincronizada hacia $appDir" -ForegroundColor Green
+    } catch {
+        Write-Host "⚠️  Aviso al sincronizar mykos-gateway.json: $_" -ForegroundColor Yellow
+    }
+}
+
+# 6. Crear acceso directo en el Escritorio (opcional)
 if (-not $NoDesktop) {
     try {
         $desktop = [Environment]::GetFolderPath("Desktop")
@@ -115,8 +141,17 @@ if (-not $NoDesktop) {
     }
 }
 
+# 7. Si MyKOS estaba en ejecución, reiniciarlo para aplicar la versión recién instalada
+try {
+    $running = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match "mykos-gateway\.mjs" }
+    if ($running) {
+        Write-Host "▶ Reiniciando MyKOS Gateway en ejecución para cargar la nueva versión..." -ForegroundColor Cyan
+        & powershell -NoProfile -ExecutionPolicy Bypass -File "$BinDir\mykos.ps1" restart
+    }
+} catch {}
+
 Write-Host ""
-Write-Host "✅ Instalación en Windows completada. Abre una terminal nueva y ejecuta:" -ForegroundColor Green
+Write-Host "✅ Instalación en Windows completada (v2.0.5). Abre una terminal nueva y ejecuta:" -ForegroundColor Green
 Write-Host "   mykos test      # Verificar rutas, políticas y seguridad"
 Write-Host "   mykos run       # Arrancar MyKOS en vivo en http://127.0.0.1:3210"
 Write-Host "   mykos status    # Consultar el estado de todos los servicios"
