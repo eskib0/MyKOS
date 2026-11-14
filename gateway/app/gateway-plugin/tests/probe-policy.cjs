@@ -30,7 +30,7 @@ const check = (name, ok, detail = "") => results.push({ name, ok: Boolean(ok), d
   const okBody = (method, p, value) => jsonVerdict(method, p, value) === null;
   const reasonOf = (verdict) => (verdict === null ? "(aceptado)" : `${verdict.status}/${verdict.reason}`);
 
-  check(`la tabla de política cubre ${POLICY_TABLE.length} rutas de servicios auxiliares`, POLICY_TABLE.length === 56, `${POLICY_TABLE.length}`);
+  check(`la tabla de política cubre ${POLICY_TABLE.length} rutas de servicios auxiliares`, POLICY_TABLE.length === 63, `${POLICY_TABLE.length}`);
 
   // 1. Benchmark
   check("benchmark: modelo y perfiles válidos se aceptan", okBody("POST", "/api/benchmark", { model: "qwen3:14b", profiles: ["fast", "deep"] }), reasonOf(jsonVerdict("POST", "/api/benchmark", { model: "qwen3:14b", profiles: ["fast", "deep"] })));
@@ -104,6 +104,11 @@ const check = (name, ok, detail = "") => results.push({ name, ok: Boolean(ok), d
   check("latido de nodo: token demasiado corto, 403", checkHeaders(nodes, { "x-mykos-node-token": "corto" })?.status === 403, "");
   check("latido de nodo: cuerpo con node_id y capacidades acotadas se acepta", okBody("POST", "/api/nodes/heartbeat", { node_id: "nodo1", capabilities: ["camera", "shell"] }), "");
   check("latido de nodo: rechaza 40 capacidades", jsonVerdict("POST", "/api/nodes/heartbeat", { node_id: "n", capabilities: Array.from({ length: 40 }, () => "x") })?.reason === "too_many", "");
+  check("swarm: alta de trabajador con nombre válido se acepta", okBody("POST", "/api/swarm/workers", { name: "investigador", role: "Analista", brief: "Analiza la arquitectura", model: "inherit" }), "");
+  check("swarm: alta de trabajador rechaza nombre inválido o faltante", !okBody("POST", "/api/swarm/workers", { role: "Analista", brief: "Sin nombre" }), "");
+  check("swarm: publicar en tablón acepta mensaje válido", okBody("POST", "/api/swarm/board", { text: "@investigador revisa el código" }), "");
+  check("swarm: publicar en tablón rechaza mensaje vacío", !okBody("POST", "/api/swarm/board", { text: "" }), "");
+  check("swarm: guardar en Cortex acepta título y seq opcionales", okBody("POST", "/api/swarm/save-cortex", { title: "Auditoría", seq: 3 }), "");
 
   // 6. Límites de carga
   {

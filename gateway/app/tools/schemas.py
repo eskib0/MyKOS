@@ -1212,6 +1212,102 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "swarm_status",
+            "description": "Consulta el estado actual del motor multi-agente MyKOS Swarm, el roster de agentes activos y los últimos mensajes del tablón.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "since_seq": {"type": "integer", "description": "Devolver solo mensajes posteriores a este #seq (0 por defecto)."},
+                    "limit": {"type": "integer", "description": "Número máximo de mensajes recientes a devolver (por defecto 30)."},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "swarm_add_worker",
+            "description": "Crea o asigna un trabajador especialista en MyKOS Swarm, publica su misión (@nombre brief) en el tablón y lo despierta en paralelo con todas las herramientas de MyKOS.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Identificador corto en minúsculas sin espacios (ej. investigador, implementador, verificador)."},
+                    "role": {"type": "string", "description": "Rol o especialidad del trabajador (ej. Especialista en Seguridad)."},
+                    "brief": {"type": "string", "description": "Misión clara: qué debe resolver, qué herramientas o archivos revisar y qué debe reportar."},
+                    "model": {"type": "string", "description": "Modelo opcional (ej. openai/gpt-4o, claude-sonnet-oauth, qwen3:8b, o 'inherit')."},
+                    "title": {"type": "string", "description": "Título opcional para la misión del Swarm."},
+                },
+                "required": ["name", "brief"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "swarm_post",
+            "description": "Publica un mensaje en el tablón compartido del Swarm como coordinador (@nombre o @all despierta a los trabajadores) y opcionalmente espera hasta 45 s a que respondan.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Mensaje con menciones (@nombre o @all) y referencias #seq."},
+                    "wait_seconds": {"type": "number", "description": "Segundos opcionales a esperar (0 a 45) para recoger respuestas del equipo directamente."},
+                },
+                "required": ["text"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "swarm_read_board",
+            "description": "Lee los mensajes publicados en el tablón del Swarm a partir de un #seq dado.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "since_seq": {"type": "integer", "description": "Leer mensajes posteriores a #seq (0 para leer desde el principio)."},
+                    "limit": {"type": "integer", "description": "Máximo de mensajes a devolver (por defecto 40)."},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "swarm_kill",
+            "description": "Detiene un trabajador específico del Swarm (o todos con name='all') y opcionalmente reinicia el tablón con reset=true.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Nombre del trabajador a detener o 'all' para detener a todos."},
+                    "reset": {"type": "boolean", "description": "Si es true, detiene el Swarm activo y limpia el tablón para una nueva misión."},
+                    "title": {"type": "string", "description": "Nuevo título opcional al reiniciar el Swarm."},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "swarm_save_cortex",
+            "description": "Compila el informe del Swarm actual (o un mensaje concreto #seq) en Markdown y lo guarda en MyKOS Cortex.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Título opcional para el informe en Cortex."},
+                    "seq": {"type": "integer", "description": "Número de mensaje #seq opcional si solo deseas guardar ese mensaje concreto."},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -1508,6 +1604,36 @@ def tool_catalog() -> list[dict[str, str]]:
             "name": "rea_call_tool",
             "description": "Ejecuta una herramienta estática del catálogo MCP de REA.",
             "scope": "Solo lectura · análisis estático REA",
+        },
+        {
+            "name": "swarm_status",
+            "description": "Consulta el estado del Swarm, roster de agentes y tablón.",
+            "scope": "Solo lectura · motor multi-agente Swarm",
+        },
+        {
+            "name": "swarm_add_worker",
+            "description": "Añade un trabajador al Swarm y lanza su misión en paralelo.",
+            "scope": "Orquestación local · motor MyKOS Swarm",
+        },
+        {
+            "name": "swarm_post",
+            "description": "Publica un mensaje (@agente/@all) en el tablón Swarm y opcionalmente espera respuestas.",
+            "scope": "Orquestación local · motor MyKOS Swarm",
+        },
+        {
+            "name": "swarm_read_board",
+            "description": "Lee mensajes del tablón compartido del Swarm desde since_seq.",
+            "scope": "Solo lectura · motor multi-agente Swarm",
+        },
+        {
+            "name": "swarm_kill",
+            "description": "Detiene uno o todos los trabajadores del Swarm o lo reinicia.",
+            "scope": "Control local · motor MyKOS Swarm",
+        },
+        {
+            "name": "swarm_save_cortex",
+            "description": "Guarda el informe completo del Swarm (o un mensaje #seq) en MyKOS Cortex.",
+            "scope": "Escritura local · MyKOS Cortex + Swarm",
         },
     ]
 

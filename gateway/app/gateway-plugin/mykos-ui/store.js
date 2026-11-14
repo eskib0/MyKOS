@@ -96,6 +96,14 @@ export const DOCUMENTS = {
     // Un nodo puede revocarse; no aplicar el guard de reducción.
     guarded: false,
   },
+  swarm: {
+    legacyFile: "swarm.json",
+    label: "motor multi-agente Swarm",
+    validate: (d) => isObject(d) && isObject(d.members) && Array.isArray(d.messages),
+    count: (d) => d.messages.length,
+    // El coordinador puede reiniciar el Swarm limpiando el tablón; no aplicar el guard de reducción.
+    guarded: false,
+  },
 };
 
 const sha256 = (buffer) => createHash("sha256").update(buffer).digest("hex");

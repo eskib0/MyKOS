@@ -1971,6 +1971,7 @@ function prepareStore(runtime, gatewayPort, logger) {
       conversations: { conversations: [] }, memory: { entries: [] }, "memory-index": { entries: {} },
       permissions: { grants: [], audit: [] }, approvals: { approvals: [] },
       automations: { automations: [], events: [] }, subagents: { jobs: [] }, nodes: { nodes: [] },
+      swarm: { title: "Swarm MyKOS", head: 0, permission_mode: "supervisado", members: {}, messages: [] },
     };
     for (const [name, data] of Object.entries(emptyDocs)) {
       if (!store.get(name)) store.put(name, data, { source: "clean-install" });
@@ -3654,12 +3655,35 @@ export default {
                 };
                 if (continuation.sources) publicResult.message.sources = continuation.sources;
               } else {
-                publicResult.message = continuation.message;
+                const msg = isObject(continuation.message) ? { ...continuation.message } : { role: "assistant", model, content: "" };
+                const genUrl = typeof actionResult.url === "string" ? actionResult.url.trim() : "";
+                const genMd = typeof actionResult.markdown === "string" ? actionResult.markdown.trim() : "";
+                if (actionResult.ok && genUrl.startsWith("/static/media/gen-") && genMd && !String(msg.content || "").includes(genUrl)) {
+                  msg.content = String(msg.content || "").trim() ? `${String(msg.content).trim()}\n\n${genMd}` : genMd;
+                }
+                publicResult.message = msg;
               }
               sendJson(res, 200, publicResult);
               recordApiResult(200, { owner: "mykos-gateway" });
               return true;
             } catch (error) {
+              const genUrl = typeof actionResult.url === "string" ? actionResult.url.trim() : "";
+              const genMd = typeof actionResult.markdown === "string" ? actionResult.markdown.trim() : "";
+              if (actionResult.ok && genUrl.startsWith("/static/media/gen-") && genMd) {
+                const fallbackText = String(actionResult.message || genMd).trim();
+                const assistantMessage = { role: "assistant", model, content: fallbackText, created_at: utcNow() };
+                const saved = conversationId ? await worker.saveMessage(conversationId, assistantMessage) : assistantMessage;
+                Object.assign(publicResult, {
+                  conversation_id: conversationId,
+                  model,
+                  done: true,
+                  tools_used: [String(record.tool_name || action.kind || "")],
+                  message: isObject(saved) ? saved : assistantMessage,
+                });
+                sendJson(res, 200, publicResult);
+                recordApiResult(200, { owner: "mykos-gateway" });
+                return true;
+              }
               const continuationError = String(error?.message || error || "").trim() || "El modelo no pudo continuar después de la aprobación.";
               Object.assign(publicResult, {
                 conversation_id: conversationId,
@@ -3937,6 +3961,13 @@ export default {
           if (apiPath === "/api/benchmark") internalPath = "/mykos-control/benchmark";
           else if (apiPath === "/api/nodes/heartbeat") internalPath = "/mykos-control/nodes/heartbeat";
           else if (apiPath === "/api/uploads") internalPath = "/mykos-control/uploads";
+          else if (apiPath === "/api/swarm/status") internalPath = `/mykos-control/swarm/status${apiUrl.search || ""}`;
+          else if (apiPath === "/api/swarm/title") internalPath = "/mykos-control/swarm/title";
+          else if (apiPath === "/api/swarm/workers") internalPath = "/mykos-control/swarm/workers";
+          else if (apiPath === "/api/swarm/board") internalPath = "/mykos-control/swarm/board";
+          else if (apiPath === "/api/swarm/workers/kill") internalPath = "/mykos-control/swarm/workers/kill";
+          else if (apiPath === "/api/swarm/reset") internalPath = "/mykos-control/swarm/reset";
+          else if (apiPath === "/api/swarm/save-cortex") internalPath = "/mykos-control/swarm/save-cortex";
           const status = await proxyRequest(req, res, backend.config.url, bufferedBody, internalPath, forwardHeaders);
           recordApiResult(status, { owner: "mykos-gateway", worker: "python", ...(policy ? { policy: policy.group } : {}), ...(internalPath !== workerPath ? { internal_path: internalPath } : {}) });
         } finally {

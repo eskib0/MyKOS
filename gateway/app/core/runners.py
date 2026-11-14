@@ -123,6 +123,47 @@ def parse_gemini_response(result_text: str) -> dict[str, Any]:
     }
 
 
+def extract_generated_media_markdowns(messages: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Extract (url, markdown) pairs for generated media executed in the current user turn."""
+    last_user_idx = -1
+    for idx, item in enumerate(messages):
+        if isinstance(item, dict) and str(item.get("role", "")).strip().casefold() == "user" and not item.get("integrity_guard"):
+            last_user_idx = idx
+    found: list[tuple[str, str]] = []
+    seen_urls: set[str] = set()
+    for item in messages[last_user_idx + 1 :]:
+        if not isinstance(item, dict) or str(item.get("role", "")).strip().casefold() != "tool":
+            continue
+        raw = item.get("content")
+        data: Any = raw
+        if isinstance(raw, str):
+            try:
+                data = json.loads(raw)
+            except Exception:
+                continue
+        if not isinstance(data, dict) or not data.get("ok"):
+            continue
+        url = str(data.get("url") or "").strip()
+        md = str(data.get("markdown") or "").strip()
+        if url.startswith("/static/media/gen-") and md and url not in seen_urls:
+            seen_urls.add(url)
+            found.append((url, md))
+    return found
+
+
+def ensure_generated_media_markdown(content: str, messages: list[dict[str, Any]]) -> str:
+    """Guarantee that generated image/video Markdown links from this turn appear in the assistant reply."""
+    text = str(content or "").strip()
+    media_items = extract_generated_media_markdowns(messages)
+    if not media_items:
+        return text
+    missing = [md for url, md in media_items if url not in text]
+    if not missing:
+        return text
+    suffix = "\n\n".join(missing)
+    return f"{text}\n\n{suffix}" if text else suffix
+
+
 def execute_openai_json_tool_loop(
     *,
     model: str,
@@ -185,6 +226,7 @@ def execute_openai_json_tool_loop(
                 continue
             if integrity_action == "warn":
                 content += INTEGRITY_UNVERIFIED_NOTE
+            content = ensure_generated_media_markdown(content, working_messages)
             assistant_message: dict[str, Any] = {
                 "role": "assistant",
                 "model": model,

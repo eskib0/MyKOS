@@ -112,7 +112,32 @@ const elements = {
   sidebarToggle: document.querySelector("#sidebar-toggle"),
   chatPanel: document.querySelector(".chat-panel"),
   cortexBtn: document.querySelector("#cortex-btn"),
+  openSwarmButton: document.querySelector("#open-swarm-button"),
   cortexPage: document.querySelector("#cortex-page"),
+  swarmPage: document.querySelector("#swarm-page"),
+  swarmTitleInput: document.querySelector("#swarm-title-input"),
+  swarmTitleSave: document.querySelector("#swarm-title-save"),
+  swarmLiveStats: document.querySelector("#swarm-live-stats"),
+  swarmPermissionMode: document.querySelector("#swarm-permission-mode"),
+  swarmTeamTemplate: document.querySelector("#swarm-team-template"),
+  swarmQuickTeam: document.querySelector("#swarm-quick-team"),
+  swarmSaveCortexBtn: document.querySelector("#swarm-save-cortex-btn"),
+  swarmResetBtn: document.querySelector("#swarm-reset-btn"),
+  swarmBack: document.querySelector("#swarm-back"),
+  swarmAddForm: document.querySelector("#swarm-add-form"),
+  swarmWorkerName: document.querySelector("#swarm-worker-name"),
+  swarmWorkerRole: document.querySelector("#swarm-worker-role"),
+  swarmWorkerModel: document.querySelector("#swarm-worker-model"),
+  swarmWorkerBrief: document.querySelector("#swarm-worker-brief"),
+  swarmStatusBanner: document.querySelector("#swarm-status-banner"),
+  swarmRosterCount: document.querySelector("#swarm-roster-count"),
+  swarmRosterList: document.querySelector("#swarm-roster-list"),
+  swarmBoardHead: document.querySelector("#swarm-board-head"),
+  swarmBoardFeed: document.querySelector("#swarm-board-feed"),
+  swarmMentionChips: document.querySelector("#swarm-mention-chips"),
+  swarmBoardForm: document.querySelector("#swarm-board-form"),
+  swarmBoardInput: document.querySelector("#swarm-board-input"),
+  swarmCanvas: document.querySelector("#swarm-canvas"),
   cortexRefresh: document.querySelector("#cortex-refresh"),
   cortexBack: document.querySelector("#cortex-back"),
   cortexSearch: document.querySelector("#cortex-search"),
@@ -882,13 +907,15 @@ async function loadNodes() {
 
 function setPage(page) {
   const cortex = page === "cortex";
+  const swarm = page === "swarm";
   const models = page === "models";
   const permissions = page === "permissions";
   const automations = page === "automations";
   const isSettings = page === "settings" || page === "voice" || page === "management" || page === "media" || page === "nodes";
-  const configPage = cortex || models || permissions || automations || isSettings;
+  const configPage = cortex || swarm || models || permissions || automations || isSettings;
   elements.chatPanel.classList.toggle("models-active", configPage);
   if (elements.cortexPage) elements.cortexPage.hidden = !cortex;
+  if (elements.swarmPage) elements.swarmPage.hidden = !swarm;
   elements.modelsPage.hidden = !models;
   elements.permissionsPage.hidden = !permissions;
   elements.automationsPage.hidden = !automations;
@@ -897,6 +924,11 @@ function setPage(page) {
     elements.cortexBtn.classList.toggle("active", cortex);
     if (cortex) elements.cortexBtn.setAttribute("aria-current", "page");
     else elements.cortexBtn.removeAttribute("aria-current");
+  }
+  if (elements.openSwarmButton) {
+    elements.openSwarmButton.classList.toggle("active", swarm);
+    if (swarm) elements.openSwarmButton.setAttribute("aria-current", "page");
+    else elements.openSwarmButton.removeAttribute("aria-current");
   }
   for (const item of elements.navItems) {
     const active = item.dataset.page === page;
@@ -914,6 +946,10 @@ function setPage(page) {
     return;
   }
   stopCortexLoop();
+  if (swarm) {
+    openSwarmPage();
+    return;
+  }
   if (models) {
     setModelsTab(state.activeModelsTab || null);
   } else if (permissions) {
@@ -1391,7 +1427,7 @@ async function checkSystemUpdates(force = false) {
         elements.headerUpdatePill.hidden = false;
         elements.headerUpdatePill.classList.remove("has-update");
         elements.headerUpdatePill.classList.add("up-to-date");
-        const curVer = data.current_version ? `v${data.current_version.replace(/^v/, "")}` : "v2.0.7";
+        const curVer = data.current_version ? `v${data.current_version.replace(/^v/, "")}` : "v2.1.0";
         elements.headerUpdatePill.title = `MyKOS ${curVer} · En línea (haz clic para abrir Gestión local)`;
         if (elements.headerUpdateLabel) {
           elements.headerUpdateLabel.textContent = curVer;
@@ -3998,6 +4034,7 @@ async function loadModels() {
       : "Sin herramientas activas";
     elements.memoryMeta.textContent = `${memoryCount} recuerdo${memoryCount === 1 ? "" : "s"} persistente${memoryCount === 1 ? "" : "s"}`;
     updateModelMeta();
+    if (typeof renderSwarmModelOptions === "function") renderSwarmModelOptions();
     syncModelGenerationControls();
     updateLocalEnginesStatus();
     renderBenchmarkResults();
@@ -4598,6 +4635,9 @@ async function sendMessage(event) {
     renderAttachments();
     await loadConversations(); await loadConversation(); await loadApprovals();
     await loadContextMeter();
+    if (Array.isArray(data.tools_used) && data.tools_used.some((t) => String(t).startsWith("swarm_"))) {
+      loadSwarmStatus({ schedule: true });
+    }
   } catch (error) {
     addBubble("assistant", error.message, true);
     endActivity(error.message);
@@ -4650,6 +4690,11 @@ elements.cortexBtn?.addEventListener("click", () => {
   setPage("cortex");
   if (window.innerWidth <= 720) document.querySelector("#sidebar-close")?.click();
 });
+elements.openSwarmButton?.addEventListener("click", () => {
+  setPage("swarm");
+  if (window.innerWidth <= 720) document.querySelector("#sidebar-close")?.click();
+});
+elements.swarmBack?.addEventListener("click", () => setPage("chat"));
 elements.settingsNavBtn?.addEventListener("click", () => {
   setPage("settings");
   if (window.innerWidth <= 720) document.querySelector("#sidebar-close")?.click();
@@ -6213,6 +6258,7 @@ loadAutomations();
 state.automationPollTimer = window.setInterval(loadAutomations, 5000);
 loadManagement();
 renderLibraryRoots();
+loadSwarmStatus({ schedule: true });
 
 const urlParams = new URLSearchParams(window.location.search);
 const initPage = urlParams.get("page");
@@ -7047,6 +7093,785 @@ function openCortexPage() {
       ensureCortexLoop();
       drawCortexGraph();
     }
+  });
+}
+
+// ───────────────────────── MyKOS Swarm (Multi-Agente) ─────────────────────────
+const swarmState = {
+  data: null,
+  pollTimer: 0,
+  loading: false,
+  initialized: false,
+  resizeObserver: null,
+  lastRenderSig: "",
+  canvasNodes: [],
+};
+
+function renderSwarmModelOptions() {
+  const select = elements.swarmWorkerModel;
+  if (!select) return;
+  const previous = select.value || "inherit";
+  select.replaceChildren();
+  const inheritOpt = document.createElement("option");
+  inheritOpt.value = "inherit";
+  inheritOpt.textContent = "Usar modelo activo del chat";
+  select.appendChild(inheritOpt);
+  const grouped = new Map();
+  const selectable = (state.models || []).filter((item) => item.chat_capable !== false);
+  for (const model of selectable) {
+    const provider = model.provider || "other";
+    if (!grouped.has(provider)) grouped.set(provider, []);
+    grouped.get(provider).push(model);
+  }
+  for (const [provider, models] of grouped) {
+    if (!models.length) continue;
+    const group = document.createElement("optgroup");
+    group.label = `──── ${providerLabel(provider, models)} ────`;
+    for (const model of models) {
+      const opt = document.createElement("option");
+      opt.value = model.name;
+      opt.textContent = `${model.label || model.name}${model.remote ? " · remoto" : " · local"}`;
+      group.appendChild(opt);
+    }
+    select.appendChild(group);
+  }
+  const stillValid = Array.from(select.options).some((o) => o.value === previous);
+  select.value = stillValid ? previous : "inherit";
+}
+
+function setSwarmBanner(text, isError = false, action = null) {
+  const banner = elements.swarmStatusBanner;
+  if (!banner) return;
+  if (!text) {
+    banner.hidden = true;
+    banner.replaceChildren();
+    banner.classList.remove("is-error");
+    return;
+  }
+  banner.hidden = false;
+  banner.classList.toggle("is-error", isError);
+  banner.replaceChildren();
+  const msgSpan = document.createElement("span");
+  msgSpan.textContent = text;
+  banner.appendChild(msgSpan);
+  if (action && typeof action.onClick === "function" && action.label) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "swarm-banner-action";
+    btn.textContent = action.label;
+    btn.addEventListener("click", action.onClick);
+    banner.appendChild(btn);
+  }
+}
+
+async function openSavedSwarmNoteInCortex(relativePath) {
+  if (!relativePath) return;
+  setPage("cortex");
+  await loadCortexGraph({ fitOnFirst: false });
+  await loadCortexNote(relativePath);
+}
+
+function insertSwarmMention(mentionName) {
+  const input = elements.swarmBoardInput;
+  if (!input) return;
+  const token = `@${String(mentionName || "").replace(/^@/, "")} `;
+  const start = typeof input.selectionStart === "number" ? input.selectionStart : input.value.length;
+  const end = typeof input.selectionEnd === "number" ? input.selectionEnd : input.value.length;
+  const before = input.value.slice(0, start);
+  const spacer = before && !/\s$/.test(before) ? " " : "";
+  input.value = `${before}${spacer}${token}${input.value.slice(end)}`;
+  const cursor = (before + spacer + token).length;
+  input.focus();
+  input.setSelectionRange(cursor, cursor);
+}
+
+function appendHighlightedBoardText(container, text) {
+  const raw = String(text || "");
+  const tokenRe = /(@[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}|#\d+)/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = tokenRe.exec(raw)) !== null) {
+    if (match.index > lastIndex) {
+      container.appendChild(document.createTextNode(raw.slice(lastIndex, match.index)));
+    }
+    const span = document.createElement("span");
+    const token = match[0];
+    span.className = token.startsWith("@") ? "swarm-ref-mention" : "swarm-ref-seq";
+    span.textContent = token;
+    container.appendChild(span);
+    lastIndex = tokenRe.lastIndex;
+  }
+  if (lastIndex < raw.length) {
+    container.appendChild(document.createTextNode(raw.slice(lastIndex)));
+  }
+}
+
+function syncSwarmButtonIndicator(data) {
+  const btn = elements.openSwarmButton;
+  if (!btn) return;
+  const workersWorking = Boolean(
+    (data?.counts?.working || 0) > 0
+    || (data?.member_list || []).some((m) => m.name !== "coordinator" && m.state === "working"),
+  );
+  btn.classList.toggle("is-working", workersWorking);
+}
+
+function stopSwarmPolling() {
+  if (swarmState.pollTimer) {
+    window.clearTimeout(swarmState.pollTimer);
+    swarmState.pollTimer = 0;
+  }
+}
+
+function scheduleSwarmPollIfNeeded(data = swarmState.data) {
+  stopSwarmPolling();
+  const pageVisible = Boolean(elements.swarmPage && !elements.swarmPage.hidden);
+  const anyWorking = Boolean(
+    (data?.counts?.working || 0) > 0
+    || (data?.member_list || []).some((m) => m.name !== "coordinator" && m.state === "working"),
+  );
+  if (!pageVisible && !anyWorking) return;
+  swarmState.pollTimer = window.setTimeout(() => {
+    swarmState.pollTimer = 0;
+    loadSwarmStatus({ schedule: true });
+  }, 2500);
+}
+
+function renderSwarmRoster(members) {
+  const container = elements.swarmRosterList;
+  if (!container) return;
+  container.replaceChildren();
+  for (const m of members) {
+    const card = document.createElement("div");
+    card.className = `swarm-agent-card ${m.state === "working" ? "is-working" : ""} ${m.state === "killed" ? "is-killed" : ""}`;
+
+    const top = document.createElement("div");
+    top.className = "swarm-agent-top";
+    const nameEl = document.createElement("span");
+    nameEl.className = "swarm-agent-name";
+    const dot = document.createElement("span");
+    dot.className = `swarm-state-dot ${m.state || "waiting"}`;
+    nameEl.appendChild(dot);
+    nameEl.appendChild(document.createTextNode(`@${m.name}`));
+    const pill = document.createElement("span");
+    pill.className = "swarm-state-pill";
+    pill.textContent = m.state || "waiting";
+    top.appendChild(nameEl);
+    top.appendChild(pill);
+    card.appendChild(top);
+
+    const meta = document.createElement("div");
+    meta.className = "swarm-agent-meta";
+    const toolsTxt = `${m.tools_used_count || 0} herr.`;
+    meta.textContent = `${m.role || "Especialista"} · ${m.model || "inherit"} · ${toolsTxt}`;
+    card.appendChild(meta);
+
+    if (m.last_error) {
+      const errEl = document.createElement("div");
+      errEl.className = "swarm-agent-error";
+      errEl.textContent = m.last_error;
+      card.appendChild(errEl);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "swarm-agent-actions";
+    const mentionBtn = document.createElement("button");
+    mentionBtn.type = "button";
+    mentionBtn.className = "text-button";
+    mentionBtn.textContent = "@Mencionar";
+    mentionBtn.addEventListener("click", () => insertSwarmMention(m.name));
+    actions.appendChild(mentionBtn);
+
+    if (m.name !== "coordinator") {
+      const killBtn = document.createElement("button");
+      killBtn.type = "button";
+      killBtn.className = "text-button danger-text-button";
+      killBtn.textContent = "Detener";
+      killBtn.disabled = m.state === "killed";
+      killBtn.addEventListener("click", () => killSwarmWorker(m.name));
+      actions.appendChild(killBtn);
+    }
+    card.appendChild(actions);
+    container.appendChild(card);
+  }
+}
+
+function renderSwarmMentionChips(members) {
+  const bar = elements.swarmMentionChips;
+  if (!bar) return;
+  bar.replaceChildren();
+  const names = ["all", ...members.filter((m) => m.name !== "coordinator" && m.state !== "killed").map((m) => m.name)];
+  for (const name of names) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "swarm-chip-btn";
+    btn.textContent = `@${name}`;
+    btn.addEventListener("click", () => insertSwarmMention(name));
+    bar.appendChild(btn);
+  }
+}
+
+function renderSwarmBoard(messages) {
+  const feed = elements.swarmBoardFeed;
+  if (!feed) return;
+  const nearBottom = (feed.scrollHeight - feed.scrollTop - feed.clientHeight) < 80;
+  feed.replaceChildren();
+  if (!messages.length) {
+    const empty = document.createElement("div");
+    empty.className = "swarm-board-empty";
+    empty.textContent = "El tablón está listo. Añade un agente especialista, despliega el equipo rápido o publica una instrucción con @nombre / @all.";
+    feed.appendChild(empty);
+    return;
+  }
+  for (const msg of messages) {
+    const card = document.createElement("article");
+    card.className = `swarm-msg-card ${msg.agent === "coordinator" ? "is-coordinator" : ""}`;
+
+    const header = document.createElement("div");
+    header.className = "swarm-msg-header";
+    const seqSpan = document.createElement("span");
+    seqSpan.className = "swarm-msg-seq";
+    seqSpan.textContent = `#${msg.seq}`;
+    const authorSpan = document.createElement("span");
+    authorSpan.className = "swarm-msg-author";
+    authorSpan.textContent = `@${msg.agent}`;
+    header.appendChild(seqSpan);
+    header.appendChild(authorSpan);
+    if (msg.model) {
+      const modelChip = document.createElement("span");
+      modelChip.className = "swarm-msg-chip";
+      modelChip.textContent = msg.model;
+      header.appendChild(modelChip);
+    }
+    if (Number(msg.duration_seconds) > 0) {
+      const durChip = document.createElement("span");
+      durChip.className = "swarm-msg-chip";
+      durChip.textContent = `${Number(msg.duration_seconds).toFixed(1)}s`;
+      header.appendChild(durChip);
+    }
+    const timeSpan = document.createElement("span");
+    timeSpan.className = "swarm-msg-time";
+    timeSpan.textContent = msg.created_at ? String(msg.created_at).slice(11, 19) : "";
+    header.appendChild(timeSpan);
+    const saveMsgBtn = document.createElement("button");
+    saveMsgBtn.type = "button";
+    saveMsgBtn.className = "swarm-msg-save-btn";
+    saveMsgBtn.textContent = "Guardar nota en Cortex";
+    saveMsgBtn.title = `Guardar mensaje #${msg.seq} en MyKOS Cortex`;
+    saveMsgBtn.addEventListener("click", () => saveSwarmToCortex({ seq: msg.seq }));
+    header.appendChild(saveMsgBtn);
+    card.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "swarm-msg-body";
+    appendHighlightedBoardText(body, msg.text || "");
+    card.appendChild(body);
+
+    const tools = Array.isArray(msg.tools_used) ? msg.tools_used : [];
+    if (tools.length) {
+      const toolsRow = document.createElement("div");
+      toolsRow.className = "swarm-msg-tools";
+      for (const t of tools) {
+        const chip = document.createElement("span");
+        chip.className = "swarm-tool-chip";
+        chip.textContent = t;
+        toolsRow.appendChild(chip);
+      }
+      card.appendChild(toolsRow);
+    }
+    feed.appendChild(card);
+  }
+  if (nearBottom) {
+    feed.scrollTop = feed.scrollHeight;
+  }
+}
+
+function resizeSwarmCanvas() {
+  const canvas = elements.swarmCanvas;
+  if (!canvas || !canvas.parentElement) return;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(240, Math.floor(rect.width));
+  const h = Math.max(220, Math.floor(rect.height));
+  if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+  }
+  drawSwarmGraph();
+}
+
+function drawSwarmGraph() {
+  const canvas = elements.swarmCanvas;
+  if (!canvas || !elements.swarmPage || elements.swarmPage.hidden) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const dpr = window.devicePixelRatio || 1;
+  const width = canvas.width / dpr;
+  const height = canvas.height / dpr;
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const data = swarmState.data;
+  const members = Array.isArray(data?.member_list) ? data.member_list : [{ name: "coordinator", state: "waiting" }];
+  const edges = Array.isArray(data?.edges) ? data.edges : [];
+  const head = Number(data?.head || 0);
+
+  const cx = width / 2;
+  const cy = height / 2;
+  const workers = members.filter((m) => m.name !== "coordinator");
+  const radius = Math.max(60, Math.min(width, height) * 0.34);
+
+  const positions = new Map();
+  const nodes = [];
+  const coordMember = members.find((m) => m.name === "coordinator") || { name: "coordinator", state: "waiting" };
+  const coordPos = { x: cx, y: workers.length ? cy : cy, r: 22, member: coordMember };
+  positions.set("coordinator", coordPos);
+  nodes.push(coordPos);
+
+  workers.forEach((w, idx) => {
+    const angle = (-Math.PI / 2) + (2 * Math.PI * idx) / Math.max(1, workers.length);
+    const nx = cx + Math.cos(angle) * radius;
+    const ny = cy + Math.sin(angle) * radius;
+    const pos = { x: nx, y: ny, r: 17, member: w };
+    positions.set(w.name, pos);
+    nodes.push(pos);
+  });
+  swarmState.canvasNodes = nodes;
+
+  for (const edge of edges) {
+    const from = positions.get(edge.from);
+    const to = positions.get(edge.to);
+    if (!from || !to || from === to) continue;
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const ux = dx / dist;
+    const uy = dy / dist;
+    const midX = (from.x + to.x) / 2 - uy * 18;
+    const midY = (from.y + to.y) / 2 + ux * 18;
+    const startX = from.x + ux * (from.r + 3);
+    const startY = from.y + uy * (from.r + 3);
+    const endX = to.x - ux * (to.r + 6);
+    const endY = to.y - uy * (to.r + 6);
+
+    const isLatest = head > 0 && Number(edge.last_seq) === head;
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.quadraticCurveTo(midX, midY, endX, endY);
+    ctx.strokeStyle = isLatest ? "rgba(56, 189, 248, 0.9)" : "rgba(148, 163, 184, 0.42)";
+    ctx.lineWidth = isLatest ? 2.4 : Math.min(3, 1.1 + (edge.count || 1) * 0.35);
+    ctx.stroke();
+
+    const tangentX = endX - midX;
+    const tangentY = endY - midY;
+    const tAngle = Math.atan2(tangentY, tangentX);
+    ctx.beginPath();
+    ctx.moveTo(endX, endY);
+    ctx.lineTo(endX - 8 * Math.cos(tAngle - 0.4), endY - 8 * Math.sin(tAngle - 0.4));
+    ctx.lineTo(endX - 8 * Math.cos(tAngle + 0.4), endY - 8 * Math.sin(tAngle + 0.4));
+    ctx.closePath();
+    ctx.fillStyle = isLatest ? "#38bdf8" : "rgba(148, 163, 184, 0.72)";
+    ctx.fill();
+
+    if ((edge.count || 0) > 0) {
+      ctx.fillStyle = "rgba(15, 23, 34, 0.85)";
+      ctx.beginPath();
+      ctx.arc(midX, midY, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = isLatest ? "#bae6fd" : "#cbd5e1";
+      ctx.font = "600 9.5px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(edge.count), midX, midY);
+    }
+  }
+
+  const colorFor = (member) => {
+    if (member.name === "coordinator") return "#38bdf8";
+    if (member.state === "working") return "#f59e0b";
+    if (member.state === "killed") return "#64748b";
+    return "#22c55e";
+  };
+
+  for (const node of nodes) {
+    const color = colorFor(node.member);
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, node.r, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(15, 23, 34, 0.94)";
+    ctx.fill();
+    ctx.lineWidth = node.member.state === "working" ? 3 : 2;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+
+    ctx.fillStyle = color;
+    ctx.font = "700 10px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const shortTag = node.member.name === "coordinator" ? "COORD" : node.member.name.slice(0, 6).toUpperCase();
+    ctx.fillText(shortTag, node.x, node.y);
+
+    ctx.fillStyle = node.member.state === "killed" ? "#94a3b8" : "#f1f5f9";
+    ctx.font = "600 11px system-ui, sans-serif";
+    ctx.textBaseline = "top";
+    ctx.fillText(`@${node.member.name}`, node.x, node.y + node.r + 5);
+  }
+  ctx.restore();
+}
+
+function applySwarmData(data) {
+  if (!data || typeof data !== "object") return;
+  swarmState.data = data;
+  syncSwarmButtonIndicator(data);
+  if (elements.swarmTitleInput && document.activeElement !== elements.swarmTitleInput) {
+    elements.swarmTitleInput.value = data.title || "Swarm MyKOS";
+  }
+  if (elements.swarmPermissionMode && data.permission_mode) {
+    elements.swarmPermissionMode.value = data.permission_mode;
+  }
+  const counts = data.counts || {};
+  if (elements.swarmLiveStats) {
+    const totalAgents = counts.members ?? (data.member_list?.length || 1);
+    const working = counts.working ?? 0;
+    const msgs = counts.messages ?? (data.messages?.length || 0);
+    elements.swarmLiveStats.textContent = `${totalAgents} agente${totalAgents === 1 ? "" : "s"} · ${working} trabajando · ${msgs} mensaje${msgs === 1 ? "" : "s"}`;
+  }
+  const members = Array.isArray(data.member_list) ? data.member_list : [];
+  if (elements.swarmRosterCount) elements.swarmRosterCount.textContent = String(members.length);
+  if (elements.swarmBoardHead) elements.swarmBoardHead.textContent = `#${data.head || 0}`;
+
+  const renderSig = JSON.stringify({
+    h: data.head,
+    u: data.updated_at,
+    m: members.map((x) => `${x.name}:${x.state}:${x.tools_used_count}:${x.last_error || ""}`),
+  });
+  if (renderSig !== swarmState.lastRenderSig) {
+    swarmState.lastRenderSig = renderSig;
+    renderSwarmRoster(members);
+    renderSwarmMentionChips(members);
+    renderSwarmBoard(Array.isArray(data.messages) ? data.messages : []);
+  }
+  drawSwarmGraph();
+  scheduleSwarmPollIfNeeded(data);
+}
+
+async function loadSwarmStatus({ schedule = true } = {}) {
+  if (swarmState.loading) return;
+  swarmState.loading = true;
+  try {
+    const data = await api("/api/swarm/status?limit=80");
+    setSwarmBanner("");
+    applySwarmData(data);
+  } catch (error) {
+    if (elements.swarmPage && !elements.swarmPage.hidden) {
+      setSwarmBanner(error.message || "No se pudo cargar el estado del Swarm.", true);
+    }
+    if (schedule && elements.swarmPage && !elements.swarmPage.hidden) {
+      scheduleSwarmPollIfNeeded(swarmState.data);
+    }
+  } finally {
+    swarmState.loading = false;
+  }
+}
+
+async function saveSwarmHeaderSettings({ title, permission_mode } = {}) {
+  const payload = {};
+  if (typeof title === "string" && title.trim()) payload.title = title.trim();
+  if (permission_mode) payload.permission_mode = permission_mode;
+  if (!Object.keys(payload).length) return;
+  try {
+    const data = await api("/api/swarm/title", { method: "POST", body: JSON.stringify(payload) });
+    setSwarmBanner("");
+    applySwarmData(data);
+  } catch (error) {
+    setSwarmBanner(error.message, true);
+  }
+}
+
+async function submitSwarmAddWorker(event) {
+  event.preventDefault();
+  const name = (elements.swarmWorkerName?.value || "").trim();
+  const role = (elements.swarmWorkerRole?.value || "").trim() || "Especialista";
+  const brief = (elements.swarmWorkerBrief?.value || "").trim();
+  const chosenModel = elements.swarmWorkerModel?.value || "inherit";
+  const model = chosenModel === "inherit" ? (selectedModel() || "inherit") : chosenModel;
+  if (!name || !brief) return;
+  try {
+    setSwarmBanner(`Desplegando agente @${name}…`);
+    const data = await api("/api/swarm/workers", {
+      method: "POST",
+      body: JSON.stringify({ name, role, brief, model }),
+    });
+    if (elements.swarmWorkerName) elements.swarmWorkerName.value = "";
+    if (elements.swarmWorkerRole) elements.swarmWorkerRole.value = "";
+    if (elements.swarmWorkerBrief) elements.swarmWorkerBrief.value = "";
+    setSwarmBanner("");
+    applySwarmData(data);
+  } catch (error) {
+    setSwarmBanner(error.message, true);
+  }
+}
+
+const SWARM_TEAM_TEMPLATES = {
+  ingenieria: {
+    label: "Ingeniería y Código",
+    members: [
+      {
+        name: "investigador",
+        role: "Analista de Arquitectura",
+        task: "inspecciona el repositorio y la arquitectura relevante con herramientas reales, documenta hallazgos clave y menciona a @implementador para pasar a la fase técnica",
+      },
+      {
+        name: "implementador",
+        role: "Ingeniero de Código",
+        task: "revisa el análisis previo (#seq), propone o aplica los pasos de código necesarios y menciona a @verificador para validación",
+      },
+      {
+        name: "verificador",
+        role: "Especialista QA y Tests",
+        task: "ejecuta pruebas/comprobaciones reales sobre los resultados y publica el veredicto final mencionando a @coordinator",
+      },
+    ],
+  },
+  seguridad: {
+    label: "Auditoría de Seguridad",
+    members: [
+      {
+        name: "red-team",
+        role: "Explorador de Superficie y Riesgos",
+        task: "mapea superficie de ataque, rutas, endpoints, permisos y vectores potenciales y menciona a @auditor-sec",
+      },
+      {
+        name: "auditor-sec",
+        role: "Analista de Código y Políticas",
+        task: "audita validaciones, autenticación, HMAC, aislamiento y sanitización sobre los hallazgos previos y menciona a @hardening",
+      },
+      {
+        name: "hardening",
+        role: "Verificador de Blindaje",
+        task: "prioriza mitigaciones verificables, comprueba controles y entrega el informe de seguridad final a @coordinator",
+      },
+    ],
+  },
+  rea: {
+    label: "Ingeniería Inversa (REA)",
+    members: [
+      {
+        name: "inspector-rea",
+        role: "Analista de Artefactos y Binarios",
+        task: "usa herramientas REA (rea_status, rea_list_tools, rea_call_tool) e inspección de archivos para catalogar binarios, bundles o artefactos y menciona a @decompilador",
+      },
+      {
+        name: "decompilador",
+        role: "Analista de Flujo y Símbolos",
+        task: "analiza símbolos, strings, dependencias y flujos internos identificados y menciona a @relator-rea",
+      },
+      {
+        name: "relator-rea",
+        role: "Autor de Informe Técnico",
+        task: "consolida la reconstrucción técnica y evidencias verificadas y reporta el informe final a @coordinator",
+      },
+    ],
+  },
+  investigacion: {
+    label: "Investigación Profunda y Cortex",
+    members: [
+      {
+        name: "explorador-web",
+        role: "Investigador Web y Fuentes",
+        task: "recopila y contrasta información actualizada y fuentes técnicas verificables y menciona a @analista-cortex",
+      },
+      {
+        name: "analista-cortex",
+        role: "Conector de Memoria Cortex",
+        task: "consulta MyKOS Cortex (search_cortex / read_cortex_note), cruza el conocimiento previo con los hallazgos nuevos y menciona a @sintetizador",
+      },
+      {
+        name: "sintetizador",
+        role: "Redactor de Dossier Ejecutivo",
+        task: "redacta el dossier ejecutivo estructurado y accionable con referencias y lo entrega a @coordinator",
+      },
+    ],
+  },
+  arquitectura: {
+    label: "Consejo de Arquitectura y Rendimiento",
+    members: [
+      {
+        name: "arquitecto",
+        role: "Diseñador de Sistemas",
+        task: "evalúa el diseño estructural, acoplamiento, escalabilidad y contratos entre componentes y menciona a @critico-perf",
+      },
+      {
+        name: "critico-perf",
+        role: "Especialista en Rendimiento/VRAM",
+        task: "analiza latencia, concurrencia, I/O, uso de memoria/VRAM y cuellos de botella y menciona a @juez",
+      },
+      {
+        name: "juez",
+        role: "Síntesis y Veredicto Final",
+        task: "pondera arquitectura vs rendimiento, formula recomendaciones priorizadas y reporta el veredicto final a @coordinator",
+      },
+    ],
+  },
+};
+
+async function deployQuickSwarmTeam() {
+  const chosenModel = elements.swarmWorkerModel?.value || "inherit";
+  const model = chosenModel === "inherit" ? (selectedModel() || "inherit") : chosenModel;
+  const titleText = (elements.swarmTitleInput?.value || "").trim() || "Equipo Swarm MyKOS";
+  const templateKey = elements.swarmTeamTemplate?.value || "ingenieria";
+  const template = SWARM_TEAM_TEMPLATES[templateKey] || SWARM_TEAM_TEMPLATES.ingenieria;
+  const [m0, m1, m2] = template.members;
+
+  const firstBrief = (
+    `Misión "${titleText}" (${template.label}). Flujo encadenado en 3 fases:\n`
+    + `1) Tú (@${m0.name}, ${m0.role}): ${m0.task}.\n`
+    + `2) Después @${m1.name} (${m1.role}): ${m1.task}.\n`
+    + `3) Finalmente @${m2.name} (${m2.role}): ${m2.task}.\n`
+    + `Ejecuta ahora tu Fase 1 con herramientas reales, publica tus hallazgos citando rutas/evidencias y termina mencionando a @${m1.name} con su encargo concreto (recordándole mencionar después a @${m2.name} para el cierre hacia @coordinator).`
+  );
+
+  try {
+    setSwarmBanner(`Desplegando equipo «${template.label}» (@${m0.name} -> @${m1.name} -> @${m2.name})…`);
+    // Registramos primero al #3 y #2 en estado waiting para evitar carreras y lanzar la cadena desde #1.
+    await api("/api/swarm/workers", {
+      method: "POST",
+      body: JSON.stringify({ name: m2.name, role: m2.role, brief: "", model, title: titleText }),
+    });
+    await api("/api/swarm/workers", {
+      method: "POST",
+      body: JSON.stringify({ name: m1.name, role: m1.role, brief: "", model, title: titleText }),
+    });
+    const lastData = await api("/api/swarm/workers", {
+      method: "POST",
+      body: JSON.stringify({ name: m0.name, role: m0.role, brief: firstBrief, model, title: titleText }),
+    });
+    setSwarmBanner(`Equipo «${template.label}» desplegado: @${m0.name} iniciado en cadena.`);
+    if (lastData) applySwarmData(lastData);
+  } catch (error) {
+    setSwarmBanner(error.message, true);
+  }
+}
+
+async function saveSwarmToCortex({ seq = null } = {}) {
+  const titleText = (elements.swarmTitleInput?.value || "").trim();
+  const payload = {};
+  if (titleText) payload.title = titleText;
+  if (Number.isInteger(seq) && seq > 0) payload.seq = seq;
+  try {
+    setSwarmBanner(seq ? `Guardando mensaje #${seq} en MyKOS Cortex…` : "Compilando y guardando informe del Swarm en MyKOS Cortex…");
+    const data = await api("/api/swarm/save-cortex", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    const savedPath = data.path || "";
+    setSwarmBanner(
+      seq ? `Mensaje #${seq} guardado en Cortex: ${savedPath}` : `Informe guardado en Cortex: ${savedPath}`,
+      false,
+      savedPath ? { label: "Abrir en Cortex", onClick: () => openSavedSwarmNoteInCortex(savedPath) } : null,
+    );
+  } catch (error) {
+    setSwarmBanner(error.message, true);
+  }
+}
+
+async function submitSwarmBoardMessage(event) {
+  event?.preventDefault();
+  const text = (elements.swarmBoardInput?.value || "").trim();
+  if (!text) return;
+  try {
+    const data = await api("/api/swarm/board", {
+      method: "POST",
+      body: JSON.stringify({ agent: "coordinator", text }),
+    });
+    if (elements.swarmBoardInput) elements.swarmBoardInput.value = "";
+    setSwarmBanner("");
+    applySwarmData(data);
+  } catch (error) {
+    setSwarmBanner(error.message, true);
+  }
+}
+
+async function killSwarmWorker(name) {
+  try {
+    const data = await api("/api/swarm/workers/kill", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    setSwarmBanner("");
+    applySwarmData(data);
+  } catch (error) {
+    setSwarmBanner(error.message, true);
+  }
+}
+
+async function resetSwarmMission() {
+  const nextTitle = (elements.swarmTitleInput?.value || "").trim() || "Nuevo Swarm MyKOS";
+  try {
+    const data = await api("/api/swarm/reset", {
+      method: "POST",
+      body: JSON.stringify({ title: nextTitle }),
+    });
+    if (data.archived_path) {
+      setSwarmBanner(
+        `Swarm reiniciado. Informe previo auto-archivado en Cortex: ${data.archived_path}`,
+        false,
+        { label: "Abrir en Cortex", onClick: () => openSavedSwarmNoteInCortex(data.archived_path) },
+      );
+    } else {
+      setSwarmBanner("");
+    }
+    applySwarmData(data);
+  } catch (error) {
+    setSwarmBanner(error.message, true);
+  }
+}
+
+function initSwarmUiEvents() {
+  if (swarmState.initialized) return;
+  swarmState.initialized = true;
+  if (typeof ResizeObserver !== "undefined" && elements.swarmCanvas?.parentElement) {
+    swarmState.resizeObserver = new ResizeObserver(() => resizeSwarmCanvas());
+    swarmState.resizeObserver.observe(elements.swarmCanvas.parentElement);
+  }
+  elements.swarmCanvas?.addEventListener("click", (event) => {
+    const rect = elements.swarmCanvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const hit = swarmState.canvasNodes.find((n) => Math.hypot(x - n.x, y - n.y) <= n.r + 6);
+    if (hit?.member?.name) insertSwarmMention(hit.member.name);
+  });
+  elements.swarmTitleSave?.addEventListener("click", () => {
+    saveSwarmHeaderSettings({ title: elements.swarmTitleInput?.value });
+  });
+  elements.swarmTitleInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      saveSwarmHeaderSettings({ title: elements.swarmTitleInput.value });
+    }
+  });
+  elements.swarmPermissionMode?.addEventListener("change", (event) => {
+    saveSwarmHeaderSettings({ permission_mode: event.target.value });
+  });
+  elements.swarmQuickTeam?.addEventListener("click", deployQuickSwarmTeam);
+  elements.swarmSaveCortexBtn?.addEventListener("click", () => saveSwarmToCortex());
+  elements.swarmResetBtn?.addEventListener("click", resetSwarmMission);
+  elements.swarmAddForm?.addEventListener("submit", submitSwarmAddWorker);
+  elements.swarmBoardForm?.addEventListener("submit", submitSwarmBoardMessage);
+  elements.swarmBoardInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      submitSwarmBoardMessage();
+    }
+  });
+}
+
+function openSwarmPage() {
+  initSwarmUiEvents();
+  renderSwarmModelOptions();
+  window.requestAnimationFrame(() => {
+    resizeSwarmCanvas();
+    loadSwarmStatus({ schedule: true });
   });
 }
 

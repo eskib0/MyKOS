@@ -23,8 +23,10 @@ MyKOS/
 │   │   └── qwen-home/        # Perfil aislado de configuración para Qwen Code CLI
 │   ├── app/                  # Trabajador Python y conectores de modelos/herramientas
 │   │   ├── server.py         # Enrutador interno (/mykos-control/*) y orquestación del backend
-│   │   ├── cortex.py         # Motor MyKOS Cortex: grafo de conocimiento y bóveda Markdown soberana (v2.0.7)
-│   │   ├── core/             # Paquete modular de servicios del servidor backend (v2.0.7)
+│   │   ├── swarm_engine.py   # Motor nativo MyKOS Swarm: enjambre multi-agente híbrido nube + GPU local (v2.1.0)
+│   │   ├── swarm_cli.py      # Subcomandos CLI de Swarm (status, board, add, post, kill, reset)
+│   │   ├── cortex.py         # Motor MyKOS Cortex: grafo de conocimiento y bóveda Markdown soberana (v2.1.0)
+│   │   ├── core/             # Paquete modular de servicios del servidor backend (v2.1.0)
 │   │   │   ├── activity.py   # Registro efímero de actividad y supervisión de servidores locales
 │   │   │   ├── benchmark.py  # Suite de benchmarks y telemetría de rendimiento
 │   │   │   ├── claude.py     # Integración con Claude CLI y suscripción OAuth
@@ -33,8 +35,9 @@ MyKOS/
 │   │   │   ├── providers.py  # Gestión de catálogos y autenticación dual (OAuth + API Key) de proveedores
 │   │   │   ├── runners.py    # Bucle universal de herramientas y runners de inferencia
 │   │   │   └── uploads.py    # Gestión y purga de archivos temporales multipart
-│   │   ├── tools/            # Paquete modular de herramientas del sistema (v2.0.7 · 12 submódulos)
+│   │   ├── tools/            # Paquete modular de herramientas del sistema (v2.1.0 · 13 submódulos)
 │   │   │   ├── schemas.py    # Esquemas JSON formales de herramientas y lista de sensibles
+│   │   │   ├── swarm_tools.py # Herramientas de chat para orquestar el Swarm (swarm_status, swarm_add_worker, swarm_post, swarm_read_board, swarm_kill)
 │   │   │   ├── cortex_tools.py # Camino único de memoria en Cortex (search_cortex, read_cortex_note, save_cortex_note)
 │   │   │   ├── filesystem.py # Operaciones en disco, búsquedas y fichas de investigación
 │   │   │   ├── shell.py      # Subprocesos seguros y semáforo heurístico de riesgo
@@ -46,7 +49,7 @@ MyKOS/
 │   │   ├── rea.py            # Motor integrado REA (Reverse Engineer Anything · 207 herramientas MCP)
 │   │   ├── strata.py         # Conector para el motor local CUDA Strata (Qwen3.8 125B / Qwen3.6 35B)
 │   │   ├── qwen_cli.py       # Conector para Qwen Code CLI / Suscripción Qwen Plus y enrutamiento local
-│   │   ├── static/           # Interfaz web reactiva v2.0.7 (index.html, app.js, styles.css)
+│   │   ├── static/           # Interfaz web reactiva v2.1.0 (index.html, app.js, styles.css)
 │   │   └── gateway-plugin/
 │   │       ├── mykos-ui/     # Núcleo del Gateway (index.js, routes.js, policy.js, chat-loop.js, store.js)
 │   │       ├── store-cli.mjs # Utilidad CLI de verificación, exportación y auditoría del almacén
@@ -69,23 +72,28 @@ MyKOS separa estrictamente **quién decide y guarda los datos** (el **Gateway en
 
 ```mermaid
 flowchart LR
-    Browser["Navegador Web / UI (v2.0.7)\nhttp://127.0.0.1:3210"] <--> Gateway["MyKOS Gateway (Node.js)\n• Tabla de 111 rutas (routes.js)\n• 56 políticas HMAC (policy.js)\n• Bucle de chat local (chat-loop.js)\n• Autoridad de permisos y aprobaciones"]
+    Browser["Navegador Web / UI (v2.1.0)\nhttp://127.0.0.1:3210"] <--> Gateway["MyKOS Gateway (Node.js)\n• Tabla de 118 rutas (routes.js)\n• 63 políticas HMAC (policy.js)\n• Bucle de chat local (chat-loop.js)\n• Autoridad de permisos y aprobaciones"]
     Gateway <--> Store["Almacén ACID (store.js)\n~/.mykos/gateway-state/mykos\n• Revisiones + Copias + Diario SHA-256"]
     Gateway -- "HTTP interno autenticado\n/mykos-control/* + Firma HMAC" --> Worker["Trabajador Python (server.py)\n127.0.0.1:3211 (solo local)"]
     Gateway <--> LocalEngines["Motores Locales GPU/CPU\n• Strata (:18080)\n• llama.cpp CUDA (:9931 · 32K)\n• Ollama (:11434)"]
+    Worker <--> Swarm["MyKOS Swarm (swarm_engine.py)\n• Tablón #seq + @menciones + @all\n• Híbrido: Paralelo Nube + Lock GPU Local\n• 5 Plantillas + Reportes a Cortex"]
     Worker <--> Cortex["MyKOS Cortex (cortex.py)\n• Bóveda Markdown Soberana\n• Grafo D3 60fps + Auto-sync\n• Camino Único de Memoria"]
     Worker <--> CloudProviders["Proveedores Remotos (OAuth + API Key)\n• OpenAI Codex / Realtime / API\n• Claude OAuth / Anthropic API\n• Qwen Code CLI / Qwen Plus\n• Meta AI (Llama 4 DGW / API)\n• Grok OAuth / Mistral / Gemini / NVIDIA / OpenRouter"]
-    Worker <--> LocalVoice["Motores Multimedia Locales\n• Whisper (STT)\n• Chatterbox (TTS GPU/CPU)\n• Kokoro 82M (TTS CPU)"]
+    Worker <--> LocalVoice["Motores Multimedia Locales\n• ComfyUI FLUX.1 / Wan 2.1 + Pollinations\n• Whisper (STT) + Chatterbox / Kokoro (TTS)"]
 ```
 
-1. **Frontera Única y Política Firmada:** El navegador solo se comunica con el Gateway (`127.0.0.1:3210`). Toda petición pasa primero por [`routes.js`](gateway/app/gateway-plugin/mykos-ui/routes.js) (111 rutas clasificadas por dominio y nivel de riesgo: `read`, `write`, `sensitive`) y por [`policy.js`](gateway/app/gateway-plugin/mykos-ui/policy.js) (56 políticas HMAC que validan esquemas JSON, aplican límites de concurrencia/ritmo por minuto y adjuntan la cabecera firmada `X-MyKOS-Gateway-Decision`).
+1. **Frontera Única y Política Firmada:** El navegador solo se comunica con el Gateway (`127.0.0.1:3210`). Toda petición pasa primero por [`routes.js`](gateway/app/gateway-plugin/mykos-ui/routes.js) (118 rutas clasificadas por dominio y nivel de riesgo: `read`, `write`, `sensitive`) y por [`policy.js`](gateway/app/gateway-plugin/mykos-ui/policy.js) (63 políticas HMAC que validan esquemas JSON, aplican límites de concurrencia/ritmo por minuto y adjuntan la cabecera firmada `X-MyKOS-Gateway-Decision`).
 2. **Bucle de Chat Propiedad del Gateway (`chat-loop.js`):** Para los modelos locales (Strata, llama.cpp y Ollama), el propio Gateway ejecuta el bucle de herramientas, inyecta la hora local de Madrid en el último turno del usuario (preservando la caché de prompt del sistema), verifica cada acción con la **Guardia de Integridad Anti-Alucinaciones** y calcula la telemetría universal (`tokens/s`, `TTFT`, tokens de entrada/salida y duración).
-3. **MyKOS Cortex — Grafo de Conocimiento y Camino Único de Memoria (`cortex.py`):** Toda la memoria de largo plazo reside en tu bóveda Markdown soberana (`[[wikilinks]]`, `#etiquetas`, frontmatter YAML y carpetas). Cuenta con sincronización viva en segundo plano (`mtime`/`size`), visualización interactiva de grafo de fuerzas D3 a 60 fps en la pestaña **Cortex**, creación de notas desde la interfaz y un único camino de memoria gobernado (`search_cortex`, `read_cortex_note`, `save_cortex_note`).
-4. **Tres Modos de Permiso en Tiempo Real:**
+3. **MyKOS Swarm — Motor Multi-Agente Híbrido Nube + GPU Local (`swarm_engine.py`):** Orquesta equipos de agentes especializados sobre un tablón compartido secuencial (`#seq`) con persistencia ACID en `store.js` y grafo visual en tiempo real (`#swarm-page`).
+   - **Reactivación y anti-bucle:** Cada mensaje soporta `@nombre` y `@all` con límite `MAX_AUTO_HOPS = 6` para evitar ping-pong infinito entre agentes.
+   - **Planificación híbrida inteligente:** Los trabajadores asignados a proveedores remotos/OAuth (`qwen-cli`, `meta-ai`, `openai`, `claude`, `grok`, `gemini`, `openrouter`, etc.) se ejecutan en paralelo real, mientras que los modelos locales (`ollama`, `llama_cpp`, `strata`) comparten un semáforo GPU (`_LOCAL_GPU_LOCK`) para proteger la VRAM.
+   - **Herramientas completas y Cortex:** Cada miembro tiene acceso a todas las herramientas de MyKOS y memoria Cortex, incluye **5 plantillas encadenadas en un clic** (*Equipo de Ingeniería*, *Auditoría de Seguridad*, *Ingeniería Inversa (REA)*, *Investigación + Cortex* y *Arquitectura + Código*), botón **`💾 Guardar en Cortex`** (global y por mensaje) con auto-archivado al reiniciar el tablón, y herramientas de chat (`swarm_status`, `swarm_add_worker`, `swarm_post`, `swarm_read_board`, `swarm_kill`).
+4. **MyKOS Cortex — Grafo de Conocimiento y Camino Único de Memoria (`cortex.py`):** Toda la memoria de largo plazo reside en tu bóveda Markdown soberana (`[[wikilinks]]`, `#etiquetas`, frontmatter YAML y carpetas). Cuenta con sincronización viva en segundo plano (`mtime`/`size`), visualización interactiva de grafo de fuerzas D3 a 60 fps en la pestaña **Cortex**, creación de notas desde la interfaz y un único camino de memoria gobernado (`search_cortex`, `read_cortex_note`, `save_cortex_note`).
+5. **Tres Modos de Permiso en Tiempo Real:**
    - **Solo lectura (`solo_lectura`):** Bloquea cualquier herramienta sensible sin preguntar.
    - **Supervisado (`supervisado`, por defecto):** Las herramientas de lectura se ejecutan al instante y las sensibles generan una solicitud de aprobación en la interfaz (con opción a conceder permiso una vez, por sesión o permanente).
    - **Acceso total (`acceso_total`):** Concede y audita automáticamente permisos permanentes para herramientas elegibles; las acciones críticas de un solo uso (`once`) siguen requiriendo confirmación humana.
-5. **Almacén Transaccional (`store.js`) y Actualizador Integrado:** Las conversaciones, configuraciones, permisos, aprobaciones, recordatorios, subagentes y nodos se guardan mediante escrituras atómicas con control de revisión y diario `journal.jsonl`. La cabecera incluye la píldora de versión **`v2.0.7`** con comprobación automática de nuevos commits/releases en GitHub y actualización en un clic.
+6. **Almacén Transaccional (`store.js`) y Actualizador Integrado:** Las conversaciones, configuraciones, permisos, aprobaciones, recordatorios, subagentes, sesiones Swarm y nodos se guardan mediante escrituras atómicas con control de revisión y diario `journal.jsonl`. La cabecera incluye la píldora de versión **`v2.1.0`** con comprobación automática de nuevos commits/releases en GitHub y actualización en un clic.
 
 ---
 
@@ -119,7 +127,7 @@ flowchart LR
 | Componente | Motor / Tecnología | Ubicación | Función |
 | :--- | :--- | :--- | :--- |
 | **MyKOS Cortex (Grafo y Memoria)** | **Indexador Markdown + Grafo D3 + Búsqueda Multicapa** | [`cortex.py`](gateway/app/cortex.py), [`cortex_tools.py`](gateway/app/tools/cortex_tools.py) | **Camino único de memoria** sobre tu bóveda Cortex nativa en `~/.mykos/cortex`. Indexa `[[wikilinks]]`, `#etiquetas` y metadatos YAML con auto-sincronización en tiempo real (`mtime`/`size`), grafo visual interactivo y herramientas unificadas (`search_cortex`, `read_cortex_note`, `save_cortex_note`). |
-| **Generación de Imágenes** | **Motor de Difusión Flux / Pollinations** | [`media.py`](gateway/app/media.py), [`tools/`](gateway/app/tools/) | Herramienta gobernada `generate_image` para generar imágenes en alta definición con control de aspecto (1:1, 16:9, etc.), guardarlas en el almacén local `data/media` y renderizarlas interactivamente en la burbuja de chat. |
+| **Generación de Imágenes y Vídeo** | **ComfyUI Local (FLUX.1 / Wan 2.1) + Pollinations.ai** | [`media.py`](gateway/app/media.py), [`chat-loop.js`](gateway/app/gateway-plugin/mykos-ui/chat-loop.js) | Comandos directos en chat (`/imagine`, `/imagen`, `/video`) y herramientas `generate_image` / `generate_video` con soporte local FLUX.1/Wan 2.1 vía ComfyUI (si está activo en `:8188`) y fallback automático resiliente a Pollinations.ai, guardando resultados en `static/media` con renderizado Markdown garantizado. |
 | **Transcripción de Voz (STT)** | **OpenAI Whisper** (`large-v3-turbo` con autodetección de caché local) | [`whisper_worker.py`](gateway/app/whisper_worker.py) | Proceso persistente en segundo plano que transcribe el micrófono en local sin enviar audio a servicios externos. |
 | **Síntesis de Voz Natural (TTS GPU/CPU)** | **Chatterbox Multilingual** (voces `alvaro` y `elvira`) | [`chatterbox_worker.py`](gateway/app/chatterbox_worker.py) | Síntesis de voz en español de alta naturalidad sobre CUDA; si la VRAM está ocupada por un LLM grande, vacía caché y conmuta automáticamente a CPU. |
 | **Síntesis de Voz Ligera (TTS CPU)** | **Kokoro 82M** + `espeak-ng` (voces `em_alex` y `ef_dora`) | [`kokoro_worker.py`](gateway/app/kokoro_worker.py) | Motor TTS ultrarrápido en CPU sin consumo de VRAM, ideal cuando la GPU está dedicada al 100 % a inferencia. |
@@ -147,7 +155,7 @@ cd ~/MyKOS
 5. *(Opcional)* Con `./install.sh --systemd`, crea y habilita el servicio de usuario `mykos-gateway.service` para que arranque automáticamente con tu sesión.
 
 ### En Windows (Instalador `.exe` o PowerShell):
-Puedes instalar MyKOS con el instalador gráfico **`MyKOS-Setup-2.0.7.exe`** disponible en GitHub Releases (incluye Node.js 20 y Python 3.12 portables sin requerir permisos de administrador), o desde PowerShell clonando el repositorio:
+Puedes instalar MyKOS con el instalador gráfico **`MyKOS-Setup-2.1.0.exe`** disponible en GitHub Releases (incluye Node.js 20 y Python 3.12 portables sin requerir permisos de administrador), o desde PowerShell clonando el repositorio:
 
 ```powershell
 git clone https://github.com/eskib0/MyKOS.git "$HOME\MyKOS"
@@ -196,6 +204,17 @@ mykos realtime status       # Comprueba si hay credencial configurada para OpenA
 mykos realtime set-key      # Guarda de forma segura (0600) la API key para llamadas Realtime
 mykos realtime on           # Activa el modo de voz en la nube (OpenAI WebRTC)
 mykos realtime off          # Vuelve al modo de voz 100 % local (Whisper + Chatterbox/Kokoro)
+```
+
+### Gestión de Enjambre Multi-Agente (`mykos swarm`)
+Accesible desde terminal y desde agentes CLI externos (como Qwen Code CLI) para coordinar trabajadores sin salir del proyecto:
+```bash
+mykos swarm status                      # Muestra título, permisos, roster y estado del Swarm activo
+mykos swarm board [--since N]           # Lee los mensajes secuenciales (#seq) del tablón compartido
+mykos swarm add <nombre> <rol> <brief>  # Añade un trabajador (local o remoto) y lo despierta con @nombre
+mykos swarm post <mensaje>              # Publica en el tablón compartiendo @menciones o @all
+mykos swarm kill <nombre|all>           # Detiene un trabajador o todos los miembros
+mykos swarm reset                       # Archiva en Cortex y reinicia el tablón para una nueva misión
 ```
 
 ### Ingeniería Inversa y Auditoría de Binarios con REA

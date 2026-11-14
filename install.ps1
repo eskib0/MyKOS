@@ -166,7 +166,7 @@ try {
 } catch {}
 
 Write-Host ""
-Write-Host "✅ Instalación en Windows completada (v2.0.7). Abre una terminal nueva y ejecuta:" -ForegroundColor Green
+Write-Host "✅ Instalación en Windows completada (v2.1.0). Abre una terminal nueva y ejecuta:" -ForegroundColor Green
 Write-Host "   mykos test      # Verificar rutas, políticas y seguridad"
 Write-Host "   mykos run       # Arrancar MyKOS en vivo en http://127.0.0.1:3210"
 Write-Host "   mykos status    # Consultar el estado de todos los servicios"

@@ -483,9 +483,56 @@ def meta_ai_models(*, force: bool = False) -> list[dict[str, Any]]:
   return result
 
 
+def _strip_meta_ai_command_prefix(text: str) -> str:
+  cleaned = str(text or "").strip()
+  ts_match = re.match(r"^(\[Fecha y hora actuales:[^\]]*\]\s*)", cleaned)
+  ts_prefix = ts_match.group(1) if ts_match else ""
+  body = cleaned[len(ts_prefix) :] if ts_prefix else cleaned
+  body = re.sub(r"^\s*/(?:imagine|imgine|imagen)(?:\s+|$)", "", body, flags=re.IGNORECASE).strip()
+  return f"{ts_prefix}{body}".strip() if body else cleaned
+
+
+def _extract_meta_ai_image_prompt(messages: list[dict[str, Any]]) -> str:
+  generic_confirmations = {"si", "sí", "ok", "vale", "dale", "hazlo", "generala", "genérala", "perfecto", "adelante", "claro"}
+  candidates: list[str] = []
+  for msg in reversed(messages):
+    if not isinstance(msg, dict):
+      continue
+    if str(msg.get("role") or "").strip().casefold() != "user" or msg.get("integrity_guard"):
+      continue
+    content = msg.get("content")
+    if isinstance(content, list):
+      raw = "\n".join(str(item.get("text") or "") for item in content if isinstance(item, dict) and item.get("text")).strip()
+    else:
+      raw = str(content or "").strip()
+    if not raw:
+      continue
+    cleaned = re.sub(r"^\[Fecha y hora actuales:[^\]]*\]\s*", "", raw).strip()
+    cleaned = re.sub(r"\[NOTA DEL HOST MYKOS:[\s\S]*?\]", "", cleaned).strip()
+    cleaned = re.sub(r"^\s*/(?:imagine|imgine|imagen)(?:\s+|$)", "", cleaned, flags=re.IGNORECASE).strip()
+    if not cleaned:
+      continue
+    candidates.append(cleaned)
+    normalized = re.sub(r"[.!?,¡¿]+", "", cleaned.casefold()).strip()
+    if normalized not in generic_confirmations and len(cleaned) >= 12:
+      return cleaned[:1000]
+  return (candidates[0] if candidates else "creative detailed illustration")[:1000]
+
+
 def _format_messages_for_meta_ai(messages: list[dict[str, Any]]) -> str:
   parts: list[str] = []
-  for msg in messages:
+  last_user_idx = -1
+  for idx, msg in enumerate(messages):
+    if (
+      isinstance(msg, dict)
+      and str(msg.get("role") or "user").strip().lower() == "user"
+      and not msg.get("integrity_guard")
+    ):
+      last_user_idx = idx
+
+  for idx, msg in enumerate(messages):
+    if not isinstance(msg, dict):
+      continue
     role = str(msg.get("role") or "user").strip().lower()
     content = msg.get("content")
     if isinstance(content, list):
@@ -500,9 +547,28 @@ def _format_messages_for_meta_ai(messages: list[dict[str, Any]]) -> str:
     if not text:
       continue
     if role == "system":
-      parts.append(f"[INSTRUCCIONES DEL SISTEMA MYKOS]\n{text}\n[/INSTRUCCIONES DEL SISTEMA MYKOS]")
+      aliased = text.replace("generate_image", "flux_dispatch").replace("generate_video", "wan_dispatch")
+      aliased += (
+          "\n[NOTA DE HERRAMIENTAS EXTERNAS: Usa flux_dispatch para generar imágenes y wan_dispatch para generar vídeos "
+          "mediante el motor externo de MyKOS pasando siempre una descripción visual detallada en inglés. "
+          "NUNCA uses la capacidad interna de Meta AI ni pidas al usuario iniciar sesión.]"
+      )
+      parts.append(f"[INSTRUCCIONES DEL SISTEMA MYKOS]\n{aliased}\n[/INSTRUCCIONES DEL SISTEMA MYKOS]")
     elif role == "assistant":
-      parts.append(f"[ASISTENTE]\n{text}")
+      cleaned_assistant = re.sub(r"<ui-widget\b[^>]*>.*?</ui-widget>", "", text, flags=re.DOTALL)
+      cleaned_assistant = re.sub(
+          r"[^\n]*(?:disponible después de iniciar sesión|image generation is available after|iniciar sesión para generar)[^\n]*",
+          "",
+          cleaned_assistant,
+          flags=re.IGNORECASE,
+      )
+      cleaned_assistant = (
+          cleaned_assistant.replace("generate_image", "flux_dispatch")
+          .replace("generate_video", "wan_dispatch")
+          .strip()
+      )
+      if cleaned_assistant:
+        parts.append(f"[ASISTENTE]\n{cleaned_assistant}")
     elif role == "tool":
       parts.append(
           f"[RESULTADO DE HERRAMIENTA EJECUTADA EN EL SERVIDOR MYKOS]\n{text}\n"
@@ -511,7 +577,15 @@ def _format_messages_for_meta_ai(messages: list[dict[str, Any]]) -> str:
           "exactamente en formato Markdown y presentarla al usuario sin requerir inicio de sesión ni mencionar widgets de Meta AI."
       )
     else:
-      parts.append(f"[USUARIO]\n{text}")
+      user_text = _strip_meta_ai_command_prefix(text)
+      if idx == last_user_idx:
+        user_text += (
+            "\n\n[NOTA DEL HOST MYKOS: No uses widgets internos ni generación de imágenes nativa de Meta AI, y nunca "
+            "pidas iniciar sesión. Si el usuario pide o confirma crear una imagen, foto, dibujo o ilustración, responde "
+            'EXCLUSIVAMENTE con JSON: {"kind":"tool_call","content":"","tool_name":"flux_dispatch",'
+            '"arguments":{"prompt":"<descripción visual detallada en inglés>","aspect_ratio":"1:1","model":"flux"}}.]'
+        )
+      parts.append(f"[USUARIO]\n{user_text}")
   return "\n\n".join(parts).strip()
 
 
@@ -577,8 +651,39 @@ def meta_ai_chat_completion(
   new_session = result.get("session")
   if isinstance(new_session, dict) and new_session.get("accessToken"):
     _save_meta_ai_session(new_session)
-  text = str(result.get("response") or "").strip()
-  text = re.sub(r"<ui-widget\b[^>]*>.*?</ui-widget>", "", text, flags=re.DOTALL).strip()
+  raw_text = str(result.get("response") or "").strip()
+  widget_blocks = re.findall(r"<ui-widget\b[^>]*>.*?</ui-widget>", raw_text, flags=re.DOTALL | re.IGNORECASE)
+  has_login_widget = any(
+      "image_generation" in block.casefold() and "login_required" in block.casefold()
+      for block in widget_blocks
+  )
+  login_block_phrases = (
+      "disponible después de iniciar sesión",
+      "iniciar sesión para generar",
+      "image generation is available after",
+      "sign in to generate images",
+      "log in to generate images",
+  )
+  has_login_phrase = any(phrase in raw_text.casefold() for phrase in login_block_phrases)
+  if has_login_widget or has_login_phrase:
+    extracted_prompt = _extract_meta_ai_image_prompt(messages)
+    return json.dumps(
+        {
+            "kind": "tool_call",
+            "content": "",
+            "tool_name": "generate_image",
+            "arguments": {
+                "prompt": extracted_prompt,
+                "aspect_ratio": "1:1",
+                "model": "flux",
+            },
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+  text = re.sub(r"<ui-widget\b[^>]*>.*?</ui-widget>", "", raw_text, flags=re.DOTALL).strip()
   if not text:
     raise RuntimeError("Meta AI devolvió una respuesta vacía.")
+  text = text.replace("flux_dispatch", "generate_image").replace("wan_dispatch", "generate_video")
   return text

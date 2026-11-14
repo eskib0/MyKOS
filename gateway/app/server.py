@@ -88,6 +88,7 @@ from grok import (
 )
 from gemini_live import create_ephemeral_token
 from cortex import get_cortex
+import swarm_engine
 from automations import start_scheduler, stop_scheduler
 from media import MediaError, kokoro_audio, list_media, media_status, transcribe_audio_file
 from management import local_status
@@ -202,6 +203,7 @@ from core.ollama_catalog import (
 )
 from core.runners import (
     GEMINI_RESPONSE_SCHEMA,
+    ensure_generated_media_markdown,
     execute_openai_json_tool_loop,
     has_message_images,
     parse_gemini_response as core_parse_gemini_response,
@@ -357,6 +359,13 @@ GATEWAY_DECISION_ROUTES = {
     ("POST", "/api/providers/meta/refresh"),
     ("POST", "/api/uploads"),
     ("POST", "/api/nodes/heartbeat"),
+    ("GET", "/api/swarm/status"),
+    ("POST", "/api/swarm/title"),
+    ("POST", "/api/swarm/workers"),
+    ("POST", "/api/swarm/board"),
+    ("POST", "/api/swarm/workers/kill"),
+    ("POST", "/api/swarm/reset"),
+    ("POST", "/api/swarm/save-cortex"),
 }
 # En estas dos rutas el Gateway no lee el cuerpo (una subida llega a 32 MB) o no hay cuerpo (retorno de OAuth), así que
 # su decisión viaja sin hash («-»). En TODAS las demás la decisión tiene que venir ligada al cuerpo exacto: una
@@ -364,6 +373,7 @@ GATEWAY_DECISION_ROUTES = {
 GATEWAY_DECISION_UNBOUND_BODY = {
     ("POST", "/api/uploads"),
     ("GET", "/api/oauth/openrouter/callback"),
+    ("GET", "/api/swarm/status"),
 }
 GATEWAY_DECISION_HEADER = "X-MyKOS-Gateway-Decision"
 GATEWAY_DECISION_MAX_AGE = 300  # margen sobre la caducidad que firma el Gateway (120 s), por si el reloj va justo
@@ -1696,7 +1706,7 @@ def llama_cpp_chat_request(
     tool_schemas: list[dict[str, Any]] | None = None,
     model_name: str = "mykos-cuda",
 ) -> dict[str, Any]:
-    requester = controller_request_model if (MYKOS_GATEWAY_ENABLED and MYKOS_CONTROL_TOKEN) else None
+    requester = mykos_gateway_model_request if (MYKOS_GATEWAY_ENABLED and MYKOS_CONTROL_TOKEN) else None
     return llamacpp_chat_request(
         messages=messages,
         generation=generation,
@@ -2129,8 +2139,11 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
     else:
         processing_scope = "remoto a través de Ollama" if selected_model.get("remote") else "local en este equipo"
         provider_note = ""
+    use_json_rules = provider in JSON_TOOL_PROTOCOL_PROVIDERS
+    rules_block = INTEGRITY_RULES_JSON if use_json_rules else INTEGRITY_RULES
+    reminder_block = INTEGRITY_REMINDER_JSON if use_json_rules else INTEGRITY_REMINDER
     prompt = (
-        f"{INTEGRITY_RULES}\n"
+        f"{rules_block}\n"
         f"{load_system_prompt()}\n\n"
         f"{current_time_context()}\n\n"
         f"Modelo activo en esta petición: {model_label} (identificador: {model_name}). "
@@ -2142,21 +2155,7 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
     )
     if provider_note:
         prompt += f"\n\n{provider_note}"
-        if provider in {
-            "anthropic_oauth",
-            "anthropic_api",
-            "openai_codex_oauth",
-            "openai_api",
-            "gemini_api",
-            "openrouter",
-            "nvidia_api",
-            "kimi_api",
-            "mistral_api",
-            "meta_ai_oauth",
-            "meta_ai_api",
-            "grok_oauth",
-            "grok_api",
-        }:
+        if use_json_rules:
             prompt += f"\n\n{claude_tool_protocol_prompt(arguments_as_string=provider == 'openai_codex_oauth')}"
     if provider == "llama_cpp":
         prompt += "\n\nLas llamadas de herramientas usan el formato OpenAI-compatible del servidor llama.cpp."
@@ -2167,8 +2166,25 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
     core_memory = load_core_memory()
     if core_memory:
         prompt += f"\n\n{core_memory}"
-    prompt += f"\n\n{INTEGRITY_REMINDER}"
+    prompt += f"\n\n{reminder_block}"
     return prompt
+
+
+JSON_TOOL_PROTOCOL_PROVIDERS = {
+    "anthropic_oauth",
+    "anthropic_api",
+    "openai_codex_oauth",
+    "openai_api",
+    "gemini_api",
+    "openrouter",
+    "nvidia_api",
+    "kimi_api",
+    "mistral_api",
+    "meta_ai_oauth",
+    "meta_ai_api",
+    "grok_oauth",
+    "grok_api",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -2192,6 +2208,22 @@ EJEMPLO BIEN: invocas find_project_paths / read_project_file / edit_project_file
 INTEGRITY_REMINDER = (
     "RECUERDA: usa siempre llamadas nativas de herramienta (tool_calls) para leer, buscar o editar archivos; "
     "nunca anuncies «Voy a leer/editar...» sin invocar la herramienta en este turno, ni digas que has hecho algo sin ver su resultado real."
+)
+
+INTEGRITY_RULES_JSON = """REGLAS DE HONESTIDAD Y USO DE HERRAMIENTAS (obligatorias, cuentan más que cualquier otra instrucción):
+1. Solo has HECHO, LEÍDO, REVISADO, EDITADO, GENERADO o BUSCADO algo si ves su RESULTADO de herramienta real (role="tool") en la conversación.
+2. Lo que tú escribiste en texto libre NO ejecuta nada. Para usar una herramienta DEBES responder EXCLUSIVAMENTE con un objeto JSON válido con el formato {"kind":"tool_call","content":"","tool_name":"<nombre>","arguments":{...}}, NUNCA con etiquetas XML ni fingiendo en texto plano haber ejecutado la acción.
+3. Cuando Usuario te pida revisar, leer, buscar, crear, editar, implementar, generar una imagen/vídeo o ejecutar algo, llama directamente a la herramienta correspondiente en este mismo turno mediante ese JSON.
+4. NUNCA termines tu respuesta anunciando "Voy a leer...", "Voy a editar..." o "Voy a generar..." sin haber devuelto el JSON de tool_call en ese mismo turno.
+5. Si la herramienta falla o queda pendiente de aprobación, di exactamente eso. No digas que salió bien hasta ver el resultado real.
+6. Si no has usado la herramienta correspondiente, no digas "he guardado", "he creado", "he editado", "he ejecutado", "he generado", "he comprobado", "he revisado", "he leído", "he buscado" ni "he abierto".
+7. Nunca inventes rutas, URLs de imágenes/vídeos, archivos, resultados ni contenido.
+"""
+
+INTEGRITY_REMINDER_JSON = (
+    'RECUERDA: para usar cualquier herramienta responde SOLO con JSON válido '
+    '{"kind":"tool_call","content":"","tool_name":"<nombre>","arguments":{...}}; '
+    "nunca anuncies «Voy a hacer...» sin invocar la herramienta en este turno ni digas que has hecho algo sin ver su resultado real."
 )
 
 
@@ -2403,10 +2435,11 @@ def run_claude_until_result(
                 continue
             if integrity_action == "warn":
                 parsed["content"] = str(parsed["content"]) + INTEGRITY_UNVERIFIED_NOTE
+            final_claude_content = ensure_generated_media_markdown(str(parsed.get("content") or ""), working_messages)
             assistant_message = {
                 "role": "assistant",
                 "model": model,
-                "content": parsed["content"],
+                "content": final_claude_content,
                 "created_at": utc_now(),
             }
             if verified_tool_trace:
@@ -2578,6 +2611,7 @@ def run_openai_until_result(
                     continue
                 if integrity_action == "warn":
                     content += INTEGRITY_UNVERIFIED_NOTE
+            content = ensure_generated_media_markdown(content, working_messages)
             assistant_message: dict[str, Any] = {
                 "role": "assistant",
                 "model": model,
@@ -2650,7 +2684,7 @@ def run_benchmark(payload: dict[str, Any]) -> dict[str, Any]:
         ollama_request_fn=ollama_request,
         llama_cpp_chat_fn=llama_cpp_chat_request,
         strata_chat_fn=strata_chat_request,
-        gateway_requester=controller_request_model if (MYKOS_GATEWAY_ENABLED and MYKOS_CONTROL_TOKEN) else None,
+        gateway_requester=mykos_gateway_model_request if (MYKOS_GATEWAY_ENABLED and MYKOS_CONTROL_TOKEN) else None,
         utc_now_fn=utc_now,
     )
 
@@ -2932,6 +2966,22 @@ def qwen_prompt_from_messages(
         memory_block = "\n\nMEMORIA PERSISTENTE DEL USUARIO Y CORTEX:\n" + "\n\n".join(context_sections)
 
     workspace_info = f"\nDirectorio de trabajo activo: {workspace_dir}" if workspace_dir else ""
+    is_swarm_worker_turn = any(
+        isinstance(m, dict)
+        and m.get("role") == "system"
+        and "REGLAS DE OPERACIÓN EN EL SWARM:" in str(m.get("content") or "")
+        for m in messages
+    )
+    swarm_instructions = ""
+    if not is_swarm_worker_turn:
+        swarm_instructions = (
+            "\n\nMOTOR MYKOS SWARM EN QWEN CLI: En esta sesión de Qwen Code CLI tienes acceso total al motor MyKOS Swarm en vivo ejecutando el CLI oficial con tu herramienta de terminal (`run_shell_command`):\n"
+            "- Crear trabajador y esperar su respuesta: `./bin/mykos swarm add <nombre> --role \"<rol>\" --model \"<modelo>\" --brief \"<misión>\" --wait 100`\n"
+            "- Publicar en el tablón y esperar: `./bin/mykos swarm post \"@<nombre> <mensaje>\" --wait 100`\n"
+            "- Ver estado y tablón: `./bin/mykos swarm status` / `./bin/mykos swarm board --since 0`\n"
+            "- Detener trabajador o reiniciar: `./bin/mykos swarm kill <nombre>` / `./bin/mykos swarm reset`\n"
+            "Cuando el usuario te pida usar el motor Swarm, crear trabajadores o publicar en el tablón, EJECUTA inmediatamente `./bin/mykos swarm ...` con tu herramienta de comando; NUNCA digas que las herramientas Swarm no están disponibles en Qwen CLI ni simules la respuesta del trabajador. Si un trabajador local (p.ej. `llama_cpp` / `mykos-cuda`) sigue en `working` al volver `--wait`, usa `sleep 20 && ./bin/mykos swarm board --since 0` hasta que publique su respuesta real en el tablón (sin errores)."
+        )
     return (
         "Eres MyKOS operando con el motor Qwen Code CLI y la suscripción oficial Qwen Plus.\n"
         "Dispones de herramientas nativas de programación, inspección y edición de archivos, búsqueda (glob/grep) y comandos.\n"
@@ -2940,6 +2990,7 @@ def qwen_prompt_from_messages(
         f"tu memoria persistente oficial es MyKOS Cortex en `{cortex_dir}` (con workspace en `{cortex_ws}`). "
         "Puedes inspeccionar, buscar o actualizar las notas Markdown de esa bóveda con tus herramientas de archivos/glob/grep cuando el usuario te pregunte por tu memoria o quiera guardar algo."
         f"{workspace_info}"
+        f"{swarm_instructions}"
         f"{memory_block}\n\n"
         "HISTORIAL DE LA CONVERSACIÓN:\n"
         + "\n\n".join(blocks)
@@ -2968,7 +3019,7 @@ def run_qwen_until_result(
     add_dirs = [cortex_dir] if cortex_dir and Path(cortex_dir).is_dir() else None
     result = ask_qwen(
         prompt,
-        timeout_seconds=120,
+        timeout_seconds=240,
         model=model.removeprefix("qwen-cli/"),
         cwd=workspace_dir,
         add_dirs=add_dirs,
@@ -3253,6 +3304,234 @@ def run_meta_ai_until_result(
     )
 
 
+def run_llamacpp_until_result(
+    model: str,
+    messages: list[dict[str, Any]],
+    conversation_id: str,
+    supports_vision: bool = False,
+    generation: dict[str, Any] | None = None,
+    activity_id: str | None = None,
+    permission_mode: str = "supervisado",
+) -> dict[str, Any]:
+    """Ejecuta un bucle de herramientas nativo contra llama.cpp (:9931) usando TOOL_SCHEMAS."""
+    selected_model = next(
+        (m for m in get_models() if isinstance(m, dict) and str(m.get("name", "")) == model),
+        None,
+    ) or {
+        "name": model,
+        "provider": "llama_cpp",
+        "provider_label": "llama.cpp · CUDA",
+        "remote": False,
+        "thinking_capable": True,
+        "tools_capable": True,
+        "context_length": LLAMA_CPP_CONTEXT_LENGTH,
+    }
+    gen_settings = normalise_generation_settings(generation, selected_model)
+    options = dict(gen_settings.get("options") or {})
+    options["num_predict"] = max(int(options.get("num_predict", 2048) or 2048), 2048)
+    gen_settings["options"] = options
+
+    sys_parts = [system_prompt_for_model(selected_model)]
+    non_system_messages: list[dict[str, Any]] = []
+    for item in messages:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role", "user")).strip().casefold()
+        if role == "system":
+            sys_text = str(item.get("content", "")).strip()
+            if sys_text:
+                sys_parts.append(sys_text)
+            continue
+        cleaned = {
+            key: value
+            for key, value in item.items()
+            if key in {"role", "content", "images", "tool_calls", "tool_call_id"}
+        }
+        if cleaned.get("role"):
+            non_system_messages.append(cleaned)
+
+    working_messages: list[dict[str, Any]] = [
+        {"role": "system", "content": "\n\n".join(part for part in sys_parts if part)}
+    ] + non_system_messages
+    source_cards = source_cards_from_messages(working_messages, current_turn_only=True)
+    tool_names: list[str] = []
+    request_deadline = time.monotonic() + MAX_REQUEST_TIMEOUT_SECONDS
+
+    for _round in range(MAX_TOOL_ROUNDS + 1):
+        if time.monotonic() > request_deadline:
+            raise ApiError(408, f"Se superó el tiempo límite de la petición ({MAX_REQUEST_TIMEOUT_SECONDS}s). Abortando.")
+        update_activity(
+            activity_id,
+            status="working",
+            phase="model",
+            label="Trabajando…",
+            detail=f"{model} · llama.cpp CUDA local está procesando la petición.",
+        )
+        response = llama_cpp_chat_request(
+            working_messages,
+            gen_settings,
+            tool_schemas=TOOL_SCHEMAS,
+            model_name=model,
+        )
+        choices = response.get("choices") if isinstance(response.get("choices"), list) else []
+        if not choices or not isinstance(choices[0], dict):
+            raise RuntimeError("llama.cpp no devolvió opciones válidas.")
+        reply_msg = choices[0].get("message") if isinstance(choices[0].get("message"), dict) else {}
+        content = str(reply_msg.get("content") or "").strip()
+        thinking = str(reply_msg.get("reasoning_content") or "").strip()
+        tool_calls = reply_msg.get("tool_calls") if isinstance(reply_msg.get("tool_calls"), list) else []
+
+        if not tool_calls:
+            final_text = ensure_generated_media_markdown(content or thinking, working_messages)
+            assistant_message: dict[str, Any] = {
+                "role": "assistant",
+                "content": final_text,
+                "thinking": thinking if content else "",
+                "model": model,
+                "provider": "llama_cpp",
+                "provider_label": "llama.cpp · CUDA",
+                "created_at": utc_now(),
+                "sources": source_cards,
+                "tools_used": sorted(set(tool_names)),
+            }
+            save_assistant_message(conversation_id, assistant_message)
+            return {
+                "conversation_id": conversation_id,
+                "model": model,
+                "done": True,
+                "message": assistant_message,
+                "tools_used": sorted(set(tool_names)),
+                "sources": source_cards,
+            }
+
+        working_messages.append({
+            "role": "assistant",
+            "content": reply_msg.get("content") or "",
+            "tool_calls": tool_calls,
+        })
+        for call in tool_calls:
+            if not isinstance(call, dict):
+                continue
+            call_id = str(call.get("id") or f"call_{len(tool_names)}")
+            fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+            tool_name = str(fn.get("name") or "").strip()
+            raw_args = fn.get("arguments")
+            if isinstance(raw_args, dict):
+                tool_arguments = raw_args
+            elif isinstance(raw_args, str):
+                text_args = raw_args.strip()
+                if not text_args:
+                    tool_arguments = {}
+                else:
+                    try:
+                        parsed_args = json.loads(text_args)
+                        tool_arguments = parsed_args if isinstance(parsed_args, dict) else {}
+                    except json.JSONDecodeError as exc:
+                        err_msg = tool_message_for_result(
+                            {"ok": False, "action": tool_name, "error": f"Argumentos JSON no válidos: {exc}"},
+                            supports_vision,
+                        )
+                        err_msg["tool_call_id"] = call_id
+                        working_messages.append(err_msg)
+                        continue
+            else:
+                tool_arguments = {}
+
+            if not tool_name:
+                continue
+            tool_names.append(tool_name)
+
+            if tool_name in SENSITIVE_TOOL_NAMES:
+                def _append_llama_tool_res(res: dict[str, Any], _cid: str = call_id) -> None:
+                    t_msg = tool_message_for_result(res, supports_vision)
+                    if _cid:
+                        t_msg["tool_call_id"] = _cid
+                    working_messages.append(t_msg)
+
+                pending_response = _handle_sensitive_tool_in_loop(
+                    tool_name=tool_name,
+                    tool_arguments=tool_arguments,
+                    provider_label="llama.cpp CUDA",
+                    conversation_id=conversation_id,
+                    model=model,
+                    working_messages=working_messages,
+                    source_cards=source_cards,
+                    tool_names=tool_names,
+                    supports_vision=supports_vision,
+                    generation=gen_settings,
+                    permission_mode=permission_mode,
+                    activity_id=activity_id,
+                    proposal=content,
+                    append_result_fn=_append_llama_tool_res,
+                )
+                if pending_response is not None:
+                    return pending_response
+                continue
+
+            update_activity(
+                activity_id,
+                status="working",
+                phase="tool",
+                label="Consultando una herramienta…",
+                detail=f"{model} ha solicitado «{tool_name}»; MyKOS la está ejecutando.",
+            )
+            tool_result = controller_execute_tool(tool_name, tool_arguments)
+            merge_source_cards(source_cards, tool_result)
+            t_msg = tool_message_for_result(tool_result, supports_vision)
+            if call_id:
+                t_msg["tool_call_id"] = call_id
+            working_messages.append(t_msg)
+
+    raise RuntimeError("llama.cpp no terminó dentro del límite de rondas.")
+
+
+def _extract_message_plain_text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, list):
+        parts = [
+            str(item.get("text") or "")
+            for item in content
+            if isinstance(item, dict) and item.get("text")
+        ]
+        return "\n".join(parts).strip()
+    return str(content or "").strip()
+
+
+def _extract_direct_media_command(messages: list[dict[str, Any]]) -> tuple[str, dict[str, Any]] | None:
+    """Detect direct /imagine, /imgine, /imagen or /video commands on the latest user turn."""
+    if not isinstance(messages, list) or not messages:
+        return None
+    last_msg = messages[-1]
+    if not isinstance(last_msg, dict) or str(last_msg.get("role", "")).strip().casefold() != "user" or last_msg.get("integrity_guard"):
+        return None
+    raw = _extract_message_plain_text(last_msg)
+    cleaned = re.sub(r"^\[Fecha y hora actuales:[^\]]*\]\s*", "", raw, flags=re.IGNORECASE).strip()
+    match = re.match(r"^/(imagine|imgine|imagen|video)(?:\s+(.*))?$", cleaned, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return None
+    cmd = match.group(1).casefold()
+    tool_name = "generate_video" if cmd == "video" else "generate_image"
+    prompt = str(match.group(2) or "").strip()
+    if not prompt:
+        for prev in reversed(messages[:-1]):
+            if not isinstance(prev, dict) or str(prev.get("role", "")).strip().casefold() != "user" or prev.get("integrity_guard"):
+                continue
+            prev_text = _extract_message_plain_text(prev)
+            prev_text = re.sub(r"^\[Fecha y hora actuales:[^\]]*\]\s*", "", prev_text, flags=re.IGNORECASE).strip()
+            prev_text = re.sub(r"^/(?:imagine|imgine|imagen|video)(?:\s+|$)", "", prev_text, flags=re.IGNORECASE).strip()
+            if prev_text:
+                prompt = prev_text
+                break
+    if tool_name == "generate_image" and not prompt:
+        return None
+    args: dict[str, Any] = (
+        {"prompt": prompt, "aspect_ratio": "1:1", "model": "flux"}
+        if tool_name == "generate_image"
+        else ({"prompt": prompt} if prompt else {})
+    )
+    return tool_name, args
+
+
 def run_model_until_result(
     model: str,
     messages: list[dict[str, Any]],
@@ -3264,6 +3543,57 @@ def run_model_until_result(
     remote_worker: bool = False,
 ) -> dict[str, Any]:
     """Run the selected provider until it returns text or pauses for approval."""
+    direct_media = _extract_direct_media_command(messages)
+    if direct_media is not None:
+        tool_name, tool_arguments = direct_media
+        working_messages = [dict(item) for item in messages]
+        tool_names = [tool_name]
+        captured_results: list[dict[str, Any]] = []
+
+        def _capture_media_result(res: dict[str, Any]) -> None:
+            captured_results.append(res)
+            working_messages.append(tool_message_for_result(res, supports_vision))
+
+        pending_response = _handle_sensitive_tool_in_loop(
+            tool_name=tool_name,
+            tool_arguments=tool_arguments,
+            provider_label=model or "MyKOS",
+            conversation_id=conversation_id,
+            model=model,
+            working_messages=working_messages,
+            source_cards=[],
+            tool_names=tool_names,
+            supports_vision=supports_vision,
+            generation=generation if isinstance(generation, dict) else {},
+            permission_mode=permission_mode,
+            activity_id=activity_id,
+            proposal=f"Se necesita tu aprobación para ejecutar «{tool_name}».",
+            append_result_fn=_capture_media_result,
+        )
+        if pending_response is not None:
+            return pending_response
+        last_res = captured_results[-1] if captured_results else {}
+        if last_res.get("ok"):
+            content = str(last_res.get("message") or last_res.get("markdown") or "").strip()
+        else:
+            content = f"No se pudo completar «{tool_name}»: {last_res.get('error') or 'error desconocido'}"
+        assistant_message = {
+            "role": "assistant",
+            "model": model,
+            "content": content,
+            "created_at": utc_now(),
+        }
+        if conversation_id:
+            save_assistant_message(conversation_id, assistant_message)
+        return {
+            "conversation_id": conversation_id,
+            "model": model,
+            "done": True,
+            "message": assistant_message,
+            "tools_used": tool_names,
+            "sources": [],
+        }
+
     gateway_controls_models = MYKOS_GATEWAY_ENABLED and bool(MYKOS_CONTROL_TOKEN)
     is_remote_model = (
         model.startswith("antigravity/")
@@ -3281,6 +3611,22 @@ def run_model_until_result(
         or model == "gpt-live-1-codex"
         or model == CLAUDE_MODEL_NAME
     )
+    model_cf = str(model or "").strip().casefold()
+    is_llama_cpp = (
+        model == LLAMA_CPP_MODEL_NAME
+        or model_cf.startswith(("llama_cpp/", "llamacpp/", "llama-cpp/"))
+        or any(tag in model_cf for tag in (".gguf", "-gguf", "_gguf"))
+    )
+    if not is_llama_cpp and not is_remote_model:
+        try:
+            selected_entry = next(
+                (m for m in get_models() if isinstance(m, dict) and str(m.get("name", "")) == model),
+                None,
+            )
+            if selected_entry and str(selected_entry.get("provider", "")) == "llama_cpp":
+                is_llama_cpp = True
+        except Exception:
+            pass
     if gateway_controls_models and is_remote_model and not remote_worker:
         return controller_execute_remote_model(
             model,
@@ -3291,7 +3637,7 @@ def run_model_until_result(
             activity_id,
             permission_mode,
         )
-    if gateway_controls_models and MYKOS_GATEWAY_CHAT_LOOP and not is_remote_model:
+    if gateway_controls_models and MYKOS_GATEWAY_CHAT_LOOP and not is_remote_model and not remote_worker:
         # Modelo local (llama.cpp u Ollama): el bucle de herramientas lo ejecuta el Gateway.
         return controller_run_chat_loop(
             model,
@@ -3302,7 +3648,7 @@ def run_model_until_result(
             activity_id,
             permission_mode,
         )
-    if not (model == LLAMA_CPP_MODEL_NAME or model.startswith("llama_cpp/") or model.startswith("llamacpp/")) and not gateway_controls_models:
+    if not is_llama_cpp and not gateway_controls_models:
         stop_llama_cpp_server()
     if model.startswith("antigravity/"):
         return run_antigravity_until_result(
@@ -3417,7 +3763,17 @@ def run_model_until_result(
             activity_id=activity_id,
             permission_mode=permission_mode,
         )
-    # Cualquier modelo local (Ollama o llama.cpp) delega siempre al bucle del Gateway.
+    if is_llama_cpp:
+        return run_llamacpp_until_result(
+            model,
+            messages,
+            conversation_id,
+            supports_vision=supports_vision,
+            generation=generation,
+            activity_id=activity_id,
+            permission_mode=permission_mode,
+        )
+    # Cualquier otro modelo local (Ollama) delega al bucle del Gateway.
     return controller_run_chat_loop(
         model,
         messages,
@@ -3427,6 +3783,18 @@ def run_model_until_result(
         activity_id,
         permission_mode,
     )
+
+
+swarm_engine.configure_runtime(
+    run_model_until_result=run_model_until_result,
+    get_models=get_models,
+    available_chat_models=available_chat_models,
+    choose_default_model=choose_default_model,
+    normalise_generation_settings=normalise_generation_settings,
+    load_user_profile=load_user_profile,
+    load_core_memory=load_core_memory,
+    default_model_getter=lambda: DEFAULT_MODEL,
+)
 
 
 def fetch_ollama_catalog(query: str = "") -> dict[str, Any]:
@@ -3697,6 +4065,18 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 return
             self.send_json({"ok": True, "status": local_status()})
             return
+        if path == "/mykos-control/swarm/status":
+            token = self.headers.get("X-MyKOS-Control-Token", "").strip()
+            if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
+                self.send_json({"ok": False, "error": "Plano de control no autorizado."}, status=403)
+                return
+            params = self.parse_query(query)
+            raw_since = params.get("since_seq", ["0"])[0].strip()
+            raw_limit = params.get("limit", ["60"])[0].strip()
+            since_seq = int(raw_since) if raw_since.isdigit() else 0
+            limit = int(raw_limit) if raw_limit.isdigit() else 60
+            self.send_json(swarm_engine.get_swarm_status(since_seq=since_seq, limit=limit))
+            return
         if path == "/mykos-control/tools-catalog":
             token = self.headers.get("X-MyKOS-Control-Token", "").strip()
             if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
@@ -3874,6 +4254,83 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     self.send_json({"ok": False, "error": str(error)}, status=500)
                     return
                 self.send_json(result)
+                return
+            if path in {
+                "/mykos-control/swarm/status",
+                "/mykos-control/swarm/title",
+                "/mykos-control/swarm/workers",
+                "/mykos-control/swarm/board",
+                "/mykos-control/swarm/workers/kill",
+                "/mykos-control/swarm/reset",
+                "/mykos-control/swarm/save-cortex",
+            }:
+                token = self.headers.get("X-MyKOS-Control-Token", "").strip()
+                if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
+                    self.send_json({"ok": False, "error": "Plano de control no autorizado."}, status=403)
+                    return
+                payload = self.read_json()
+                if path == "/mykos-control/swarm/status":
+                    result = swarm_engine.get_swarm_status(
+                        since_seq=payload.get("since_seq", 0),
+                        limit=payload.get("limit", 60),
+                    )
+                elif path == "/mykos-control/swarm/title":
+                    result = swarm_engine.set_swarm_title(
+                        title=str(payload.get("title", "") or ""),
+                        permission_mode=payload.get("permission_mode") if "permission_mode" in payload else None,
+                    )
+                elif path == "/mykos-control/swarm/workers":
+                    result = swarm_engine.add_worker(
+                        name=str(payload.get("name", "") or ""),
+                        role=str(payload.get("role", "Especialista") or "Especialista"),
+                        brief=str(payload.get("brief", "") or ""),
+                        model=str(payload.get("model", "inherit") or "inherit"),
+                        permission_mode=payload.get("permission_mode") if "permission_mode" in payload else None,
+                        title=payload.get("title"),
+                    )
+                    wait_seconds = max(0.0, min(120.0, float(payload.get("wait_seconds") or 0.0)))
+                    if wait_seconds > 0 and result.get("ok"):
+                        targets = list(result.get("woken") or [])
+                        if not targets:
+                            clean_target = swarm_engine.normalize_agent_name(str(payload.get("name", "") or ""))
+                            if clean_target:
+                                targets = [clean_target]
+                        after_seq = int((result.get("message") or {}).get("seq") or 0)
+                        settled = swarm_engine.wait_for_swarm_settlement(targets, after_seq, wait_seconds)
+                        result["waited_seconds"] = wait_seconds
+                        result["board_updates"] = settled.get("messages", [])
+                        result["member_list"] = settled.get("member_list", [])
+                        result["counts"] = settled.get("counts", {})
+                        result["head"] = settled.get("head", result.get("head"))
+                elif path == "/mykos-control/swarm/board":
+                    result = swarm_engine.post_board_message(
+                        agent=str(payload.get("agent", "coordinator") or "coordinator"),
+                        text=str(payload.get("text", "") or ""),
+                    )
+                    wait_seconds = max(0.0, min(120.0, float(payload.get("wait_seconds") or 0.0)))
+                    if wait_seconds > 0 and result.get("ok"):
+                        targets = list(result.get("woken") or [])
+                        after_seq = int((result.get("message") or {}).get("seq") or result.get("head") or 0)
+                        settled = swarm_engine.wait_for_swarm_settlement(targets, after_seq, wait_seconds)
+                        result["waited_seconds"] = wait_seconds
+                        result["board_updates"] = settled.get("messages", [])
+                        result["member_list"] = settled.get("member_list", [])
+                        result["counts"] = settled.get("counts", {})
+                        result["head"] = settled.get("head", result.get("head"))
+                elif path == "/mykos-control/swarm/workers/kill":
+                    result = swarm_engine.kill_worker(str(payload.get("name", "") or ""))
+                elif path == "/mykos-control/swarm/save-cortex":
+                    result = swarm_engine.save_swarm_report_to_cortex(
+                        custom_title=str(payload.get("title", "") or ""),
+                        seq=payload.get("seq"),
+                    )
+                else:
+                    result = swarm_engine.reset_swarm(
+                        title=str(payload.get("title") or "Nuevo Swarm MyKOS"),
+                        permission_mode=payload.get("permission_mode") if "permission_mode" in payload else None,
+                    )
+                status_code = 200 if result.get("ok", True) else 400
+                self.send_json(result, status=status_code)
                 return
             if path == "/mykos-control/models-catalog":
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
@@ -4765,6 +5222,27 @@ class MyKOSHandler(BaseHTTPRequestHandler):
             continuation_error = str(error).strip() or "El modelo no pudo continuar después de la aprobación."
 
         if continuation_error:
+            gen_url = str(action_result.get("url") or "").strip()
+            gen_md = str(action_result.get("markdown") or "").strip()
+            if action_result.get("ok") and gen_url.startswith("/static/media/gen-") and gen_md:
+                fallback_text = str(action_result.get("message") or gen_md).strip()
+                assistant_message = {
+                    "role": "assistant",
+                    "model": model,
+                    "content": fallback_text,
+                    "created_at": utc_now(),
+                }
+                if conversation_id:
+                    save_assistant_message(conversation_id, assistant_message)
+                public_result.update({
+                    "conversation_id": conversation_id,
+                    "model": model,
+                    "done": True,
+                    "tools_used": [str(record.get("tool_name") or action.get("kind") or "")],
+                    "message": assistant_message,
+                })
+                self.send_json(public_result)
+                return
             public_result.update({
                 "conversation_id": record.get("conversation_id", ""),
                 "model": record.get("model", ""),
@@ -4792,7 +5270,12 @@ class MyKOSHandler(BaseHTTPRequestHandler):
             if continuation.get("sources"):
                 public_result["message"]["sources"] = continuation["sources"]
         else:
-            public_result["message"] = continuation["message"]
+            cont_msg = dict(continuation["message"]) if isinstance(continuation.get("message"), dict) else {"role": "assistant", "model": model, "content": ""}
+            gen_url = str(action_result.get("url") or "").strip()
+            gen_md = str(action_result.get("markdown") or "").strip()
+            if action_result.get("ok") and gen_url.startswith("/static/media/gen-") and gen_md and gen_url not in str(cont_msg.get("content") or ""):
+                cont_msg["content"] = (f"{str(cont_msg.get('content') or '').strip()}\n\n{gen_md}" if str(cont_msg.get("content") or "").strip() else gen_md)
+            public_result["message"] = cont_msg
         self.send_json(public_result)
 
     def read_json(self) -> dict[str, Any]:

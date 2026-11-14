@@ -7,7 +7,7 @@
   <link rel="manifest" href="/static/manifest.json">
   <title>MyKOS · MyKOS</title>
   <link rel="icon" type="image/jpeg" href="/static/logo-mykos.jpg?v=20260924-1">
-  <link rel="stylesheet" href="/static/styles.css?v=20261112-sidebar-toggle-2">
+  <link rel="stylesheet" href="/static/styles.css?v=20261114-swarm-2">
 </head>
 <body>
   <div class="app-shell">
@@ -24,10 +24,13 @@
       </div>
 
       <button id="new-chat" class="new-chat" type="button">+ Nueva conversación</button>
-      <button id="cortex-btn" class="cortex-btn" type="button" data-page="cortex" title="Cortex · Grafo y Cerebro de Conocimiento">
-        <span class="cortex-btn-dot"></span>
-        <span class="cortex-btn-label">Cortex · Cerebro</span>
-      </button>
+      <div class="sidebar-brain-row">
+        <button id="cortex-btn" class="cortex-btn" type="button" data-page="cortex" title="Cortex · Grafo y Cerebro de Conocimiento">
+          <span class="cortex-btn-dot"></span>
+          <span class="cortex-btn-label">Cortex · Cerebro</span>
+        </button>
+        <button id="open-swarm-button" class="text-button swarm-btn" type="button" title="Motor Multi-Agente MyKOS Swarm"><span class="swarm-btn-dot"></span>Swarm</button>
+      </div>
 
       <nav class="app-nav" aria-label="Secciones de MyKOS">
         <button class="app-nav-item active" type="button" data-page="chat" aria-current="page">Chat</button>
@@ -416,9 +419,9 @@
           <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="Mostrar u ocultar panel MyKOS" aria-controls="sidebar" aria-expanded="true" title="Panel MyKOS">panel MyKOS</button>
         </div>
         <div class="session-actions" aria-label="Acciones de sesión">
-          <button id="header-update-pill" class="header-update-pill up-to-date" type="button" title="MyKOS v2.0.7 · En línea (clic para abrir Gestión local)">
+          <button id="header-update-pill" class="header-update-pill up-to-date" type="button" title="MyKOS v2.1.0 · En línea (clic para abrir Gestión local)">
             <span class="update-pulse-dot" aria-hidden="true"></span>
-            <span id="header-update-label">v2.0.7</span>
+            <span id="header-update-label">v2.1.0</span>
           </button>
           <label for="permission-mode-select" class="permission-mode-label" title="Controla qué puede hacer MyKOS sin tu intervención: solo leer, pedir tu aprobación cada vez, o acceso total con permiso permanente.">
             Permisos:
@@ -574,6 +577,95 @@
                 <div id="cortex-backlinks-list" class="cortex-backlinks-list"></div>
               </div>
             </aside>
+          </div>
+        </div>
+      </section>
+
+      <section id="swarm-page" class="app-page" hidden>
+        <button class="sidebar-toggle page-sidebar-toggle" type="button" aria-label="Mostrar u ocultar panel MyKOS" aria-controls="sidebar" aria-expanded="true" title="Panel MyKOS">panel MyKOS</button>
+        <header class="page-header swarm-header">
+          <div class="swarm-header-main">
+            <div class="eyebrow">Orquestación Multi-Agente</div>
+            <div class="swarm-title-row">
+              <input id="swarm-title-input" class="swarm-title-input" type="text" value="Swarm MyKOS" maxlength="120" aria-label="Título de la misión Swarm" />
+              <button id="swarm-title-save" class="text-button" type="button" title="Guardar título del Swarm">Guardar</button>
+              <span id="swarm-live-stats" class="swarm-live-stats">0 agentes · 0 trabajando · 0 mensajes</span>
+            </div>
+          </div>
+          <div class="swarm-header-actions">
+            <label class="swarm-perm-label" for="swarm-permission-mode">
+              Permisos:
+              <select id="swarm-permission-mode">
+                <option value="supervisado">Supervisado</option>
+                <option value="acceso_total">Acceso total</option>
+              </select>
+            </label>
+            <div class="swarm-team-picker">
+              <select id="swarm-team-template" aria-label="Plantilla de equipo Swarm">
+                <option value="ingenieria">🛠️ Ingeniería y Código</option>
+                <option value="seguridad">🛡️ Auditoría de Seguridad</option>
+                <option value="rea">🔬 Ingeniería Inversa (REA)</option>
+                <option value="investigacion">🌐 Investigación Profunda y Cortex</option>
+                <option value="arquitectura">🏛️ Consejo de Arquitectura y Rendimiento</option>
+              </select>
+              <button id="swarm-quick-team" class="ollama-action-button" type="button" title="Despliega el equipo especializado seleccionado en cadena coordinada">Desplegar Equipo</button>
+            </div>
+            <button id="swarm-save-cortex-btn" class="text-button swarm-save-cortex-btn" type="button" title="Compila y guarda el informe completo del Swarm en MyKOS Cortex">💾 Guardar en Cortex</button>
+            <button id="swarm-reset-btn" class="text-button danger-text-button" type="button" title="Detiene trabajadores activos y limpia el tablón">Reiniciar Swarm</button>
+            <button id="swarm-back" class="text-button" type="button">Volver al chat</button>
+          </div>
+        </header>
+
+        <div class="swarm-container">
+          <form id="swarm-add-form" class="swarm-create-bar">
+            <input id="swarm-worker-name" class="swarm-input-sm" type="text" placeholder="Nombre (ej. auditor)" maxlength="40" required aria-label="Nombre del agente" />
+            <input id="swarm-worker-role" class="swarm-input-md" type="text" placeholder="Rol (ej. Especialista en Seguridad)" maxlength="100" aria-label="Rol del agente" />
+            <select id="swarm-worker-model" class="swarm-select-model" aria-label="Modelo del agente">
+              <option value="inherit">Usar modelo activo del chat</option>
+            </select>
+            <input id="swarm-worker-brief" class="swarm-input-brief" type="text" placeholder="Misión (Brief): objetivo, archivos o comprobaciones a realizar..." maxlength="8000" required aria-label="Misión del agente" />
+            <button id="swarm-add-submit" class="swarm-add-btn" type="submit">+ Añadir Agente</button>
+          </form>
+
+          <div id="swarm-status-banner" class="swarm-status-banner" hidden></div>
+
+          <div class="swarm-workspace">
+            <section class="swarm-panel swarm-roster-panel" aria-label="Roster de Agentes">
+              <div class="swarm-panel-header">
+                <h3>Roster de Agentes</h3>
+                <span id="swarm-roster-count" class="swarm-panel-badge">1</span>
+              </div>
+              <div id="swarm-roster-list" class="swarm-roster-list"></div>
+            </section>
+
+            <section class="swarm-panel swarm-board-panel" aria-label="Tablón Compartido en Vivo">
+              <div class="swarm-panel-header">
+                <h3>Tablón Compartido en Vivo</h3>
+                <span id="swarm-board-head" class="swarm-panel-badge">#0</span>
+              </div>
+              <div id="swarm-board-feed" class="swarm-board-feed"></div>
+              <form id="swarm-board-form" class="swarm-board-composer">
+                <div id="swarm-mention-chips" class="swarm-mention-chips" aria-label="Menciones rápidas"></div>
+                <div class="swarm-board-input-row">
+                  <textarea id="swarm-board-input" rows="2" placeholder="Publica en el tablón como @coordinator (ej. @investigador revisa #1)..." aria-label="Mensaje para el tablón"></textarea>
+                  <button id="swarm-board-send" class="swarm-send-btn" type="submit">Publicar</button>
+                </div>
+              </form>
+            </section>
+
+            <section class="swarm-panel swarm-graph-panel" aria-label="Grafo de Interacción Swarm">
+              <div class="swarm-panel-header">
+                <h3>Grafo de Interacción Swarm</h3>
+                <span class="swarm-graph-legend">
+                  <i class="legend-dot working"></i>Trabajando
+                  <i class="legend-dot waiting"></i>En espera
+                  <i class="legend-dot killed"></i>Detenido
+                </span>
+              </div>
+              <div class="swarm-graph-wrapper">
+                <canvas id="swarm-canvas" class="swarm-canvas"></canvas>
+              </div>
+            </section>
           </div>
         </div>
       </section>
@@ -1384,7 +1476,7 @@
   </div>
   <script src="/static/call-visual.js?v=20260927-1"></script>
   <script src="/static/call-transcript.js?v=20260927-1"></script>
-  <script src="/static/app.js?v=20261112-sidebar-toggle-1"></script>
+  <script src="/static/app.js?v=20261114-swarm-2"></script>
 </body>
 </html>
 

@@ -183,6 +183,14 @@ from .cortex_tools import (
     _read_cortex_note,
     _save_cortex_note,
 )
+from .swarm_tools import (
+    _swarm_status,
+    _swarm_add_worker,
+    _swarm_post,
+    _swarm_read_board,
+    _swarm_kill,
+    _swarm_save_cortex,
+)
 from .ollama import (
     _execute_delete_ollama_model,
     _execute_pull_ollama_model,
@@ -482,6 +490,18 @@ def execute_tool(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
             except (TypeError, ValueError) as error:
                 raise SubagentError("limit debe ser un número entero.") from error
             return list_jobs(limit)
+        if name == "swarm_status":
+            return _swarm_status(arguments)
+        if name == "swarm_add_worker":
+            return _swarm_add_worker(arguments)
+        if name == "swarm_post":
+            return _swarm_post(arguments)
+        if name == "swarm_read_board":
+            return _swarm_read_board(arguments)
+        if name == "swarm_kill":
+            return _swarm_kill(arguments)
+        if name == "swarm_save_cortex":
+            return _swarm_save_cortex(arguments)
         if name == "local_management_status":
             return local_status()
         if name == "media_status":

@@ -651,7 +651,7 @@ JSON
     fi
   else
     if node "$STORE_CLI" verify >/dev/null 2>&1; then
-      ok_msg "Los 8 documentos del almacén ACID superaron la verificación de integridad"
+      ok_msg "Los 9 documentos del almacén ACID superaron la verificación de integridad"
     else
       err_msg "Fallo de verificación en el almacén ACID (ejecuta «mykos doctor --fix» o «mykos store repair»)"
     fi
@@ -944,6 +944,57 @@ except Exception:
   esac
 }
 
+cmd_swarm() {
+  local sub="${1:-status}"
+  if [[ $# -gt 0 ]]; then
+    shift
+  fi
+  local show_logo=1
+  for arg in "$sub" "$@"; do
+    if [[ "$arg" == "--json" || "$arg" == "-h" || "$arg" == "--help" ]]; then
+      show_logo=0
+      break
+    fi
+  done
+  if [[ "$show_logo" == "1" ]]; then
+    print_logo "MyKOS Swarm · Motor Multi-Agente Nativo"
+  fi
+  local swarm_state_dir="$STATE_DIR"
+  local swarm_config_file="$CONFIG_FILE"
+  local real_home=""
+  if [[ -z "${MYKOS_GATEWAY_STATE_DIR:-}" && ! -f "$swarm_state_dir/control.token" ]]; then
+    real_home="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
+    if [[ -n "$real_home" && -f "$real_home/.mykos/gateway-state/control.token" ]]; then
+      swarm_state_dir="$real_home/.mykos/gateway-state"
+      swarm_config_file="$real_home/.mykos/gateway-state/mykos-gateway.json"
+    fi
+  fi
+  local py_cmd="python3"
+  if [[ -n "${MYKOS_BACKEND_PYTHON:-}" && -x "${MYKOS_BACKEND_PYTHON:-}" ]]; then
+    py_cmd="$MYKOS_BACKEND_PYTHON"
+  elif [[ -x "$HOME/.mykos/venv/bin/python" ]]; then
+    py_cmd="$HOME/.mykos/venv/bin/python"
+  elif [[ -n "$real_home" && -x "$real_home/.mykos/venv/bin/python" ]]; then
+    py_cmd="$real_home/.mykos/venv/bin/python"
+  fi
+  case "$sub" in
+    status|board|add|post|kill|reset|-h|--help)
+      PYTHONPATH="$GATEWAY_DIR/app" \
+      MYKOS_GATEWAY_STATE_DIR="$swarm_state_dir" \
+      MYKOS_GATEWAY_CONFIG="$swarm_config_file" \
+      "$py_cmd" -m swarm_cli "$sub" "$@"
+      ;;
+    help)
+      PYTHONPATH="$GATEWAY_DIR/app" "$py_cmd" -m swarm_cli --help
+      ;;
+    *)
+      echo "Uso: mykos swarm [status|board|add|post|kill|reset]" >&2
+      echo "Ejecuta «mykos swarm --help» para ver todas las opciones." >&2
+      return 1
+      ;;
+  esac
+}
+
 cmd_update() {
   print_logo "MyKOS Updater · Actualización del Sistema"
   echo -e "${C_CYAN}▶ Comprobando actualizaciones para MyKOS...${C_RESET}"
@@ -1018,6 +1069,7 @@ Comandos del Gateway y Diagnóstico:
   store <subcomando>        Gestiona el almacén ACID (status | verify | repair | export --to <dir> | retire)
   realtime <subcomando>     Configura voz en la nube (status | set-key | on | off)
   terminal <on|off|status>  Activa o desactiva la terminal interactiva web en la interfaz
+  swarm <subcomando>        Motor Multi-Agente MyKOS Swarm (status | board | add | post | kill | reset)
   rea <subcomando>          Motor de ingeniería inversa REA (status | tools [filtro] | inspect <archivo>)
   test                      Ejecuta la batería completa de pruebas de seguridad, rutas, políticas y almacén
   update                    Comprueba e instala la última versión de MyKOS desde GitHub
@@ -1078,6 +1130,9 @@ case "$COMMAND" in
     ;;
   terminal)
     cmd_terminal "$@"
+    ;;
+  swarm)
+    cmd_swarm "$@"
     ;;
   rea)
     cmd_rea "$@"

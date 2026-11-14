@@ -639,6 +639,60 @@ def prepare_generate_image(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _try_local_comfy_image(prompt: str, width: int, height: int, static_output: Path) -> bytes | None:
+    """Try generating an image locally with ComfyUI FLUX.1 via mykos-media if ComfyUI is live."""
+    comfy_cli = Path.home() / ".local" / "bin" / "mykos-media"
+    if not comfy_cli.is_file():
+        return None
+    try:
+        req = urllib.request.Request("http://127.0.0.1:8188/system_stats", headers={"User-Agent": "MyKOS/1.0"})
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            if resp.status != 200:
+                return None
+    except Exception:
+        return None
+
+    tmp_png = static_output.with_suffix(".tmp.png")
+    try:
+        proc = subprocess.run(
+            [
+                str(comfy_cli),
+                "image",
+                "--prompt",
+                prompt,
+                "--width",
+                str(width),
+                "--height",
+                str(height),
+                "--output",
+                str(tmp_png),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if proc.returncode != 0 or not tmp_png.is_file() or tmp_png.stat().st_size < 1000:
+            return None
+        try:
+            from PIL import Image
+            buf = io.BytesIO()
+            with Image.open(tmp_png) as img:
+                img.convert("RGB").save(buf, format="JPEG", quality=92)
+            return buf.getvalue()
+        except Exception:
+            return tmp_png.read_bytes()
+    except Exception:
+        return None
+    finally:
+        try:
+            if tmp_png.is_file():
+                tmp_png.unlink()
+        except Exception:
+            pass
+
+
 def generate_image_approved(action: dict[str, Any]) -> dict[str, Any]:
     prompt = str(action.get("prompt", "")).strip()
     if not prompt:
@@ -659,49 +713,64 @@ def generate_image_approved(action: dict[str, Any]) -> dict[str, Any]:
     static_output = static_media_dir / filename
     data_output = MEDIA_DIR / filename
 
-    encoded_prompt = urllib.parse.quote(prompt)
-    models_to_try = [model]
-    if model != "turbo":
-        models_to_try.append("turbo")
-
-    image_bytes: bytes | None = None
+    image_bytes: bytes | None = _try_local_comfy_image(prompt, width, height, static_output)
     last_err: Exception | None = None
-    for target_model in models_to_try:
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true&model={target_model}"
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-            },
-        )
-        for attempt in range(2):
-            try:
-                with urllib.request.urlopen(req, timeout=40) as resp:
-                    image_bytes = resp.read(15 * 1024 * 1024 + 1)
-                if image_bytes and len(image_bytes) > 15 * 1024 * 1024:
-                    raise RuntimeError("La imagen recibida supera el límite de seguridad de 15 MB.")
-                if image_bytes and len(image_bytes) >= 1000:
-                    break
-            except urllib.error.HTTPError as exc:
-                last_err = exc
-                if exc.code in {402, 429}:
-                    try:
-                        body = exc.read().decode("utf-8", "ignore")
-                        m = re.search(r"Retry after (\d+)s", body)
-                        wait_sec = int(m.group(1)) if m else 5
-                    except Exception:
-                        wait_sec = 5
-                    if wait_sec <= 10:
-                        time.sleep(wait_sec + 1)
+
+    if not image_bytes or len(image_bytes) < 1000:
+        import random
+        encoded_prompt = urllib.parse.quote(prompt)
+        seed = random.randint(1, 999999999)
+        candidate_urls = [
+            f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true&seed={seed}"
+        ]
+        models_to_try = [model]
+        if model != "turbo":
+            models_to_try.append("turbo")
+        for target_model in models_to_try:
+            candidate_urls.append(
+                f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true&seed={seed}&model={target_model}"
+            )
+
+        for url in candidate_urls:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                },
+            )
+            for _attempt in range(2):
+                try:
+                    with urllib.request.urlopen(req, timeout=40) as resp:
+                        image_bytes = resp.read(15 * 1024 * 1024 + 1)
+                    if image_bytes and len(image_bytes) > 15 * 1024 * 1024:
+                        raise RuntimeError("La imagen recibida supera el límite de seguridad de 15 MB.")
+                    if image_bytes and len(image_bytes) >= 1000:
+                        break
+                except urllib.error.HTTPError as exc:
+                    last_err = exc
+                    if exc.code in {402, 429, 503}:
+                        try:
+                            body = exc.read().decode("utf-8", "ignore")
+                            m = re.search(r"Retry after (\d+)s", body)
+                            wait_sec = int(m.group(1)) if m else None
+                        except Exception:
+                            wait_sec = None
+                        if wait_sec is not None:
+                            if wait_sec <= 15:
+                                time.sleep(wait_sec + 1)
+                            else:
+                                raise MediaError(
+                                    f"El generador de imágenes tiene un límite temporal de uso. Por favor espera {wait_sec} segundos antes de pedir otra."
+                                )
+                        else:
+                            time.sleep(1.5)
                     else:
-                        raise MediaError(f"El generador de imágenes tiene un límite de 1 imagen cada 45 segundos. Por favor espera {wait_sec} segundos antes de pedir otra.")
-                else:
+                        time.sleep(1.0)
+                except Exception as exc:
+                    last_err = exc
                     time.sleep(1.0)
-            except Exception as exc:
-                last_err = exc
-                time.sleep(1.0)
-        if image_bytes and len(image_bytes) >= 1000:
-            break
+            if image_bytes and len(image_bytes) >= 1000:
+                break
 
     if not image_bytes or len(image_bytes) < 1000:
         raise MediaError(f"Error al generar la imagen: {last_err or 'el servicio no devolvió datos válidos'}")

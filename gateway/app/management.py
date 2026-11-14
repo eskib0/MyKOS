@@ -98,6 +98,7 @@ def local_status() -> dict[str, Any]:
             "automations": _file_info(DATA / "automations.json", store_doc="automations"),
             "subagents": _file_info(DATA / "subagents.json", store_doc="subagents"),
             "nodes": _file_info(DATA / "nodes.json", store_doc="nodes"),
+            "swarm": _file_info(DATA / "swarm.json", store_doc="swarm"),
         },
         "counts": {
             "conversations": _count_json_items(DATA / "conversations.json", "conversations", store_doc="conversations"),
@@ -105,6 +106,7 @@ def local_status() -> dict[str, Any]:
             "automation_events": _count_json_items(DATA / "automations.json", "events", store_doc="automations"),
             "subagent_jobs": _count_json_items(DATA / "subagents.json", "jobs", store_doc="subagents"),
             "nodes": _count_json_items(DATA / "nodes.json", "nodes", store_doc="nodes"),
+            "swarm_messages": _count_json_items(DATA / "swarm.json", "messages", store_doc="swarm"),
         },
         "disk": {"free_bytes": disk.free, "total_bytes": disk.total, "used_bytes": disk.used},
         "checks": checks,

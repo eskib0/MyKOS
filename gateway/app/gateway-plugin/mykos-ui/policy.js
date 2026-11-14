@@ -390,6 +390,64 @@ export const POLICY_TABLE = [
       status: { type: "string", max: 32 },
     },
   },
+
+  // Motor nativo multi-agente MyKOS Swarm.
+  {
+    method: "GET", path: "/api/swarm/status", group: "swarm",
+    body: "none", limits: { concurrent: 8, perMinute: 240 },
+    query: { fields: { since_seq: { maxChars: 12, pattern: /^\d+$/ }, limit: { maxChars: 6, pattern: /^\d+$/ } } },
+  },
+  {
+    method: "POST", path: "/api/swarm/title", group: "swarm",
+    body: "json", maxBytes: 4096, limits: { concurrent: 4, perMinute: 60 },
+    fields: {
+      title: { type: "string", max: 160 },
+      permission_mode: { type: "string", enum: ["supervisado", "acceso_total"], max: 32 },
+    },
+  },
+  {
+    method: "POST", path: "/api/swarm/workers", group: "swarm",
+    body: "json", maxBytes: 32 * 1024, limits: { concurrent: 6, perMinute: 60 },
+    fields: {
+      name: { type: "string", required: true, pattern: /^[A-Za-z0-9_@ -]{1,50}$/, max: 50 },
+      role: { type: "string", max: 120 },
+      brief: { type: "string", max: 12000 },
+      model: { type: "string", max: 140 },
+      title: { type: "string", max: 160 },
+      permission_mode: { type: "string", enum: ["supervisado", "acceso_total"], max: 32 },
+    },
+  },
+  {
+    method: "POST", path: "/api/swarm/board", group: "swarm",
+    body: "json", maxBytes: 32 * 1024, limits: { concurrent: 6, perMinute: 120 },
+    fields: {
+      agent: { type: "string", max: 50 },
+      text: { type: "string", required: true, pattern: /\S/, max: 16000 },
+    },
+  },
+  {
+    method: "POST", path: "/api/swarm/workers/kill", group: "swarm",
+    body: "json", maxBytes: 2048, limits: { concurrent: 4, perMinute: 60 },
+    fields: {
+      name: { type: "string", required: true, pattern: /^[A-Za-z0-9_@ -]{1,50}$/, max: 50 },
+    },
+  },
+  {
+    method: "POST", path: "/api/swarm/reset", group: "swarm",
+    body: "json", maxBytes: 2048, limits: { concurrent: 2, perMinute: 20 },
+    fields: {
+      title: { type: "string", max: 160 },
+      permission_mode: { type: "string", enum: ["supervisado", "acceso_total"], max: 32 },
+    },
+  },
+  {
+    method: "POST", path: "/api/swarm/save-cortex", group: "swarm",
+    body: "json", maxBytes: 4096, limits: { concurrent: 2, perMinute: 30 },
+    fields: {
+      title: { type: "string", max: 160 },
+      seq: { type: "number", min: 0, max: 1000000 },
+    },
+  },
 ];
 
 const BY_KEY = new Map(POLICY_TABLE.map((entry) => [`${entry.method} ${entry.path}`, entry]));

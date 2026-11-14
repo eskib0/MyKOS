@@ -204,10 +204,10 @@ const readJsonl = (f) => fs.readFileSync(f, "utf8").split("\n").filter(Boolean).
     check("todo o nada: si un fichero antiguo es inválido, tampoco se importa el válido ni se aparta ninguno", res.memory.status === "failed" && res.conversations.status === "not-imported" && fs.existsSync(path.join(legacyDir, "conversations.json")) && fs.existsSync(path.join(legacyDir, "memory.json")) && store.get("conversations") === null && fs.readdirSync(legacyDir).every((f) => !f.includes(".migrated-")), `${res.conversations.status} / ${res.memory.status}`);
   }
   for (const [label, failAtCall, imported] of [
-    // Hay ocho documentos conocidos: las comprobaciones iniciales pasan tras conversations, memory,
-    // memory-index, permissions, approvals, automations, subagents y nodes.
-    ["falla la verificación del primero (ya escrito: se deshace)", 10, ["conversations"]],
-    ["falla la verificación del segundo (el primero ya estaba verificado y también se deshace)", 12, ["conversations", "memory"]],
+    // Hay nueve documentos conocidos: las comprobaciones iniciales pasan tras conversations, memory,
+    // memory-index, permissions, approvals, automations, subagents, nodes y swarm.
+    ["falla la verificación del primero (ya escrito: se deshace)", 11, ["conversations"]],
+    ["falla la verificación del segundo (el primero ya estaba verificado y también se deshace)", 13, ["conversations", "memory"]],
   ]) {
     const { store, dir } = fresh();
     const legacyDir = path.join(root, `legacy-verif-${failAtCall}`);
@@ -237,8 +237,9 @@ const readJsonl = (f) => fs.readFileSync(f, "utf8").split("\n").filter(Boolean).
     fs.writeFileSync(path.join(legacyDir, "automations.json"), JSON.stringify({ automations: [{ id: "r1" }], events: [] }));
     fs.writeFileSync(path.join(legacyDir, "subagents.json"), JSON.stringify({ jobs: [{ id: "j1" }] }));
     fs.writeFileSync(path.join(legacyDir, "nodes.json"), JSON.stringify({ nodes: [{ id: "n1", token_hash: "hash" }] }));
+    fs.writeFileSync(path.join(legacyDir, "swarm.json"), JSON.stringify({ title: "Swarm Test", head: 1, permission_mode: "supervisado", members: { coordinator: { name: "coordinator" } }, messages: [{ seq: 1, agent: "coordinator", text: "Hola" }] }));
     const res = store.importAll(legacyDir);
-    check("los ocho documentos se importan juntos y los ocho originales se apartan", res.every((r) => r.status === "imported") && fs.readdirSync(legacyDir).filter((f) => f.includes(".migrated-")).length === 8 && store.list().every((d) => d.exists && d.revision === 1), res.map((r) => `${r.name}:${r.status}`).join(" "));
+    check("los nueve documentos se importan juntos y los nueve originales se apartan", res.every((r) => r.status === "imported") && fs.readdirSync(legacyDir).filter((f) => f.includes(".migrated-")).length === 9 && store.list().every((d) => d.exists && d.revision === 1), res.map((r) => `${r.name}:${r.status}`).join(" "));
   }
 
   // 16. Muchas escrituras seguidas

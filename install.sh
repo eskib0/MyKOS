@@ -33,7 +33,7 @@ EOF
 done
 
 echo "============================================================"
-echo "  Instalador de MyKOS Ecosystem (v2.0.7)"
+echo "  Instalador de MyKOS Ecosystem (v2.1.0)"
 echo "  Raíz del proyecto: $MYKOS_ROOT"
 echo "============================================================"
 
@@ -221,7 +221,7 @@ if pgrep -f "mykos-gateway\.mjs" >/dev/null 2>&1; then
 fi
 
 echo ""
-echo "✅ Instalación completada (v2.0.7). Prueba ahora:"
+echo "✅ Instalación completada (v2.1.0). Prueba ahora:"
 echo "   mykos test      # Verificar rutas, políticas y seguridad"
 echo "   mykos run       # Arrancar MyKOS en vivo en http://127.0.0.1:3210"
 echo "   mykos status    # Consultar el estado de todos los servicios"

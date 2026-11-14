@@ -386,6 +386,17 @@ switch ($Command) {
     }
     { $_ -in @("logs", "log") } { Invoke-MykosLogs -Follow:($RestArgs -contains "-f" -or $RestArgs -contains "--follow") }
     "store" { & node $StoreCli @RestArgs }
+    "swarm" {
+        if (-not ($RestArgs -contains "--json" -or $RestArgs -contains "--help" -or $RestArgs -contains "-h")) {
+            Show-MykosLogo "MyKOS Swarm · Motor Multi-Agente Nativo"
+        }
+        $pyExe = Get-MykosPython
+        $env:PYTHONPATH = Join-Path $GatewayDir "app"
+        $env:MYKOS_GATEWAY_STATE_DIR = $StateDir
+        $env:MYKOS_GATEWAY_CONFIG = $ConfigFile
+        $swarmArgs = if ($RestArgs.Count -gt 0) { $RestArgs } else { @("status") }
+        & $pyExe -m swarm_cli @swarmArgs
+    }
     "rea" {
         Show-MykosLogo "MyKOS · REA (Reverse Engineer Anything) Engine"
         $pyExe = Get-MykosPython
@@ -402,6 +413,6 @@ switch ($Command) {
     { $_ -in @("update", "upgrade") } { Invoke-MykosUpdate }
     default {
         Show-MykosLogo "MyKOS CLI (Windows) · Gestión integral del ecosistema MyKOS"
-        Write-Host "Uso: mykos <run|start|stop|restart|status|doctor [--fix]|open|logs [-f]|store|rea|analizador|test>"
+        Write-Host "Uso: mykos <run|start|stop|restart|status|doctor [--fix]|open|logs [-f]|store|swarm|rea|analizador|test>"
     }
 }

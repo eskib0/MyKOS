@@ -732,6 +732,75 @@ async function createPendingApproval(deps, ctx, messages, toolName, args) {
  * @returns {Promise<object>} { message, tools_used, sources, done } o { pending_action, proposal, ... }, más
  *          `_messages` y `_generation` (el contexto tal como acaba, para el medidor de la interfaz).
  */
+function extractUserMessageText(msg) {
+  if (!isObject(msg)) return "";
+  if (Array.isArray(msg.content)) {
+    return msg.content.map((item) => (isObject(item) ? text(item.text) : "")).filter(Boolean).join("\n").trim();
+  }
+  return text(msg.content).trim();
+}
+
+function extractDirectMediaCommand(messages) {
+  if (!Array.isArray(messages) || !messages.length) return null;
+  const lastMsg = messages[messages.length - 1];
+  if (!isObject(lastMsg) || lastMsg.role !== "user" || lastMsg.integrity_guard) return null;
+  let body = extractUserMessageText(lastMsg);
+  body = body.replace(/^\[Fecha y hora actuales:[^\]]*\]\s*/i, "").trim();
+  const match = body.match(/^\/(imagine|imgine|imagen|video)(?:\s+([\s\S]*))?$/i);
+  if (!match) return null;
+  const cmd = match[1].toLowerCase();
+  const toolName = cmd === "video" ? "generate_video" : "generate_image";
+  let prompt = (match[2] || "").trim();
+  if (!prompt) {
+    for (let i = messages.length - 2; i >= 0; i -= 1) {
+      const prev = messages[i];
+      if (!isObject(prev) || prev.role !== "user" || prev.integrity_guard) continue;
+      let prevText = extractUserMessageText(prev);
+      prevText = prevText.replace(/^\[Fecha y hora actuales:[^\]]*\]\s*/i, "").trim();
+      prevText = prevText.replace(/^\/(?:imagine|imgine|imagen|video)(?:\s+|$)/i, "").trim();
+      if (prevText) {
+        prompt = prevText;
+        break;
+      }
+    }
+  }
+  if (toolName === "generate_image" && !prompt) return null;
+  return {
+    toolName,
+    args: toolName === "generate_image"
+      ? { prompt, aspect_ratio: "1:1", model: "flux" }
+      : (prompt ? { prompt } : {}),
+  };
+}
+
+function ensureGeneratedMediaMarkdown(content, messages) {
+  let out = text(content).trim();
+  let lastUserIdx = -1;
+  for (let i = 0; i < messages.length; i += 1) {
+    const m = messages[i];
+    if (isObject(m) && m.role === "user" && !m.integrity_guard) lastUserIdx = i;
+  }
+  const missing = [];
+  const seen = new Set();
+  for (let i = lastUserIdx + 1; i < messages.length; i += 1) {
+    const m = messages[i];
+    if (!isObject(m) || m.role !== "tool") continue;
+    let data = m.content;
+    if (typeof data === "string") {
+      try { data = JSON.parse(data); } catch { continue; }
+    }
+    if (!isObject(data) || !data.ok) continue;
+    const url = text(data.url).trim();
+    const md = text(data.markdown).trim();
+    if (url.startsWith("/static/media/gen-") && md && !seen.has(url)) {
+      seen.add(url);
+      if (!out.includes(url)) missing.push(md);
+    }
+  }
+  if (!missing.length) return out;
+  return out ? `${out}\n\n${missing.join("\n\n")}` : missing.join("\n\n");
+}
+
 export async function runChatLoop(input, deps) {
   const model = text(input.model).trim();
   const messages = Array.isArray(input.messages) ? input.messages : [];
@@ -768,6 +837,49 @@ export async function runChatLoop(input, deps) {
   let webSearchCalls = 0;
   let webFetchCalls = 0;
   if (messages.some((item) => isObject(item) && item.role === "tool")) bumpContext(generation);
+
+  const directMedia = extractDirectMediaCommand(messages);
+  if (directMedia) {
+    const { toolName, args } = directMedia;
+    toolNames.push(toolName);
+    if (ctx.permissionMode === "solo_lectura") {
+      const content = `Modo "Solo lectura" activo: no se pueden ejecutar acciones que modifiquen el sistema («${toolName}»). Cambia el modo a Supervisado o Acceso total si quieres continuar.`;
+      const saved = await saveAssistant(deps, ctx, sourceCards, content, true, messages, null, null);
+      return { ...saved, tools_used: [toolName], sources: sourceCards, ...snapshot(messages, generation) };
+    }
+    let executedResult = null;
+    const { result: autoResult, grant } = await authorizedSensitiveAction(deps, toolName, args, ctx.conversationId);
+    if (grant !== null) {
+      executedResult = autoResult ?? {};
+    } else if (ctx.permissionMode === "acceso_total") {
+      const { result: grantedResult, grant: newGrant } = await autoGrantSensitiveAction(deps, toolName, args, ctx.conversationId);
+      if (newGrant !== null) executedResult = grantedResult ?? {};
+    }
+    if (executedResult !== null) {
+      const content = executedResult.ok
+        ? (text(executedResult.message) || text(executedResult.markdown))
+        : `No se pudo completar «${toolName}»: ${text(executedResult.error) || "error desconocido"}`;
+      const saved = await saveAssistant(deps, ctx, sourceCards, content, true, messages, null, null);
+      return { ...saved, tools_used: [toolName], sources: sourceCards, ...snapshot(messages, generation) };
+    }
+    await setActivity(deps, ctx.activityId, {
+      status: "waiting",
+      phase: "approval",
+      label: "Esperando tu aprobación…",
+      detail: `Se necesita tu aprobación para «${toolName}». Revisa la acción en el panel.`,
+    });
+    const pending = await createPendingApproval(deps, ctx, messages, toolName, args);
+    if (pending.ok) {
+      return {
+        pending_action: pending.approval,
+        proposal: `Se necesita tu aprobación para ejecutar «${toolName}».`,
+        tools_used: [toolName],
+        sources: sourceCards,
+        done: false,
+        ...snapshot(messages, generation),
+      };
+    }
+  }
 
   for (let toolRound = 0; toolRound <= MAX_TOOL_ROUNDS; toolRound += 1) {
     await setActivity(deps, ctx.activityId, {
@@ -819,9 +931,10 @@ export async function runChatLoop(input, deps) {
       }
       const cleanedResponse = stripFakeLedgerTags(responseText);
       const hasPastClaim = [...cleanedResponse.replace(/\s+/g, " ").matchAll(ACTION_CLAIM_RE)].some((m) => !m.groups?.neg);
-      const finalContent = integrityAction === "warn" && hasPastClaim
+      let finalContent = integrityAction === "warn" && hasPastClaim
         ? `${cleanedResponse}${INTEGRITY_UNVERIFIED_NOTE}`
         : cleanedResponse;
+      finalContent = ensureGeneratedMediaMarkdown(finalContent, messages);
       const telemetry = extractTelemetry(result, durationMs, responseMessage);
       const saved = await saveAssistant(deps, ctx, sourceCards, finalContent, result?.done !== false, messages, integrityTrace, telemetry);
       return { ...saved, tools_used: [...new Set(toolNames)].sort(), sources: sourceCards, telemetry, ...snapshot(messages, generation) };

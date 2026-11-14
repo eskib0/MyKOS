@@ -25,22 +25,38 @@ LLAMA_CPP_URL = os.environ.get("MYKOS_LLAMA_CPP_URL", "http://127.0.0.1:9931").r
 LLAMA_CPP_TIMEOUT_SECONDS = int(os.environ.get("MYKOS_LLAMA_CPP_TIMEOUT", "600"))
 LLAMA_CPP_START_TIMEOUT = int(os.environ.get("MYKOS_LLAMA_CPP_START_TIMEOUT", "60"))
 
+def _effective_home_dir() -> Path:
+    home = Path.home()
+    if home.name in ("qwen-home", "antigravity-home"):
+        try:
+            import pwd
+
+            pw_dir = pwd.getpwuid(os.getuid()).pw_dir
+            if pw_dir:
+                return Path(pw_dir)
+        except Exception:
+            pass
+    return home
+
+
+_EFFECTIVE_HOME = _effective_home_dir()
+
 # Rutas estándar del binario llama.cpp 0.9 y modelos
 DEFAULT_BIN_CANDIDATES = [
-    Path.home() / ".local" / "llama-quick" / "llama-b12211" / "llama-server",
-    Path.home() / ".local" / "bin" / "llama-server",
-    Path.home() / ".local" / "bin" / "llama",
-    Path.home() / "llama.cpp" / "build" / "bin" / "llama-server",
+    _EFFECTIVE_HOME / ".local" / "llama-quick" / "llama-b12211" / "llama-server",
+    _EFFECTIVE_HOME / ".local" / "bin" / "llama-server",
+    _EFFECTIVE_HOME / ".local" / "bin" / "llama",
+    _EFFECTIVE_HOME / "llama.cpp" / "build" / "bin" / "llama-server",
 ]
 DEFAULT_BIN = next((p for p in DEFAULT_BIN_CANDIDATES if p.is_file()), DEFAULT_BIN_CANDIDATES[-1])
 LLAMA_CPP_EXE = os.environ.get("MYKOS_LLAMA_CPP_EXE", str(DEFAULT_BIN)).strip()
 
-MODELS_DIR = Path(os.environ.get("MYKOS_MODELS_DIR", str(Path.home() / "models")))
+MODELS_DIR = Path(os.environ.get("MYKOS_MODELS_DIR", str(_EFFECTIVE_HOME / "models")))
 MODELS_INI = MODELS_DIR / "models.ini"
-HF_HUB_DIR = Path.home() / ".cache" / "huggingface" / "hub"
+HF_HUB_DIR = _EFFECTIVE_HOME / ".cache" / "huggingface" / "hub"
 
 CUDA_LIB_PATHS = [
-    Path.home() / ".local" / "llama-quick" / "llama-b12211",
+    _EFFECTIVE_HOME / ".local" / "llama-quick" / "llama-b12211",
     Path("/usr/local/lib/ollama/cuda_v12"),
     Path("/usr/local/cuda/lib64"),
 ]
@@ -90,11 +106,20 @@ def _is_failed_server_model(item: dict[str, Any]) -> bool:
     return bool(st.get("failed")) or str(st.get("value") or "").strip().lower() == "failed"
 
 
+def _norm_gguf_key(raw: str) -> str:
+    s = raw.strip().lower().split(":", 1)[0]
+    for suffix in ("-gguf", "_gguf", ".gguf"):
+        if s.endswith(suffix):
+            s = s[: -len(suffix)]
+    return s.replace("_", "-")
+
+
 def _match_server_model_id(models_list: list[dict[str, Any]], target_key: str) -> str:
     """Devuelve el ID exacto de un modelo válido en /v1/models que coincida con target_key."""
     req = target_key.strip().lower()
     if not req:
         return ""
+    req_norm = _norm_gguf_key(req)
     valid = [m for m in models_list if isinstance(m, dict) and m.get("id") and not _is_failed_server_model(m)]
     # Priorizar modelos ya cargados antes que en reposo
     ordered = sorted(
@@ -108,7 +133,15 @@ def _match_server_model_id(models_list: list[dict[str, Any]], target_key: str) -
     for m in ordered:
         mid = str(m["id"]).strip()
         low = mid.lower()
-        if low.endswith(f"/{req}") or req.endswith(f"/{low}") or low.split(":", 1)[0] == req.split(":", 1)[0]:
+        mid_norm = _norm_gguf_key(mid)
+        if (
+            low.endswith(f"/{req}")
+            or req.endswith(f"/{low}")
+            or low.split(":", 1)[0] == req.split(":", 1)[0]
+            or mid_norm == req_norm
+            or req_norm.endswith(f"/{mid_norm}")
+            or mid_norm.endswith(f"/{req_norm}")
+        ):
             return mid
     return ""
 
@@ -431,16 +464,23 @@ def stop_llamacpp_server() -> None:
             pass
 
 
+def _online_fallback_model(status: dict[str, Any]) -> str:
+    if not status.get("online"):
+        return ""
+    if status.get("loaded_model"):
+        return str(status["loaded_model"])
+    models_list = [m for m in (status.get("models") or []) if isinstance(m, dict)]
+    first_valid = next((str(m.get("id") or "") for m in models_list if m.get("id") and not _is_failed_server_model(m)), "")
+    return first_valid or "mykos-cuda"
+
+
 def _resolve_online_llama_model(status: dict[str, Any], clean_key: str) -> str:
     """Resuelve clean_key contra el servidor llama.cpp activo si ya sirve el modelo o es el alias genérico."""
     if not status.get("online"):
         return ""
     models_list = [m for m in (status.get("models") or []) if isinstance(m, dict)]
     if clean_key in {"", "mykos-cuda"}:
-        if status.get("loaded_model"):
-            return str(status["loaded_model"])
-        first_valid = next((str(m.get("id") or "") for m in models_list if m.get("id") and not _is_failed_server_model(m)), "")
-        return first_valid or "mykos-cuda"
+        return _online_fallback_model(status)
     matched_id = _match_server_model_id(models_list, clean_key)
     if matched_id:
         return matched_id
@@ -454,10 +494,10 @@ def ensure_llamacpp_model(model_name: str) -> str:
     global _SERVER_PROCESS, _CURRENT_MODEL_KEY
 
     clean_key = str(model_name or "").strip()
-    if clean_key.startswith("llama_cpp/"):
-        clean_key = clean_key[len("llama_cpp/"):]
-    if clean_key.startswith("llamacpp/"):
-        clean_key = clean_key[len("llamacpp/"):]
+    for prefix in ("llama_cpp/", "llamacpp/", "llama-cpp/"):
+        if clean_key.lower().startswith(prefix):
+            clean_key = clean_key[len(prefix):]
+            break
 
     status = llamacpp_status()
     resolved_online = _resolve_online_llama_model(status, clean_key)
@@ -474,6 +514,8 @@ def ensure_llamacpp_model(model_name: str) -> str:
         available = get_available_gguf_models()
         if clean_key in {"", "mykos-cuda"}:
             if not available:
+                if status.get("online"):
+                    return _online_fallback_model(status)
                 raise RuntimeError(f"No se encuentra ningún modelo GGUF para llama.cpp en {MODELS_DIR}")
             clean_key = next(iter(available))
         elif clean_key not in available:
@@ -490,6 +532,8 @@ def ensure_llamacpp_model(model_name: str) -> str:
             )
             if matched:
                 clean_key = matched
+            elif status.get("online"):
+                return _online_fallback_model(status)
             else:
                 raise RuntimeError(f"Modelo GGUF '{clean_key}' no disponible en {MODELS_DIR} ni en la caché de Hugging Face.")
 
