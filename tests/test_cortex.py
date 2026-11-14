@@ -23,6 +23,8 @@ class TestCortexRealVault(unittest.TestCase):
         c2 = get_cortex()
         self.assertIs(c1, c2)
         self.assertTrue(c1.root.exists(), f"No existe la bóveda: {c1.root}")
+        self.assertEqual(c1.root, (Path.home() / ".mykos" / "cortex").resolve())
+        self.assertTrue((c1.root / "workspace").is_dir())
 
         # Grafo serializable a JSON y sin seguir el symlink recursivo
         graph = c1.get_graph()
@@ -60,7 +62,7 @@ class TestCortexRealVault(unittest.TestCase):
     def test_fallback_vault_resolution(self) -> None:
         orig_default = cortex.DEFAULT_VAULT_PATH
         try:
-            cortex.DEFAULT_VAULT_PATH = Path("/ruta/que/no/existe/Obsidian Vault")
+            cortex.DEFAULT_VAULT_PATH = Path("/ruta/que/no/existe/cortex_inexistente")
             resolved = cortex.resolve_vault_path()
             if cortex.FALLBACK_VAULT_PATH.exists():
                 self.assertEqual(resolved, cortex.FALLBACK_VAULT_PATH.resolve())
@@ -118,7 +120,7 @@ class TestCortexIncrementalAndStdlib(unittest.TestCase):
         )
 
     def test_external_sync_detection(self) -> None:
-        # Simular creación y edición externa (e.g. desde Obsidian desktop)
+        # Simular creación y edición externa desde un editor externo
         ext_file = self.tmp / "Externo.md"
         ext_file.write_text("# Externo\nEnlace a [[A]]\n", "utf-8")
         # Forzar que el throttle expire
@@ -145,7 +147,20 @@ class TestCortexIncrementalAndStdlib(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.engine.save_note("../../fuera.md", "nope")
         with self.assertRaises(ValueError):
-            self.engine.save_note(".obsidian/config.md", "nope")
+            self.engine.save_note(".cortex/config.md", "nope")
+
+        empty_vault = Path(tempfile.mkdtemp(prefix="cortex_starter_"))
+        try:
+            starter = CortexEngine(empty_vault)
+            self.assertTrue((empty_vault / "00 - Centro de Mando" / "00 - Dashboard MyKOS.md").is_file())
+            self.assertTrue((empty_vault / "00 - Centro de Mando" / "00 - Preferencias y Memoria.md").is_file())
+            self.assertTrue((empty_vault / "01 - Proyectos MyKOS" / "01 - Arquitectura MyKOS.md").is_file())
+            self.assertTrue((empty_vault / "04 - Bitácora y Diario" / "Bitacora Inicial.md").is_file())
+            dash = starter.get_note("00 - Centro de Mando/00 - Dashboard MyKOS.md")
+            self.assertGreater(len(dash["links"]), 0)
+            self.assertGreater(len(dash["backlinks"]), 0)
+        finally:
+            shutil.rmtree(empty_vault, ignore_errors=True)
 
         # Forzar modo sin PyYAML
         orig_yaml = cortex.yaml

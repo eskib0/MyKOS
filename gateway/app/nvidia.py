@@ -12,7 +12,14 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent
-CREDENTIALS_ROOT = Path(os.environ.get("MYKOS_CREDENTIALS_DIR", str(ROOT / "data" / "oauth"))).expanduser()
+_GATEWAY_CREDS = Path.home() / ".mykos" / "gateway-state" / "mykos" / "credentials"
+_CREDS_BASE = os.environ.get("MYKOS_CREDENTIALS_DIR")
+if _CREDS_BASE:
+    CREDENTIALS_ROOT = Path(_CREDS_BASE).expanduser()
+elif _GATEWAY_CREDS.exists():
+    CREDENTIALS_ROOT = _GATEWAY_CREDS
+else:
+    CREDENTIALS_ROOT = ROOT / "data" / "oauth"
 NVIDIA_HOME = CREDENTIALS_ROOT / "nvidia"
 NVIDIA_HOME.mkdir(parents=True, exist_ok=True, mode=0o700)
 try:
@@ -171,6 +178,30 @@ def _request_json(path: str, *, key: str | None = None, method: str = "GET", pay
     return result
 
 
+_NON_CHAT_NVIDIA_MARKERS = (
+    "embed",
+    "rerank",
+    "guard",
+    "shield",
+    "parse",
+    "vila",
+    "cosmos",
+    "sdxl",
+    "flux",
+)
+
+
+def is_nvidia_chat_model(row: dict[str, Any]) -> bool:
+    """Devuelve True si el modelo NVIDIA NIM es apto para conversación de chat."""
+    if not isinstance(row, dict):
+        return False
+    model_id = str(row.get("id", "")).strip()
+    if not model_id:
+        return False
+    lowered = model_id.casefold()
+    return not any(marker in lowered for marker in _NON_CHAT_NVIDIA_MARKERS)
+
+
 def validate_nvidia_api_key(key: str) -> list[dict[str, Any]]:
     result = _request_json("models", key=str(key).strip())
     rows = result.get("data") if isinstance(result.get("data"), list) else []
@@ -180,7 +211,7 @@ def validate_nvidia_api_key(key: str) -> list[dict[str, Any]]:
 
 
 def nvidia_models() -> list[dict[str, Any]]:
-    return validate_nvidia_api_key(get_nvidia_api_key())
+    return [row for row in validate_nvidia_api_key(get_nvidia_api_key()) if is_nvidia_chat_model(row)]
 
 
 def nvidia_chat_completion(model: str, messages: list[dict[str, Any]], *, max_tokens: int = 1536, temperature: float = 0.2) -> str:

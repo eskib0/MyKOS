@@ -28,6 +28,19 @@ OAUTH_ROOT = Path(os.environ.get("MYKOS_CREDENTIALS_DIR", str(ROOT / "data" / "o
 OPENAI_HOME = OAUTH_ROOT / "openai-codex"
 OPENAI_HOME.mkdir(parents=True, exist_ok=True, mode=0o700)
 OPENAI_API_KEY_FILE = OPENAI_HOME / "api_key.json"
+OPENAI_API_URL = os.environ.get("MYKOS_OPENAI_API_URL", "https://api.openai.com/v1").strip().rstrip("/")
+OPENAI_API_FALLBACK_MODELS: list[dict[str, str]] = [
+    {"slug": "gpt-4o", "display_name": "GPT-4o (Omni)"},
+    {"slug": "gpt-4o-mini", "display_name": "GPT-4o Mini"},
+    {"slug": "gpt-4.1", "display_name": "GPT-4.1"},
+    {"slug": "o1", "display_name": "OpenAI o1 (Razonamiento)"},
+    {"slug": "o3-mini", "display_name": "OpenAI o3-mini"},
+    {"slug": "o4-mini", "display_name": "OpenAI o4-mini"},
+    {"slug": "gpt-4-turbo", "display_name": "GPT-4 Turbo"},
+]
+OPENAI_MODELS_CACHE_TTL = 120.0
+_OPENAI_MODELS_LOCK = threading.Lock()
+_OPENAI_API_MODELS_CACHE: dict[str, Any] = {"checked_at": 0.0, "models": [], "error": ""}
 OPENROUTER_HOME = OAUTH_ROOT / "openrouter"
 OPENROUTER_HOME.mkdir(parents=True, exist_ok=True, mode=0o700)
 OPENROUTER_CREDENTIALS_FILE = OPENROUTER_HOME / "credentials.json"
@@ -220,10 +233,89 @@ def start_openai_login() -> dict[str, Any]:
     return _public_login_state()
 
 
-def save_openai_api_key(key: str) -> dict[str, Any]:
-    value = str(key).strip()
+_OPENAI_EXCLUDED_TOKENS = ("embedding", "whisper", "tts", "dall-e", "moderation", "realtime", "transcribe", "audio", "-image", "instruct")
+_OPENAI_DISPLAY_NAMES = {
+    "gpt-4o": "GPT-4o (Omni)",
+    "gpt-4o-mini": "GPT-4o Mini",
+    "gpt-4.1": "GPT-4.1",
+    "gpt-4.1-mini": "GPT-4.1 Mini",
+    "gpt-4.1-nano": "GPT-4.1 Nano",
+    "gpt-4-turbo": "GPT-4 Turbo",
+    "gpt-5": "GPT-5",
+    "gpt-5-mini": "GPT-5 Mini",
+    "gpt-5-nano": "GPT-5 Nano",
+    "o1": "OpenAI o1 (Razonamiento)",
+    "o3": "OpenAI o3 (Razonamiento)",
+    "o3-mini": "OpenAI o3-mini",
+    "o4-mini": "OpenAI o4-mini",
+}
+
+
+def _openai_models_from_ids(raw_ids: list[str]) -> list[dict[str, str]]:
+    id_set = {str(item).strip() for item in raw_ids if str(item).strip()}
+    filtered: list[str] = []
+    for model_id in id_set:
+        lower = model_id.casefold()
+        if not lower.startswith(("gpt-", "o1", "o3", "o4", "chatgpt-")):
+            continue
+        if any(tok in lower for tok in _OPENAI_EXCLUDED_TOKENS):
+            continue
+        dated = re.match(r"^(.+)-\d{4}-\d{2}-\d{2}$", model_id)
+        if dated and dated.group(1) in id_set:
+            continue
+        filtered.append(model_id)
+    if not filtered:
+        return list(OPENAI_API_FALLBACK_MODELS)
+    priority = {
+        "gpt-4o": 0,
+        "gpt-4o-mini": 1,
+        "gpt-4.1": 2,
+        "gpt-5": 3,
+        "o4-mini": 4,
+        "o3": 5,
+        "o3-mini": 6,
+        "o1": 7,
+        "gpt-4-turbo": 8,
+    }
+    filtered.sort(key=lambda slug: (priority.get(slug, 20), slug))
+    return [{"slug": slug, "display_name": _OPENAI_DISPLAY_NAMES.get(slug, slug)} for slug in filtered[:30]]
+
+
+def validate_openai_api_key(key: str) -> list[dict[str, str]]:
+    value = str(key or "").strip()
     if not value or len(value) < 10:
         raise RuntimeError("Clave API de OpenAI no válida.")
+    request = urllib.request.Request(
+        f"{OPENAI_API_URL}/models",
+        headers={
+            "Authorization": f"Bearer {value}",
+            "Accept": "application/json",
+            "User-Agent": "MyKOS/2.0",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            payload = json.loads(response.read(2_000_000).decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise RuntimeError(f"Clave API de OpenAI rechazada o sin permisos (HTTP {exc.code}).") from exc
+        raise RuntimeError(f"OpenAI API devolvió HTTP {exc.code} al validar la clave.") from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"No se pudo conectar con OpenAI API para validar la clave: {exc}") from exc
+
+    rows = payload.get("data") if isinstance(payload, dict) else []
+    raw_ids = [
+        str(row.get("id", "")).strip()
+        for row in (rows if isinstance(rows, list) else [])
+        if isinstance(row, dict)
+    ]
+    return _openai_models_from_ids(raw_ids)
+
+
+def save_openai_api_key(key: str) -> dict[str, Any]:
+    value = str(key).strip()
+    discovered = validate_openai_api_key(value)
     OPENAI_HOME.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = OPENAI_API_KEY_FILE.with_suffix(".tmp")
     temporary.write_text(json.dumps(_encode_key(value), ensure_ascii=False), encoding="utf-8")
@@ -232,9 +324,16 @@ def save_openai_api_key(key: str) -> dict[str, Any]:
     except OSError:
         pass
     temporary.replace(OPENAI_API_KEY_FILE)
+    with _OPENAI_MODELS_LOCK:
+        _OPENAI_API_MODELS_CACHE.update(checked_at=time.monotonic(), models=discovered, error="")
     with _LOCK:
         _STATUS_CACHE.clear()
-    return {"ok": True, "provider": "openai_codex_oauth", "auth_method": "OpenAI API Key"}
+    return {
+        "ok": True,
+        "provider": "openai_api",
+        "auth_method": "OpenAI API Key",
+        "models": len(discovered),
+    }
 
 
 def get_openai_api_key() -> str:
@@ -249,53 +348,51 @@ def get_openai_api_key() -> str:
     return ""
 
 
-def logout_openai() -> dict[str, Any]:
-    try:
-        OPENAI_API_KEY_FILE.unlink(missing_ok=True)
-    except OSError:
-        pass
-    node, cli = _paths()
-    if node and Path(cli).is_file():
+def logout_openai(scope: str = "all") -> dict[str, Any]:
+    clean_scope = str(scope or "all").strip().lower()
+    if clean_scope in {"all", "api", "api_key", "openai_api"}:
         try:
-            subprocess.run(
-                [node, cli, "logout"],
-                cwd=str(ROOT),
-                env=_environment(),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=15,
-                check=False,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
-            )
-        except (OSError, subprocess.TimeoutExpired):
+            OPENAI_API_KEY_FILE.unlink(missing_ok=True)
+        except OSError:
             pass
-    with _LOCK:
-        _LOGIN.clear()
-        _LOGIN.update(status="idle", started_at=0.0, url="", code="", error="")
-        _STATUS_CACHE.clear()
-        _STATUS_CACHE.update(checked_at=0.0, authenticated=False, error="")
-    return {"ok": True, "provider": "openai_codex_oauth", "status": "logged_out"}
+        with _OPENAI_MODELS_LOCK:
+            _OPENAI_API_MODELS_CACHE.update(checked_at=0.0, models=[], error="")
+    if clean_scope in {"all", "oauth", "codex", "openai_codex_oauth"}:
+        node, cli = _paths()
+        if node and Path(cli).is_file():
+            try:
+                subprocess.run(
+                    [node, cli, "logout"],
+                    cwd=str(ROOT),
+                    env=_environment(),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=15,
+                    check=False,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        with _LOCK:
+            _LOGIN.clear()
+            _LOGIN.update(status="idle", started_at=0.0, url="", code="", error="")
+            _STATUS_CACHE.clear()
+            _STATUS_CACHE.update(checked_at=0.0, has_oauth=False, oauth_error="")
+    return {"ok": True, "provider": "openai_codex_oauth", "status": "logged_out", "scope": clean_scope}
 
 
-def openai_auth_status(*, force: bool = False) -> dict[str, Any]:
-    api_key = get_openai_api_key()
-    if api_key:
-        return {
-            "authenticated": True,
-            "auth_method": "OpenAI API Key",
-            "error": "",
-        }
+def _codex_oauth_status(*, force: bool = False) -> tuple[bool, str]:
     now = time.monotonic()
     with _LOCK:
-        if not force and now - float(_STATUS_CACHE.get("checked_at", 0.0)) < STATUS_CACHE_SECONDS:
-            return dict(_STATUS_CACHE)
+        if not force and _STATUS_CACHE and (now - float(_STATUS_CACHE.get("checked_at", 0.0)) < STATUS_CACHE_SECONDS):
+            return bool(_STATUS_CACHE.get("has_oauth", False)), str(_STATUS_CACHE.get("oauth_error", ""))
     node, cli = _paths()
-    authenticated = False
-    error = ""
+    has_oauth = False
+    oauth_error = ""
     if not node or not Path(cli).is_file():
-        error = "No se encuentra Codex para OpenAI OAuth ni clave API."
+        oauth_error = "No se encuentra Codex para OpenAI OAuth ni clave API."
     else:
         try:
             completed = subprocess.run(
@@ -311,78 +408,183 @@ def openai_auth_status(*, force: bool = False) -> dict[str, Any]:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
             )
             output = f"{completed.stdout}\n{completed.stderr}".lower()
-            authenticated = completed.returncode == 0 and "not logged" not in output and "no estás conectado" not in output
-            if not authenticated:
-                error = "MyKOS no tiene una sesión OpenAI OAuth activa ni clave API."
+            has_oauth = completed.returncode == 0 and "not logged" not in output and "no estás conectado" not in output
+            if not has_oauth:
+                oauth_error = "MyKOS no tiene una sesión OpenAI OAuth activa ni clave API."
         except Exception as exc:
-            error = f"No se pudo comprobar OpenAI OAuth: {exc}"
-    result = {"authenticated": authenticated, "auth_method": "OpenAI Codex OAuth" if authenticated else "", "error": error}
+            oauth_error = f"No se pudo comprobar OpenAI OAuth: {exc}"
     with _LOCK:
         _STATUS_CACHE.clear()
-        _STATUS_CACHE.update(checked_at=now, **result)
-    return dict(result)
+        _STATUS_CACHE.update(checked_at=now, has_oauth=has_oauth, oauth_error=oauth_error)
+    return has_oauth, oauth_error
+
+
+def openai_auth_status(*, force: bool = False) -> dict[str, Any]:
+    has_api_key = bool(get_openai_api_key())
+    has_oauth, oauth_error = _codex_oauth_status(force=force)
+    authenticated = has_oauth or has_api_key
+    if has_oauth and has_api_key:
+        auth_mode = "both"
+        auth_method = "OpenAI Codex OAuth + API Key"
+    elif has_oauth:
+        auth_mode = "oauth"
+        auth_method = "OpenAI Codex OAuth"
+    elif has_api_key:
+        auth_mode = "api_key"
+        auth_method = "OpenAI API Key"
+    else:
+        auth_mode = "none"
+        auth_method = ""
+    return {
+        "authenticated": authenticated,
+        "has_oauth": has_oauth,
+        "has_api_key": has_api_key,
+        "auth_mode": auth_mode,
+        "auth_method": auth_method,
+        "error": "" if authenticated else oauth_error,
+    }
+
+
+def openai_api_auth_status() -> dict[str, Any]:
+    has_key = bool(get_openai_api_key())
+    return {
+        "authenticated": has_key,
+        "has_api_key": has_key,
+        "auth_method": "OpenAI API Key" if has_key else "",
+        "error": "" if has_key else "No hay clave API de OpenAI guardada en MyKOS.",
+    }
+
+
+def _openai_api_models(*, force: bool = False) -> list[dict[str, str]]:
+    api_key = get_openai_api_key()
+    if not api_key:
+        return []
+    now = time.monotonic()
+    with _OPENAI_MODELS_LOCK:
+        cached = list(_OPENAI_API_MODELS_CACHE.get("models") or [])
+        checked_at = float(_OPENAI_API_MODELS_CACHE.get("checked_at", 0.0))
+        if not force and cached and (now - checked_at < OPENAI_MODELS_CACHE_TTL):
+            return cached
+    try:
+        discovered = validate_openai_api_key(api_key)
+    except RuntimeError as exc:
+        with _OPENAI_MODELS_LOCK:
+            _OPENAI_API_MODELS_CACHE["error"] = str(exc)
+            cached = list(_OPENAI_API_MODELS_CACHE.get("models") or [])
+        return cached if cached else list(OPENAI_API_FALLBACK_MODELS)
+    with _OPENAI_MODELS_LOCK:
+        _OPENAI_API_MODELS_CACHE.update(checked_at=now, models=discovered, error="")
+    return list(discovered)
+
+
+def refresh_openai_models(*, force: bool = True) -> dict[str, Any]:
+    auth = openai_auth_status(force=force)
+    if auth.get("has_api_key"):
+        _openai_api_models(force=force)
+    summaries = openai_model_summaries()
+    return {
+        "ok": True,
+        "provider": "openai_codex_oauth",
+        **auth,
+        "models": len(summaries),
+    }
+
+
+def _openai_reasoning_slug(slug: str) -> bool:
+    clean = str(slug or "").strip().casefold()
+    return clean.startswith(("o1", "o3", "o4", "gpt-5"))
 
 
 def openai_model_summaries() -> list[dict[str, Any]]:
     auth = openai_auth_status()
-    is_api_key = auth.get("auth_method") == "OpenAI API Key"
-    model_rows: list[dict[str, Any]] = []
-    if is_api_key:
-        model_rows = [
-            {"slug": "gpt-4o", "display_name": "GPT-4o (Omni)"},
-            {"slug": "gpt-4o-mini", "display_name": "GPT-4o Mini"},
-            {"slug": "o1", "display_name": "OpenAI o1 (Razonamiento)"},
-            {"slug": "o3-mini", "display_name": "OpenAI o3-mini"},
-            {"slug": "gpt-4-turbo", "display_name": "GPT-4 Turbo"},
-        ]
-    else:
+    has_oauth = bool(auth.get("has_oauth"))
+    has_api_key = bool(auth.get("has_api_key"))
+    result: list[dict[str, Any]] = []
+
+    if has_oauth or not has_api_key:
         cache_file = OPENAI_HOME / "models_cache.json"
         try:
             cached = json.loads(cache_file.read_text(encoding="utf-8"))
-            model_rows = cached.get("models", []) if isinstance(cached, dict) else []
+            codex_rows = cached.get("models", []) if isinstance(cached, dict) else []
         except (OSError, json.JSONDecodeError):
-            model_rows = []
-        if not model_rows:
-            model_rows = [
+            codex_rows = []
+        if not codex_rows:
+            codex_rows = [
                 {"slug": "gpt-5.6-luna", "display_name": "GPT-5.6-Luna"},
                 {"slug": "gpt-5.6-sol", "display_name": "GPT-5.6-Sol"},
                 {"slug": "gpt-5.6-terra", "display_name": "GPT-5.6-Terra"},
                 {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
             ]
-    result: list[dict[str, Any]] = []
-    for row in model_rows:
-        if not isinstance(row, dict):
-            continue
-        slug = str(row.get("slug", "")).strip()
-        if not slug or slug == "codex-auto-review":
-            continue
-        result.append({
-            "name": f"openai-codex-oauth/{slug}",
-            "label": str(row.get("display_name") or slug),
-            "provider": "openai_codex_oauth",
-            "provider_label": "OpenAI · API Key" if is_api_key else "OpenAI Codex · OAuth propio de MyKOS",
-            "size": 0, "parameter_size": "", "family": "OpenAI",
-            "quantization": "", "modified_at": "",
-            "capabilities": ["chat", "completion", "thinking"],
-            "chat_capable": bool(auth.get("authenticated")),
-            "vision_capable": is_api_key and "4o" in slug,
-            "thinking_capable": True,
-            "tools_capable": True,
-            "context_length": 128_000 if is_api_key else 258_400,
-            "remote": True,
-            "remote_host": "OpenAI API oficial" if is_api_key else "OpenAI mediante Codex OAuth",
-            "benchmark_capable": False,
-            "auth_method": str(auth.get("auth_method") or "OpenAI Codex OAuth"),
-            "auth_status": "autenticado" if auth.get("authenticated") else "no autenticado",
-            "auth_error": str(auth.get("error", "")),
-        })
-    priority = {"gpt-4o": 0, "gpt-4o-mini": 1, "o1": 2, "o3-mini": 3, "gpt-5.6-luna": 0, "gpt-5.6-sol": 1, "gpt-5.5": 2, "gpt-5.6-terra": 3}
-    result.sort(key=lambda item: (priority.get(item["name"].rsplit("/", 1)[-1], 20), item["label"]))
+        for row in codex_rows:
+            if not isinstance(row, dict):
+                continue
+            slug = str(row.get("slug", "")).strip()
+            if not slug or slug == "codex-auto-review":
+                continue
+            result.append({
+                "name": f"openai-codex-oauth/{slug}",
+                "label": str(row.get("display_name") or slug),
+                "provider": "openai_codex_oauth",
+                "provider_label": "OpenAI Codex · OAuth propio de MyKOS",
+                "size": 0, "parameter_size": "", "family": "OpenAI",
+                "quantization": "", "modified_at": "",
+                "capabilities": ["chat", "completion", "thinking"],
+                "chat_capable": has_oauth,
+                "vision_capable": False,
+                "thinking_capable": True,
+                "tools_capable": True,
+                "context_length": 258_400,
+                "remote": True,
+                "remote_host": "OpenAI mediante Codex OAuth",
+                "benchmark_capable": False,
+                "auth_method": "OpenAI Codex OAuth",
+                "auth_status": "autenticado" if has_oauth else "no autenticado",
+                "auth_error": "" if has_oauth else str(auth.get("error", "")),
+            })
+
+    if has_api_key:
+        api_rows = _openai_api_models()
+        for row in api_rows:
+            slug = str(row.get("slug", "")).strip()
+            if not slug:
+                continue
+            is_reasoning = _openai_reasoning_slug(slug)
+            result.append({
+                "name": f"openai/{slug}",
+                "label": str(row.get("display_name") or slug),
+                "provider": "openai_api",
+                "provider_label": "OpenAI · API Key",
+                "size": 0, "parameter_size": "", "family": "OpenAI",
+                "quantization": "", "modified_at": "",
+                "capabilities": ["chat", "completion", "thinking"] if is_reasoning else ["chat", "completion"],
+                "chat_capable": True,
+                "vision_capable": any(tag in slug for tag in ("4o", "4.1", "4.5", "5")),
+                "thinking_capable": is_reasoning,
+                "tools_capable": True,
+                "context_length": 128_000,
+                "remote": True,
+                "remote_host": "OpenAI API oficial",
+                "benchmark_capable": False,
+                "auth_method": "OpenAI API Key",
+                "auth_status": "autenticado",
+                "auth_error": "",
+            })
+
+    priority = {
+        "gpt-5.6-luna": 0, "gpt-5.6-sol": 1, "gpt-5.5": 2, "gpt-5.6-terra": 3,
+        "gpt-4o": 10, "gpt-4o-mini": 11, "gpt-4.1": 12, "o4-mini": 13, "o3-mini": 14, "o1": 15,
+    }
+    result.sort(key=lambda item: (
+        0 if item["provider"] == "openai_codex_oauth" else 1,
+        priority.get(item["name"].rsplit("/", 1)[-1], 30),
+        item["label"],
+    ))
     return result
 
 
 def openai_model_summary() -> dict[str, Any]:
-    return openai_model_summaries()[0]
+    rows = openai_model_summaries()
+    return rows[0] if rows else {}
 
 
 def _openrouter_key() -> str:
@@ -459,8 +661,6 @@ def openrouter_auth_status() -> dict[str, Any]:
 def start_openrouter_oauth(callback_url: str) -> dict[str, Any]:
     if not str(callback_url).strip():
         raise RuntimeError("MyKOS no tiene una URL de callback para OpenRouter.")
-    if _openrouter_key():
-        return {"ok": True, **_openrouter_public_login_state(), "status": "completed", "authenticated": True}
     verifier = secrets.token_urlsafe(64)
     oauth_state = secrets.token_urlsafe(32)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
@@ -547,16 +747,16 @@ def logout_openrouter_oauth() -> dict[str, Any]:
     return {"ok": True, "provider": "openrouter", "status": "logged_out"}
 
 
-def openrouter_api_json(path: str, *, method: str = "GET", payload: dict[str, Any] | None = None, timeout: int = 30) -> dict[str, Any]:
-    key = _openrouter_key()
-    if not key:
+def openrouter_api_json(path: str, *, method: str = "GET", payload: dict[str, Any] | None = None, timeout: int = 30, key: str = "") -> dict[str, Any]:
+    token = str(key).strip() or _openrouter_key()
+    if not token:
         raise RuntimeError("MyKOS todavía no tiene una sesión OpenRouter OAuth.")
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     request = urllib.request.Request(
         f"https://openrouter.ai/api/v1/{path.lstrip('/')}",
         data=body,
         headers={
-            "Authorization": f"Bearer {key}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "Accept": "application/json",
             "X-Title": "MyKOS",
@@ -576,16 +776,20 @@ def openrouter_api_json(path: str, *, method: str = "GET", payload: dict[str, An
     return result
 
 
-def openrouter_models() -> list[dict[str, Any]]:
-    result = openrouter_api_json("models")
+def openrouter_models(key: str = "") -> list[dict[str, Any]]:
+    result = openrouter_api_json("models", key=key)
     rows = result.get("data") if isinstance(result.get("data"), list) else []
-    return [row for row in rows if isinstance(row, dict) and str(row.get("id", "")).strip()]
+    models = [row for row in rows if isinstance(row, dict) and str(row.get("id", "")).strip()]
+    if not models:
+        raise RuntimeError("OpenRouter aceptó la conexión, pero no devolvió modelos disponibles.")
+    return models
 
 
 def oauth_status() -> dict[str, Any]:
     return {
         "providers": [
             {"id": "openai_codex_oauth", "label": "OpenAI · OAuth", **openai_auth_status()},
+            {"id": "openai_api", "label": "OpenAI · API", **openai_api_auth_status()},
             {"id": "openai_codex_oauth_login", **_public_login_state()},
             {"id": "openrouter_oauth", "label": "OpenRouter · OAuth", **openrouter_auth_status()},
             {"id": "openrouter_oauth_login", **_openrouter_public_login_state()},
@@ -666,8 +870,8 @@ def run_openai_codex(
     timeout: int = 15 * 60,
 ) -> dict[str, Any]:
     auth = openai_auth_status(force=True)
-    if not auth.get("authenticated"):
-        raise RuntimeError(str(auth.get("error") or "MyKOS no tiene una sesión OpenAI OAuth activa."))
+    if not auth.get("has_oauth"):
+        raise RuntimeError(str(auth.get("error") or "MyKOS no tiene una sesión OpenAI Codex OAuth activa."))
     node, cli = _paths()
     if not node or not Path(cli).is_file():
         raise RuntimeError("No se encuentra el ejecutable aislado de Codex.")

@@ -26,8 +26,14 @@ LLAMA_CPP_TIMEOUT_SECONDS = int(os.environ.get("MYKOS_LLAMA_CPP_TIMEOUT", "600")
 LLAMA_CPP_START_TIMEOUT = int(os.environ.get("MYKOS_LLAMA_CPP_START_TIMEOUT", "60"))
 
 # Rutas estándar del binario llama.cpp 0.9 y modelos
-DEFAULT_BIN = Path.home() / ".local" / "llama-quick" / "llama-b12211" / "llama-server"
-LLAMA_CPP_EXE = os.environ.get("MYKOS_LLAMA_CPP_EXE", str(DEFAULT_BIN if DEFAULT_BIN.is_file() else Path.home() / "llama.cpp" / "build" / "bin" / "llama-server")).strip()
+DEFAULT_BIN_CANDIDATES = [
+    Path.home() / ".local" / "llama-quick" / "llama-b12211" / "llama-server",
+    Path.home() / ".local" / "bin" / "llama-server",
+    Path.home() / ".local" / "bin" / "llama",
+    Path.home() / "llama.cpp" / "build" / "bin" / "llama-server",
+]
+DEFAULT_BIN = next((p for p in DEFAULT_BIN_CANDIDATES if p.is_file()), DEFAULT_BIN_CANDIDATES[-1])
+LLAMA_CPP_EXE = os.environ.get("MYKOS_LLAMA_CPP_EXE", str(DEFAULT_BIN)).strip()
 
 MODELS_DIR = Path(os.environ.get("MYKOS_MODELS_DIR", str(Path.home() / "models")))
 MODELS_INI = MODELS_DIR / "models.ini"
@@ -79,32 +85,67 @@ def llamacpp_request(path: str, payload: dict[str, Any] | None = None, timeout: 
         raise RuntimeError(f"llama.cpp no responde en {LLAMA_CPP_URL}: {err}") from err
 
 
+def _is_failed_server_model(item: dict[str, Any]) -> bool:
+    st = item.get("status") if isinstance(item.get("status"), dict) else {}
+    return bool(st.get("failed")) or str(st.get("value") or "").strip().lower() == "failed"
+
+
+def _match_server_model_id(models_list: list[dict[str, Any]], target_key: str) -> str:
+    """Devuelve el ID exacto de un modelo válido en /v1/models que coincida con target_key."""
+    req = target_key.strip().lower()
+    if not req:
+        return ""
+    valid = [m for m in models_list if isinstance(m, dict) and m.get("id") and not _is_failed_server_model(m)]
+    # Priorizar modelos ya cargados antes que en reposo
+    ordered = sorted(
+        valid,
+        key=lambda m: 0 if (isinstance(m.get("status"), dict) and m["status"].get("value") == "loaded") else 1,
+    )
+    for m in ordered:
+        mid = str(m["id"]).strip()
+        if mid.lower() == req:
+            return mid
+    for m in ordered:
+        mid = str(m["id"]).strip()
+        low = mid.lower()
+        if low.endswith(f"/{req}") or req.endswith(f"/{low}") or low.split(":", 1)[0] == req.split(":", 1)[0]:
+            return mid
+    return ""
+
+
 def llamacpp_status() -> dict[str, Any]:
     """Comprueba si llama-server está en línea y qué modelo tiene cargado."""
     try:
         health = llamacpp_request("/health", timeout=1)
-        if health.get("status") in {"ok", "loading model"}:
+        health_status = str(health.get("status") or "").strip()
+        if health_status in {"ok", "loading model"}:
             loaded = ""
+            data_list: list[dict[str, Any]] = []
             try:
                 models_data = llamacpp_request("/v1/models", timeout=2)
-                data_list = models_data.get("data", [])
-                for m in data_list:
-                    if isinstance(m, dict) and m.get("status", {}).get("value") == "loaded":
-                        loaded = m.get("id", "")
-                        break
-                if not loaded and data_list:
+                raw_list = models_data.get("data", [])
+                if isinstance(raw_list, list):
+                    data_list = [m for m in raw_list if isinstance(m, dict)]
                     for m in data_list:
-                        if isinstance(m, dict) and not m.get("status", {}).get("failed"):
-                            loaded = m.get("id", "")
+                        st = m.get("status") if isinstance(m.get("status"), dict) else {}
+                        if st.get("value") == "loaded" and not _is_failed_server_model(m):
+                            loaded = str(m.get("id") or "")
                             break
-                if not loaded and data_list and isinstance(data_list[0], dict):
-                    loaded = data_list[0].get("id", "")
+                    if not loaded and len(data_list) == 1 and not _is_failed_server_model(data_list[0]):
+                        st = data_list[0].get("status") if isinstance(data_list[0].get("status"), dict) else {}
+                        if not st or st.get("value") != "unloaded":
+                            loaded = str(data_list[0].get("id") or "")
             except Exception:
                 pass
-            return {"online": True, "loaded_model": loaded or _CURRENT_MODEL_KEY, "status": health.get("status")}
+            return {
+                "online": True,
+                "loaded_model": loaded or _CURRENT_MODEL_KEY,
+                "status": health_status,
+                "models": data_list,
+            }
     except Exception:
         pass
-    return {"online": False, "loaded_model": "", "status": "offline"}
+    return {"online": False, "loaded_model": "", "status": "offline", "models": []}
 
 
 def get_available_gguf_models() -> dict[str, dict[str, Any]]:
@@ -121,6 +162,8 @@ def get_available_gguf_models() -> dict[str, dict[str, Any]]:
 
     if HF_HUB_DIR.is_dir():
         for item in sorted(HF_HUB_DIR.glob("models--*/**/snapshots/*/*.gguf")):
+            if item.name.lower().startswith(("mmproj-", "dflash-")):
+                continue
             try:
                 if item.stat().st_size > 200_000_000:
                     candidates.append(item)
@@ -183,60 +226,144 @@ def get_available_gguf_models() -> dict[str, dict[str, Any]]:
     return models
 
 
-def llamacpp_model_catalog() -> list[dict[str, Any]]:
-    """Devuelve los modelos de llama.cpp para el catálogo /api/models de MyKOS.
-    Solo muestra modelos si el servidor llama.cpp está ONLINE y activo.
-    Si llama.cpp está apagado, no se muestra ningún modelo fantasma en el selector.
-    """
-    status = llamacpp_status()
-    online = status.get("online", False)
-    if not online:
-        return []
+def _extract_args_ctx_and_model(args: Any) -> tuple[int, str]:
+    """Extrae --ctx-size / -c y --model desde los argumentos de estado de llama-server."""
+    if not isinstance(args, list):
+        return 0, ""
+    ctx = 0
+    model_path = ""
+    for i, token in enumerate(args):
+        if i + 1 >= len(args):
+            continue
+        if token in {"--ctx-size", "-c"}:
+            try:
+                ctx = int(args[i + 1])
+            except (TypeError, ValueError):
+                pass
+        elif token in {"--model", "-m"}:
+            model_path = str(args[i + 1] or "")
+    return ctx, model_path
 
-    loaded = status.get("loaded_model", "")
-    available = get_available_gguf_models()
-    catalog = []
 
-    # Si hay un modelo cargado y coincide con un modelo registrado en ~/models o HF
-    matched = False
-    clean_loaded = loaded.lower().replace("-gguf", "").replace(":q4_k", "").replace(":q8_0", "").replace("_", "-")
+def _format_param_count(n_params: Any) -> str:
+    try:
+        val = int(n_params)
+    except (TypeError, ValueError):
+        return ""
+    if val >= 1_000_000_000:
+        billions = val / 1_000_000_000
+        return f"{billions:.0f}B" if abs(billions - round(billions)) < 0.1 else f"{billions:.1f}B"
+    if val >= 1_000_000:
+        return f"{val / 1_000_000:.0f}M"
+    return ""
+
+
+def _infer_quant_from_id(model_id: str, meta: dict[str, Any]) -> str:
+    ftype = str(meta.get("ftype") or "").strip()
+    if ftype:
+        return ftype
+    if ":" in model_id:
+        return model_id.rsplit(":", 1)[1].strip()
+    return "GGUF"
+
+
+def _match_available_gguf(model_id: str, model_path: str, available: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    if model_path:
+        for info in available.values():
+            try:
+                if Path(model_path).resolve() == Path(info["path"]).resolve():
+                    return info
+            except Exception:
+                if model_path == info["path"]:
+                    return info
+    clean = model_id.lower().split(":", 1)[0].replace("-gguf", "").replace("_", "-")
     for key, info in available.items():
         clean_key = key.lower().replace("-gguf", "").replace("_", "-")
-        if (loaded == key or loaded.endswith(f"/{key}") or loaded == info["path"]
-            or clean_key in clean_loaded or clean_loaded.endswith(f"/{clean_key}")):
-            matched = True
-            catalog.append({
-                "name": f"llama_cpp/{loaded}",
-                "label": f"llama.cpp 0.9 · {key}",
-                "provider": "llama_cpp",
-                "provider_label": "llama.cpp 0.9 · CUDA",
-                "size": info["size"],
-                "parameter_size": info["parameter_size"],
-                "family": info["family"],
-                "quantization": "GGUF",
-                "modified_at": "",
-                "capabilities": ["chat", "completion", "thinking", "tools"],
-                "chat_capable": True,
-                "vision_capable": False,
-                "thinking_capable": True,
-                "tools_capable": True,
-                "context_length": info["ctx_size"],
-                "remote": False,
-                "remote_host": "",
-                "benchmark_capable": True,
-                "engine": "llama.cpp 0.9 (En línea)",
-                "status": "online",
-            })
-            break
+        if (
+            model_id == key
+            or model_id.endswith(f"/{key}")
+            or clean == clean_key
+            or clean.endswith(f"/{clean_key}")
+        ):
+            return info
+    return None
 
-    # Si el servidor llama.cpp está online con un modelo genérico o alias directo
-    if not matched:
-        model_name = loaded or "llama-model"
+
+def llamacpp_model_catalog() -> list[dict[str, Any]]:
+    """Devuelve todos los modelos válidos de llama.cpp para el catálogo /api/models de MyKOS.
+    Solo muestra modelos si el servidor llama.cpp está ONLINE y activo.
+    Excluye modelos en estado failed.
+    """
+    status = llamacpp_status()
+    if not status.get("online"):
+        return []
+
+    data_list = [m for m in (status.get("models") or []) if isinstance(m, dict)]
+    available = get_available_gguf_models()
+    catalog: list[dict[str, Any]] = []
+
+    for m in data_list:
+        model_id = str(m.get("id") or "").strip()
+        if not model_id or _is_failed_server_model(m):
+            continue
+
+        st = m.get("status") if isinstance(m.get("status"), dict) else {}
+        st_val = str(st.get("value") or "").strip().lower()
+        is_loaded = (st_val == "loaded") if st_val else True
+
+        meta = m.get("meta") if isinstance(m.get("meta"), dict) else {}
+        args_ctx, args_model_path = _extract_args_ctx_and_model(st.get("args"))
+        matched_info = _match_available_gguf(model_id, args_model_path, available)
+
+        size_bytes = int(meta.get("size") or (matched_info or {}).get("size") or 0)
+        param_size = (
+            _format_param_count(meta.get("n_params"))
+            or str((matched_info or {}).get("parameter_size") or "")
+            or ("Activo" if is_loaded else "GGUF")
+        )
+        family = str((matched_info or {}).get("family") or m.get("owned_by") or "llama.cpp GGUF")
+        ctx_size = int(
+            meta.get("n_ctx")
+            or args_ctx
+            or (matched_info or {}).get("ctx_size")
+            or m.get("context_length")
+            or 32768
+        )
+        arch = m.get("architecture") if isinstance(m.get("architecture"), dict) else {}
+        input_mods = [str(x).lower() for x in (arch.get("input_modalities") or [])]
+        vision_capable = "image" in input_mods
+
+        caps = ["chat", "completion", "thinking", "tools"] + (["vision"] if vision_capable else [])
+        catalog.append({
+            "name": f"llama_cpp/{model_id}",
+            "label": f"llama.cpp · {model_id}",
+            "provider": "llama_cpp",
+            "provider_label": "llama.cpp · CUDA",
+            "size": size_bytes,
+            "parameter_size": param_size,
+            "family": family,
+            "quantization": _infer_quant_from_id(model_id, meta),
+            "modified_at": "",
+            "capabilities": caps,
+            "chat_capable": True,
+            "vision_capable": vision_capable,
+            "thinking_capable": True,
+            "tools_capable": True,
+            "context_length": ctx_size,
+            "remote": False,
+            "remote_host": "",
+            "benchmark_capable": True,
+            "engine": "llama.cpp 0.9 (Cargado)" if is_loaded else "llama.cpp 0.9 (En reposo)",
+            "status": "online" if is_loaded else "standby",
+        })
+
+    if not catalog and not data_list:
+        model_name = str(status.get("loaded_model") or "").strip() or "llama-model"
         catalog.append({
             "name": f"llama_cpp/{model_name}",
-            "label": f"llama.cpp 0.9 · {model_name}",
+            "label": f"llama.cpp · {model_name}",
             "provider": "llama_cpp",
-            "provider_label": "llama.cpp 0.9 · CUDA",
+            "provider_label": "llama.cpp · CUDA",
             "size": 0,
             "parameter_size": "Activo",
             "family": "llama.cpp GGUF",
@@ -304,39 +431,67 @@ def stop_llamacpp_server() -> None:
             pass
 
 
-def ensure_llamacpp_model(model_name: str) -> None:
-    """Asegura que el modelo solicitado esté cargado en llama-server."""
+def _resolve_online_llama_model(status: dict[str, Any], clean_key: str) -> str:
+    """Resuelve clean_key contra el servidor llama.cpp activo si ya sirve el modelo o es el alias genérico."""
+    if not status.get("online"):
+        return ""
+    models_list = [m for m in (status.get("models") or []) if isinstance(m, dict)]
+    if clean_key in {"", "mykos-cuda"}:
+        if status.get("loaded_model"):
+            return str(status["loaded_model"])
+        first_valid = next((str(m.get("id") or "") for m in models_list if m.get("id") and not _is_failed_server_model(m)), "")
+        return first_valid or "mykos-cuda"
+    matched_id = _match_server_model_id(models_list, clean_key)
+    if matched_id:
+        return matched_id
+    if not models_list and _CURRENT_MODEL_KEY == clean_key:
+        return clean_key
+    return ""
+
+
+def ensure_llamacpp_model(model_name: str) -> str:
+    """Asegura que el modelo solicitado esté cargado en llama-server y devuelve su ID efectivo."""
     global _SERVER_PROCESS, _CURRENT_MODEL_KEY
 
-    clean_key = model_name
+    clean_key = str(model_name or "").strip()
     if clean_key.startswith("llama_cpp/"):
         clean_key = clean_key[len("llama_cpp/"):]
     if clean_key.startswith("llamacpp/"):
         clean_key = clean_key[len("llamacpp/"):]
-    if clean_key == "mykos-cuda":
-        clean_key = "qwen2.5-7b"
 
     status = llamacpp_status()
-    if status["online"]:
-        if status.get("loaded_model") == clean_key or _CURRENT_MODEL_KEY == clean_key:
-            return
+    resolved_online = _resolve_online_llama_model(status, clean_key)
+    if resolved_online:
+        return resolved_online
 
     with _SERVER_LOCK:
         # Volver a verificar con cerrojo adquirido
         status = llamacpp_status()
-        if status["online"] and (status.get("loaded_model") == clean_key or _CURRENT_MODEL_KEY == clean_key):
-            return
+        resolved_online = _resolve_online_llama_model(status, clean_key)
+        if resolved_online:
+            return resolved_online
 
         available = get_available_gguf_models()
-        if clean_key not in available:
-            # Buscar por coincidencia insensible a mayúsculas o nombre base
-            matched = next((k for k in available if k.lower() == clean_key.lower()), "")
+        if clean_key in {"", "mykos-cuda"}:
+            if not available:
+                raise RuntimeError(f"No se encuentra ningún modelo GGUF para llama.cpp en {MODELS_DIR}")
+            clean_key = next(iter(available))
+        elif clean_key not in available:
+            lower_target = clean_key.lower()
+            norm_target = lower_target.split(":", 1)[0].replace("-gguf", "").replace("_", "-")
+            matched = next(
+                (
+                    k for k in available
+                    if k.lower() == lower_target
+                    or k.lower().replace("-gguf", "").replace("_", "-") == norm_target
+                    or norm_target.endswith(f"/{k.lower().replace('-gguf', '').replace('_', '-')}")
+                ),
+                "",
+            )
             if matched:
                 clean_key = matched
-            elif available:
-                clean_key = next(iter(available))
             else:
-                raise RuntimeError(f"No se encuentra ningún modelo GGUF para llama.cpp en {MODELS_DIR}")
+                raise RuntimeError(f"Modelo GGUF '{clean_key}' no disponible en {MODELS_DIR} ni en la caché de Hugging Face.")
 
         info = available[clean_key]
         model_path = info["path"]
@@ -411,7 +566,7 @@ def ensure_llamacpp_model(model_name: str) -> None:
                 h = llamacpp_request("/health", timeout=1)
                 if h.get("status") == "ok":
                     logger.info(f"llama-server listo con modelo {clean_key}")
-                    return
+                    return clean_key
             except Exception:
                 pass
             time.sleep(0.5)
@@ -423,24 +578,25 @@ def llamacpp_chat_request(
     messages: list[dict[str, Any]],
     generation: dict[str, Any],
     tool_schemas: list[dict[str, Any]] | None = None,
-    model_name: str = "qwen2.5-7b",
+    model_name: str = "mykos-cuda",
     gateway_requester: Any = None,
 ) -> dict[str, Any]:
     """Envía la petición de chat a llama.cpp 0.9 y extrae el texto, herramientas y telemetría."""
     options = generation.get("options") if isinstance(generation, dict) else {}
     options = options if isinstance(options, dict) else {}
 
-    clean_model = model_name
+    clean_model = str(model_name or "").strip()
     if clean_model.startswith("llama_cpp/"):
         clean_model = clean_model[len("llama_cpp/"):]
     if clean_model.startswith("llamacpp/"):
         clean_model = clean_model[len("llamacpp/"):]
 
-    # Asegurar que el modelo está en marcha
-    ensure_llamacpp_model(clean_model)
+    # Asegurar que el modelo está en marcha y usar su ID efectivo en la petición
+    resolved_model = ensure_llamacpp_model(clean_model)
+    raw_temp = options.get("temperature")
 
     payload: dict[str, Any] = {
-        "model": clean_model,
+        "model": resolved_model,
         "messages": [
             {
                 key: value
@@ -451,7 +607,7 @@ def llamacpp_chat_request(
         ],
         "stream": False,
         "max_tokens": int(options.get("num_predict", 2048) or 2048),
-        "temperature": float(options.get("temperature", 0.5) or 0.5),
+        "temperature": float(raw_temp) if raw_temp is not None else 0.5,
     }
 
     effort = str(generation.get("effort", "")).strip().casefold()

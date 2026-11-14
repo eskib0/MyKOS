@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -68,21 +70,217 @@ def qwen_executable_path() -> str:
     return ""
 
 
+_QWEN_CREDENTIAL_FILES = ("subscription_credentials.json", "oauth_creds.json")
+_CLOUD_MODEL_IDS = {
+    "qwen-turbo",
+    "qwen-plus",
+    "qwen-max",
+    "qwen3-coder-plus",
+    "qwen3-coder-flash",
+    "qwen3.8-max",
+    "qwen3.8-flash",
+}
+_LOCAL_ENV_OVERRIDE_KEYS = ("OPENAI_BASE_URL", "OLLAMA_HOST", "OLLAMA_API_KEY")
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+
+def _scrub_local_endpoints(safe_data: dict[str, Any], *, has_cloud_creds: bool) -> None:
+    """Elimina configuraciones locales heredadas (ej. 127.0.0.1:11434) del perfil aislado."""
+    model_cfg = safe_data.get("model")
+    if isinstance(model_cfg, dict):
+        model_base = str(model_cfg.get("baseUrl") or "").strip()
+        if model_base and _is_local_endpoint(model_base):
+            model_cfg.pop("baseUrl", None)
+        active_name = str(model_cfg.get("name") or "").strip()
+        if has_cloud_creds and active_name and _is_known_ollama_model(active_name):
+            model_cfg.pop("name", None)
+        if not model_cfg:
+            safe_data.pop("model", None)
+
+    sec_cfg = safe_data.get("security")
+    if isinstance(sec_cfg, dict):
+        auth_cfg = sec_cfg.get("auth")
+        if isinstance(auth_cfg, dict):
+            auth_base = str(auth_cfg.get("baseUrl") or "").strip()
+            if auth_base and _is_local_endpoint(auth_base):
+                auth_cfg.pop("baseUrl", None)
+                if auth_cfg.get("selectedType") == "openai":
+                    auth_cfg.pop("selectedType", None)
+
+    providers_cfg = safe_data.get("modelProviders")
+    if isinstance(providers_cfg, dict):
+        cleaned_providers: dict[str, Any] = {}
+        for prov_key, entries in providers_cfg.items():
+            if prov_key == "ollama":
+                continue
+            if isinstance(entries, list):
+                kept = [
+                    entry
+                    for entry in entries
+                    if not (isinstance(entry, dict) and _is_local_endpoint(str(entry.get("baseUrl") or "").strip()))
+                ]
+                if kept:
+                    cleaned_providers[prov_key] = kept
+            else:
+                cleaned_providers[prov_key] = entries
+        if cleaned_providers:
+            safe_data["modelProviders"] = cleaned_providers
+        else:
+            safe_data.pop("modelProviders", None)
+
+    env_cfg = safe_data.get("env")
+    if isinstance(env_cfg, dict):
+        base_env = str(env_cfg.get("OPENAI_BASE_URL") or "").strip()
+        ollama_host = str(env_cfg.get("OLLAMA_HOST") or "").strip()
+        if not base_env or _is_local_endpoint(base_env):
+            env_cfg.pop("OPENAI_BASE_URL", None)
+        if not ollama_host or _is_local_endpoint(ollama_host):
+            env_cfg.pop("OLLAMA_HOST", None)
+            env_cfg.pop("OLLAMA_API_KEY", None)
+        if not env_cfg:
+            safe_data.pop("env", None)
+
+
+_QWEN_CORTEX_CORE_FILES = (
+    ("workspace/USER.md", "## Perfil del Usuario (USER.md)"),
+    ("00 - Centro de Mando/00 - Preferencias y Memoria.md", "## Preferencias y Memoria (Cortex)"),
+    ("00 - Centro de Mando/00 - Dashboard MyKOS.md", "## Dashboard MyKOS (Cortex)"),
+)
+_QWEN_CORTEX_SKIP_DIRS = {".cortex", ".git", ".trash", "node_modules", "workspace"}
+_QWEN_MEMORY_MAX_CHARS = 8000
+_QWEN_INDEX_MAX_NOTES = 80
+
+
+def _cortex_vault_dir() -> Path:
+    """Resuelve la ruta de la bóveda Cortex activa de forma multiplataforma."""
+    env_vault = (
+        os.environ.get("MYKOS_CORTEX_VAULT")
+        or os.environ.get("MYKOS_BRAIN_VAULT")
+        or ""
+    ).strip()
+    if env_vault:
+        return Path(env_vault).expanduser().resolve()
+    try:
+        from cortex import get_cortex
+
+        engine = get_cortex()
+        root = getattr(engine, "root", None)
+        if root:
+            return Path(root)
+    except Exception:
+        pass
+    return (Path.home() / ".mykos" / "cortex")
+
+
+def _collect_cortex_markdown_paths(cortex_dir: Path) -> list[str]:
+    if not cortex_dir.is_dir():
+        return []
+    notes: list[str] = []
+    for dp, dn, fn in os.walk(cortex_dir, followlinks=False):
+        dp_path = Path(dp)
+        dn[:] = sorted(
+            d
+            for d in dn
+            if d not in _QWEN_CORTEX_SKIP_DIRS and not d.startswith(".") and not (dp_path / d).is_symlink()
+        )
+        for fname in sorted(fn):
+            if fname.startswith(".") or not fname.lower().endswith(".md"):
+                continue
+            full = dp_path / fname
+            if full.is_symlink():
+                continue
+            try:
+                notes.append(full.relative_to(cortex_dir).as_posix())
+            except ValueError:
+                pass
+    return sorted(notes)
+
+
+def _sync_qwen_memory_md(cortex_dir: Path | None = None) -> Path:
+    """Sincroniza `SAFE_HOME/.qwen/QWEN.md` con la memoria persistente real en MyKOS Cortex."""
+    vault = (cortex_dir or _cortex_vault_dir()).expanduser()
+    workspace_dir = vault / "workspace"
+    qwen_md = SAFE_SETTINGS.parent / "QWEN.md"
+    qwen_md.parent.mkdir(parents=True, exist_ok=True)
+
+    sections: list[str] = [
+        "# Memoria Persistente de MyKOS (Cortex)",
+        (
+            "Tu memoria persistente real en MyKOS **NO** es `~/.qwen/memories/MEMORY.md`, sino **MyKOS Cortex**.\n"
+            f"- **Bóveda Cortex:** `{vault}`\n"
+            f"- **Workspace vivo:** `{workspace_dir}`\n"
+            "- Puedes leer, buscar o actualizar las notas Markdown de Cortex directamente con tus herramientas sobre esa ruta."
+        ),
+    ]
+
+    loaded_rel_paths: set[str] = set()
+    for rel_path, heading in _QWEN_CORTEX_CORE_FILES:
+        note_path = vault / Path(*rel_path.split("/"))
+        content = ""
+        try:
+            content = note_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            if rel_path == "workspace/USER.md":
+                fallback_user = Path.home() / ".mykos" / "workspace" / "USER.md"
+                try:
+                    content = fallback_user.read_text(encoding="utf-8").strip()
+                except OSError:
+                    content = ""
+        if content:
+            loaded_rel_paths.add(rel_path)
+            if len(content) > _QWEN_MEMORY_MAX_CHARS:
+                content = (
+                    content[:_QWEN_MEMORY_MAX_CHARS].rstrip()
+                    + "\n\n[... contenido truncado; lee el archivo completo en Cortex]"
+                )
+            sections.append(f"{heading} (`{rel_path}`)\n\n{content}")
+
+    all_notes = _collect_cortex_markdown_paths(vault)
+    other_notes = [p for p in all_notes if p not in loaded_rel_paths]
+    if other_notes:
+        shown = other_notes[:_QWEN_INDEX_MAX_NOTES]
+        index_lines = ["## Otras notas disponibles en Cortex", ""]
+        index_lines.extend(f"- `{rel}`" for rel in shown)
+        if len(other_notes) > _QWEN_INDEX_MAX_NOTES:
+            index_lines.append(f"- ... (+{len(other_notes) - _QWEN_INDEX_MAX_NOTES} notas más en Cortex)")
+        sections.append("\n".join(index_lines))
+
+    rendered = "\n\n---\n\n".join(sections) + "\n"
+    try:
+        if qwen_md.is_file() and qwen_md.read_text(encoding="utf-8") == rendered:
+            return qwen_md
+    except OSError:
+        pass
+
+    tmp_md = qwen_md.with_suffix(".md.tmp")
+    tmp_md.write_text(rendered, encoding="utf-8")
+    try:
+        os.chmod(tmp_md, 0o600)
+    except OSError:
+        pass
+    tmp_md.replace(qwen_md)
+    return qwen_md
+
+
 def setup_safe_environment() -> None:
     """Crea o sincroniza el perfil seguro de Qwen desactivando herramientas peligrosas y sincronizando credenciales."""
     SAFE_SETTINGS.parent.mkdir(parents=True, exist_ok=True)
     user_qwen_dir = Path.home() / ".qwen"
     user_settings_file = user_qwen_dir / "settings.json"
-    user_cred_file = user_qwen_dir / "subscription_credentials.json"
-    safe_cred_file = SAFE_SETTINGS.parent / "subscription_credentials.json"
 
-    # Sincronizar credenciales de suscripción oficial de Qwen Plus si existen
-    if user_cred_file.is_file():
-        try:
-            safe_cred_file.write_bytes(user_cred_file.read_bytes())
-            os.chmod(safe_cred_file, 0o600)
-        except OSError:
-            pass
+    for fname in _QWEN_CREDENTIAL_FILES:
+        src = user_qwen_dir / fname
+        dst = SAFE_SETTINGS.parent / fname
+        if src.is_file():
+            try:
+                dst.write_bytes(src.read_bytes())
+                os.chmod(dst, 0o600)
+            except OSError:
+                pass
+
+    safe_sub_file = SAFE_SETTINGS.parent / "subscription_credentials.json"
+    safe_oauth_file = SAFE_SETTINGS.parent / "oauth_creds.json"
+    has_cloud_creds = safe_sub_file.is_file() or safe_oauth_file.is_file()
 
     safe_data: dict[str, Any] = {
         "$version": 4,
@@ -104,13 +302,20 @@ def setup_safe_environment() -> None:
         except (OSError, ValueError, TypeError):
             pass
 
-    # Aseguramos que si existe suscripción, selectedType sea qwen-subscription
-    if safe_cred_file.is_file():
+    _scrub_local_endpoints(safe_data, has_cloud_creds=has_cloud_creds)
+
+    if safe_sub_file.is_file():
         sec = safe_data.setdefault("security", {})
         if isinstance(sec, dict):
             auth = sec.setdefault("auth", {})
             if isinstance(auth, dict):
                 auth["selectedType"] = "qwen-subscription"
+    elif safe_oauth_file.is_file():
+        sec = safe_data.setdefault("security", {})
+        if isinstance(sec, dict):
+            auth = sec.setdefault("auth", {})
+            if isinstance(auth, dict) and not auth.get("selectedType"):
+                auth["selectedType"] = "qwen-oauth"
 
     temp_file = SAFE_SETTINGS.with_suffix(".tmp")
     temp_file.write_text(json.dumps(safe_data, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -119,15 +324,14 @@ def setup_safe_environment() -> None:
     except OSError:
         pass
     temp_file.replace(SAFE_SETTINGS)
+    _sync_qwen_memory_md()
 
 
 def ensure_chat_safe() -> None:
-    """Sincroniza el perfil de Qwen y credenciales asegurando que estén disponibles."""
-    user_settings_file = Path.home() / ".qwen" / "settings.json"
-    user_cred_file = Path.home() / ".qwen" / "subscription_credentials.json"
-    safe_cred_file = SAFE_SETTINGS.parent / "subscription_credentials.json"
+    """Sincroniza el perfil de Qwen, credenciales y QWEN.md asegurando disponibilidad y sin contaminación local."""
+    user_qwen_dir = Path.home() / ".qwen"
+    user_settings_file = user_qwen_dir / "settings.json"
 
-    # Forzar sincronización si SAFE_SETTINGS no existe, o si las credenciales de usuario cambiaron
     need_sync = not SAFE_SETTINGS.is_file()
     if not need_sync and user_settings_file.is_file():
         try:
@@ -135,18 +339,46 @@ def ensure_chat_safe() -> None:
                 need_sync = True
         except OSError:
             pass
-    if not need_sync and user_cred_file.is_file():
-        if not safe_cred_file.is_file():
-            need_sync = True
-        else:
-            try:
-                if user_cred_file.stat().st_mtime > safe_cred_file.stat().st_mtime:
+    if not need_sync:
+        for fname in _QWEN_CREDENTIAL_FILES:
+            src = user_qwen_dir / fname
+            dst = SAFE_SETTINGS.parent / fname
+            if src.is_file():
+                if not dst.is_file():
                     need_sync = True
-            except OSError:
-                pass
+                    break
+                try:
+                    if src.stat().st_mtime > dst.stat().st_mtime:
+                        need_sync = True
+                        break
+                except OSError:
+                    pass
+    if not need_sync and SAFE_SETTINGS.is_file():
+        try:
+            raw_safe = SAFE_SETTINGS.read_text(encoding="utf-8")
+            if "11434" in raw_safe:
+                need_sync = True
+        except OSError:
+            pass
+
+    cortex_dir = _cortex_vault_dir()
+    qwen_md = SAFE_SETTINGS.parent / "QWEN.md"
+    need_memory_sync = not qwen_md.is_file()
+    if not need_memory_sync:
+        try:
+            qwen_md_mtime = qwen_md.stat().st_mtime
+            for rel_path, _heading in _QWEN_CORTEX_CORE_FILES:
+                src_note = cortex_dir / Path(*rel_path.split("/"))
+                if src_note.is_file() and src_note.stat().st_mtime > qwen_md_mtime:
+                    need_memory_sync = True
+                    break
+        except OSError:
+            need_memory_sync = True
 
     if need_sync:
         setup_safe_environment()
+    elif need_memory_sync:
+        _sync_qwen_memory_md(cortex_dir)
 
 
 def is_qwen_enabled() -> bool:
@@ -230,15 +462,32 @@ def _is_local_endpoint(url: str) -> bool:
         return False
 
 
+def _is_cloud_qwen_model(model_name: str) -> bool:
+    clean = (model_name or "").strip().removeprefix("qwen-cli/")
+    if not clean or clean == "qwen-code-default":
+        return False
+    if clean in _CLOUD_MODEL_IDS:
+        return True
+    # Revisar también modelos cacheados declarados como remotos no-Ollama
+    with QWEN_LOCK:
+        for m in QWEN_CACHE.get("models", []):
+            m_id = str(m.get("name") or "").removeprefix("qwen-cli/").strip()
+            if (m_id == clean or m.get("name") == model_name) and bool(m.get("remote", False)):
+                return not bool(m.get("benchmark_capable", False))
+    return False
+
+
 def _get_qwen_configured_endpoint(model_name: str = "") -> tuple[str, bool]:
     """Lee ~/.qwen/settings.json y determina el baseUrl configurado (revisando model, security y modelProviders)."""
     try:
         user_cfg = Path.home() / ".qwen" / "settings.json"
         if user_cfg.is_file():
             data = json.loads(user_cfg.read_text(encoding="utf-8"))
-            lookup_model = (model_name or "").strip().removeprefix("qwen-cli/")
-            if not lookup_model or lookup_model == "qwen-code-default":
-                lookup_model = str(data.get("model", {}).get("name") or "").strip().removeprefix("qwen-cli/")
+            explicit_model = (model_name or "").strip().removeprefix("qwen-cli/")
+            is_default_lookup = not explicit_model or explicit_model == "qwen-code-default"
+            active_model = str(data.get("model", {}).get("name") or "").strip().removeprefix("qwen-cli/")
+            lookup_model = active_model if is_default_lookup else explicit_model
+
             # 1. Comprobar modelProviders (proveedores personalizados como openai, ollama, gemini)
             providers = data.get("modelProviders", {})
             if isinstance(providers, dict):
@@ -252,14 +501,21 @@ def _get_qwen_configured_endpoint(model_name: str = "") -> tuple[str, bool]:
                                     b_url = str(entry.get("baseUrl") or "").strip()
                                     if b_url:
                                         return b_url, _is_local_endpoint(b_url)
+
             # 2. Comprobar model.baseUrl o security.auth.baseUrl
+            # No heredar baseUrl local (ej. 127.0.0.1:11434) para modelos cloud explícitos.
             base_url = str(
                 data.get("model", {}).get("baseUrl")
                 or data.get("security", {}).get("auth", {}).get("baseUrl")
                 or ""
             ).strip()
             if base_url:
-                return base_url, _is_local_endpoint(base_url)
+                is_local = _is_local_endpoint(base_url)
+                if not is_default_lookup and is_local and explicit_model != active_model:
+                    return "", False
+                if _is_cloud_qwen_model(lookup_model) and is_local:
+                    return "", False
+                return base_url, is_local
     except Exception:
         pass
     return "", False
@@ -335,10 +591,14 @@ def _discover_qwen_models() -> list[dict[str, Any]]:
     except Exception:
         pass
 
-    # 3. Modelos de suscripción oficial (Qwen Plus / chat.qwen.ai)
+    # 3. Modelos de suscripción oficial (Qwen Plus / chat.qwen.ai) y OAuth
     sub_file = Path.home() / ".qwen" / "subscription_credentials.json"
     safe_sub_file = SAFE_SETTINGS.parent / "subscription_credentials.json"
     sub_to_check = sub_file if sub_file.is_file() else safe_sub_file
+    oauth_file = Path.home() / ".qwen" / "oauth_creds.json"
+    safe_oauth_file = SAFE_SETTINGS.parent / "oauth_creds.json"
+    oauth_to_check = oauth_file if oauth_file.is_file() else safe_oauth_file
+
     if sub_to_check.is_file():
         try:
             sub_data = json.loads(sub_to_check.read_text(encoding="utf-8"))
@@ -378,6 +638,33 @@ def _discover_qwen_models() -> list[dict[str, Any]]:
                             "is_ollama": False,
                         })
                         seen.add(p_id)
+        except Exception:
+            pass
+
+    if oauth_to_check.is_file():
+        try:
+            oauth_data = json.loads(oauth_to_check.read_text(encoding="utf-8"))
+            if isinstance(oauth_data, dict) and (
+                oauth_data.get("access_token")
+                or oauth_data.get("refresh_token")
+                or oauth_data.get("tokens")
+            ):
+                for o_id, o_label, o_fam in (
+                    ("qwen3-coder-plus", "Qwen 3 Coder Plus · Nube (OAuth)", "Qwen Coder"),
+                    ("qwen3-coder-flash", "Qwen 3 Coder Flash · Nube (OAuth)", "Qwen Coder"),
+                ):
+                    if o_id not in seen:
+                        discovered.append({
+                            "id": o_id,
+                            "label": o_label,
+                            "family": o_fam,
+                            "remote": True,
+                            "remote_host": "portal.qwen.ai (Qwen OAuth)",
+                            "provider_label": "Qwen Code · OAuth",
+                            "auth_method": "Qwen OAuth (oauth_creds.json)",
+                            "is_ollama": False,
+                        })
+                        seen.add(o_id)
         except Exception:
             pass
 
@@ -500,7 +787,54 @@ def extract_qwen_response(payload: Any) -> tuple[str, dict[str, Any], float, lis
     raise RuntimeError("Qwen no devolvió una respuesta válida.")
 
 
-def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "", cwd: str = "") -> dict[str, Any]:
+def _parse_qwen_output(raw_stdout: str) -> Any:
+    """Parsea la salida de Qwen tolerando ANSI, NDJSON y banners previos al JSON."""
+    cleaned = _ANSI_RE.sub("", raw_stdout or "").strip()
+    if not cleaned:
+        raise RuntimeError("qwen no devolvió un JSON válido.")
+
+    try:
+        return json.loads(cleaned)
+    except (ValueError, TypeError):
+        pass
+
+    ndjson_items: list[Any] = []
+    for line in cleaned.splitlines():
+        candidate = line.strip()
+        if not candidate or candidate[0] not in "{[":
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(parsed, list):
+            ndjson_items.extend(parsed)
+        elif isinstance(parsed, dict):
+            ndjson_items.append(parsed)
+    if ndjson_items:
+        return ndjson_items
+
+    decoder = json.JSONDecoder()
+    for idx, ch in enumerate(cleaned):
+        if ch not in "{[":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(cleaned, idx)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(obj, (dict, list)):
+            return obj
+
+    raise RuntimeError("qwen no devolvió un JSON válido.")
+
+
+def ask_qwen(
+    prompt: str,
+    timeout_seconds: int = 120,
+    model: str = "",
+    cwd: str = "",
+    add_dirs: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     """Ejecuta un turno en Qwen Code con herramientas autónomas y devuelve respuesta, uso, duración y herramientas."""
     if not isinstance(prompt, str) or not prompt.strip():
         raise ValueError("El prompt debe contener texto.")
@@ -518,7 +852,12 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "", cwd: str 
     raw_name = clean_model.removeprefix("qwen-cli/")
     ollama_models = _get_ollama_model_names()
     is_ollama = bool(raw_name and (clean_model in ollama_models or raw_name in ollama_models))
-    endpoint_url, is_local = _get_qwen_configured_endpoint(clean_model or raw_name)
+    is_cloud = _is_cloud_qwen_model(raw_name)
+    endpoint_url, is_local = (
+        ("", False)
+        if (is_ollama or is_cloud)
+        else _get_qwen_configured_endpoint(clean_model or raw_name)
+    )
 
     # Fail closed si el modelo era local de Ollama pero Ollama no responde
     if _is_known_ollama_model(clean_model or raw_name) and not is_ollama:
@@ -541,6 +880,8 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "", cwd: str 
     }
     for key, val in os.environ.items():
         if key in ALLOWED_QWEN_ENV_VARS or (key.startswith("QWEN_") and not key.startswith("QWEN_SECRET")):
+            if key in _LOCAL_ENV_OVERRIDE_KEYS and (is_cloud or (not is_ollama and _is_local_endpoint(val))):
+                continue
             child_environment[key] = val
 
     # Enrutamiento explícito a endpoint local si el modelo reside en Ollama o tiene baseUrl local
@@ -549,16 +890,38 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "", cwd: str 
         child_environment["OPENAI_BASE_URL"] = "http://127.0.0.1:11434/v1"
         child_environment["OPENAI_API_KEY"] = "ollama"
         child_environment["OLLAMA_HOST"] = "http://127.0.0.1:11434"
-    elif is_local and endpoint_url:
+    elif is_local and endpoint_url and not is_cloud:
         command.extend(["--openai-base-url", endpoint_url, "--auth-type", "openai"])
         child_environment["OPENAI_BASE_URL"] = endpoint_url
         child_environment.setdefault("OPENAI_API_KEY", "local")
     elif (SAFE_SETTINGS.parent / "subscription_credentials.json").is_file():
         command.extend(["--auth-type", "qwen-subscription"])
+    elif (SAFE_SETTINGS.parent / "oauth_creds.json").is_file():
+        command.extend(["--auth-type", "qwen-oauth"])
+
+    target_cwd = Path(cwd) if cwd and Path(cwd).is_dir() else SAFE_HOME
+    try:
+        resolved_cwd = target_cwd.resolve()
+    except OSError:
+        resolved_cwd = target_cwd
+    seen_dirs: set[Path] = {resolved_cwd}
+    raw_extra_dirs: list[Path] = [_cortex_vault_dir()]
+    if add_dirs:
+        raw_extra_dirs.extend(Path(str(d)).expanduser() for d in add_dirs if str(d).strip())
+    for extra in raw_extra_dirs:
+        if not extra.is_dir():
+            continue
+        try:
+            resolved_extra = extra.resolve()
+        except OSError:
+            resolved_extra = extra
+        if resolved_extra in seen_dirs:
+            continue
+        seen_dirs.add(resolved_extra)
+        command.extend(["--add-dir", str(extra)])
 
     command.extend(["-p", prompt])
 
-    target_cwd = Path(cwd) if cwd and Path(cwd).is_dir() else SAFE_HOME
     options: dict[str, Any] = {
         "capture_output": True,
         "text": True,
@@ -584,10 +947,7 @@ def ask_qwen(prompt: str, timeout_seconds: int = 120, model: str = "", cwd: str 
         err_msg = (result.stderr or "").strip()
         raise RuntimeError(f"qwen terminó con código {result.returncode}. {err_msg}".strip())
 
-    try:
-        payload = json.loads(result.stdout)
-    except (ValueError, TypeError) as exc:
-        raise RuntimeError("qwen no devolvió un JSON válido.") from exc
+    payload = _parse_qwen_output(result.stdout)
 
     response_text, usage, duration_seconds, tools_used = extract_qwen_response(payload)
     if not response_text:

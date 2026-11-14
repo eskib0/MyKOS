@@ -408,9 +408,10 @@ def logout_grok() -> dict[str, Any]:
     return {"ok": True, "provider": "grok", "status": "logged_out"}
 
 
-def grok_models(key: str = "") -> list[dict[str, Any]]:
+def grok_models(key: str = "", *, strict: bool = False) -> list[dict[str, Any]]:
     # Intentar obtener modelos dinámicos si la API responde
-    token = key
+    explicit_key = str(key).strip()
+    token = explicit_key
     if not token:
         try:
             token = _get_active_token()
@@ -429,6 +430,8 @@ def grok_models(key: str = "") -> list[dict[str, Any]]:
                 if isinstance(rows, list) and rows:
                     out = []
                     for row in rows:
+                        if not isinstance(row, dict):
+                            continue
                         mid = str(row.get("id", "")).strip()
                         if not mid:
                             continue
@@ -443,8 +446,19 @@ def grok_models(key: str = "") -> list[dict[str, Any]]:
                         )
                     if out:
                         return out
-        except Exception:
-            pass
+                if strict or explicit_key:
+                    raise RuntimeError("xAI aceptó la clave, pero no devolvió modelos disponibles.")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:400]
+            if exc.code in (401, 403) or strict or explicit_key:
+                raise RuntimeError(f"xAI rechazó la credencial de Grok (HTTP {exc.code}): {detail}") from exc
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            if strict or explicit_key:
+                raise RuntimeError(f"No se pudo validar la clave con xAI Grok: {exc}") from exc
+    elif strict or explicit_key:
+        raise RuntimeError("MyKOS todavía no tiene una credencial de Grok.")
 
     return list(DEFAULT_GROK_MODELS)
 

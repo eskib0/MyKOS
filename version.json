@@ -1,6 +1,8 @@
 {
   "name": "MyKOS",
-  "version": "2.0.5",
+  "version": "2.0.7",
+  "codename": "Cortex & Providers Audit",
+  "released": "2026-11-14",
   "channel": "stable",
   "repository": "eskib0/MyKOS"
 }

@@ -18,46 +18,67 @@ from meta_ai import (
     meta_ai_models,
     start_meta_ai_oauth,
 )
-from mistral import clear_mistral_api_key, mistral_auth_status, mistral_models
-from nvidia import clear_nvidia_api_key, nvidia_auth_status, nvidia_models
+from mistral import clear_mistral_api_key, clear_mistral_auth_cache, is_mistral_chat_model, mistral_auth_status, mistral_models
+from nvidia import clear_nvidia_api_key, is_nvidia_chat_model, nvidia_auth_status, nvidia_models
 from oauth import logout_openrouter_oauth, openrouter_auth_status, openrouter_models, start_openrouter_oauth
 
 import os
-PUBLIC_PORT = int(os.environ.get("MYKOS_PUBLIC_PORT", "0") or 0) or int(os.environ.get("MYKOS_PORT", "3211") or 3211)
+PUBLIC_PORT = int(os.environ.get("MYKOS_PUBLIC_PORT", "0") or 0) or int(os.environ.get("MYKOS_PORT", "3210") or 3210)
 
-OPENROUTER_LOCK = threading.Lock()
+OPENROUTER_LOCK = threading.RLock()
 OPENROUTER_MODEL_CACHE: dict[str, Any] = {'checked_at': 0.0, 'models': [], 'authenticated': False, 'error': ''}
 OPENROUTER_MODEL_CACHE_SECONDS = 60
 
-NVIDIA_LOCK = threading.Lock()
+NVIDIA_LOCK = threading.RLock()
 NVIDIA_MODEL_CACHE: dict[str, Any] = {'checked_at': 0.0, 'models': [], 'authenticated': False, 'error': ''}
 NVIDIA_MODEL_CACHE_SECONDS = 60
 
-KIMI_LOCK = threading.Lock()
+KIMI_LOCK = threading.RLock()
 KIMI_MODEL_CACHE: dict[str, Any] = {'checked_at': 0.0, 'models': [], 'authenticated': False, 'error': ''}
 KIMI_MODEL_CACHE_SECONDS = 60
 
-GEMINI_LOCK = threading.Lock()
+GEMINI_LOCK = threading.RLock()
 GEMINI_MODEL_CACHE: dict[str, Any] = {'checked_at': 0.0, 'models': [], 'authenticated': False, 'error': ''}
 GEMINI_MODEL_CACHE_SECONDS = 60
 
-MISTRAL_LOCK = threading.Lock()
+MISTRAL_LOCK = threading.RLock()
 MISTRAL_MODEL_CACHE: dict[str, Any] = {'checked_at': 0.0, 'models': [], 'authenticated': False, 'error': ''}
 MISTRAL_MODEL_CACHE_SECONDS = 300.0
 
-META_AI_LOCK = threading.Lock()
+META_AI_LOCK = threading.RLock()
 META_AI_MODEL_CACHE: dict[str, Any] = {'checked_at': 0.0, 'models': [], 'authenticated': False, 'error': ''}
 META_AI_MODEL_CACHE_SECONDS = 60.0
 
-GROK_LOCK = threading.Lock()
+GROK_LOCK = threading.RLock()
 GROK_MODEL_CACHE: dict[str, Any] = {'checked_at': 0.0, 'models': [], 'authenticated': False, 'error': ''}
 GROK_MODEL_CACHE_SECONDS = 60.0
 
-ANTHROPIC_LOCK = threading.Lock()
+ANTHROPIC_LOCK = threading.RLock()
 ANTHROPIC_MODEL_CACHE: dict[str, Any] = {'checked_at': 0.0, 'models': [], 'authenticated': False, 'error': ''}
 ANTHROPIC_MODEL_CACHE_SECONDS = 60
 
-ANTIGRAVITY_LOCK = threading.Lock()
+ANTIGRAVITY_LOCK = threading.RLock()
+
+def _is_openrouter_chat_model(row: dict[str, Any]) -> bool:
+    model_id = str(row.get("id", "")).strip()
+    if not model_id:
+        return False
+    lowered = model_id.casefold()
+    if any(marker in lowered for marker in ("embedding", "/embed", "whisper", "tts", "dall-e", "stable-diffusion")):
+        return False
+    arch = row.get("architecture") if isinstance(row.get("architecture"), dict) else {}
+    output_mods = arch.get("output_modalities")
+    if isinstance(output_mods, list) and output_mods:
+        if "text" not in {str(item).casefold() for item in output_mods}:
+            return False
+    else:
+        modality = str(arch.get("modality") or "").casefold()
+        if "->" in modality:
+            out_side = modality.split("->", 1)[1]
+            if "text" not in out_side:
+                return False
+    return True
+
 
 def openrouter_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool, str]:
     now = time.monotonic()
@@ -77,9 +98,20 @@ def openrouter_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]],
                 error_text = str(auth.get("error", ""))
                 OPENROUTER_MODEL_CACHE.update({"checked_at": now, "models": [], "authenticated": False, "error": error_text})
                 return [], False, error_text
+            auth_method_raw = str(auth.get("auth_method") or "")
+            is_api = "api" in auth_method_raw.casefold()
+            provider_label = "OpenRouter · API" if is_api else "OpenRouter · OAuth"
+            auth_method = "OpenRouter API Key" if is_api else "OpenRouter OAuth (PKCE)"
+            remote_host = (
+                "OpenRouter mediante tu clave API personal"
+                if is_api
+                else "OpenRouter mediante OAuth propio de MyKOS"
+            )
             rows = openrouter_models()
             models: list[dict[str, Any]] = []
             for row in rows:
+                if not _is_openrouter_chat_model(row):
+                    continue
                 model_id = str(row.get("id", "")).strip()
                 reference = model_id if model_id.startswith("openrouter/") else f"openrouter/{model_id}"
                 architecture = row.get("architecture") if isinstance(row.get("architecture"), dict) else {}
@@ -90,7 +122,7 @@ def openrouter_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]],
                         "name": reference,
                         "label": str(row.get("name") or model_id),
                         "provider": "openrouter",
-                        "provider_label": "OpenRouter · OAuth",
+                        "provider_label": provider_label,
                         "size": 0,
                         "parameter_size": "",
                         "family": "OpenRouter",
@@ -103,9 +135,9 @@ def openrouter_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]],
                         "tools_capable": True,
                         "context_length": int(row.get("context_length", 0) or 0),
                         "remote": True,
-                        "remote_host": "OpenRouter mediante OAuth propio de MyKOS",
+                        "remote_host": remote_host,
                         "benchmark_capable": False,
-                        "auth_method": "OpenRouter OAuth (PKCE)",
+                        "auth_method": auth_method,
                         "auth_status": "autenticado",
                         "auth_error": "",
                     }
@@ -142,6 +174,8 @@ def nvidia_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], boo
             rows = nvidia_models()
             models: list[dict[str, Any]] = []
             for row in rows:
+                if not is_nvidia_chat_model(row):
+                    continue
                 model_id = str(row.get("id", "")).strip()
                 # Keep the MyKOS provider namespace separate from NVIDIA's own
                 # namespace. For example, API id nvidia/nemotron-... becomes
@@ -239,32 +273,44 @@ def gemini_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], boo
                 GEMINI_MODEL_CACHE.update(checked_at=now, models=[], authenticated=False, error=error)
                 return [], False, error
             raw_rows = gemini_models()
-            models = [
-                {
-                    "name": f"gemini/{str(row.get('id')).strip()}",
-                    "label": str(row.get("name") or row.get("id")).strip(),
-                    "provider": "gemini_api",
-                    "provider_label": "Gemini · API",
-                    "size": 0,
-                    "parameter_size": "",
-                    "family": "Gemini",
-                    "quantization": "",
-                    "modified_at": "",
-                    "capabilities": ["chat", "completion", "vision", "tools"],
-                    "chat_capable": True,
-                    "vision_capable": True,
-                    "thinking_capable": "thinking" in str(row.get("id", "")).lower(),
-                    "tools_capable": True,
-                    "context_length": int(row.get("context_length", 0)),
-                    "remote": True,
-                    "remote_host": "Google AI Studio mediante la credencial protegida de MyKOS",
-                    "benchmark_capable": False,
-                    "auth_method": "Google AI Studio API Key",
-                    "auth_status": "autenticado",
-                    "auth_error": "",
-                }
-                for row in raw_rows
-            ]
+            models = []
+            for row in raw_rows:
+                model_id = str(row.get("id")).strip()
+                lower_id = model_id.lower()
+                thinking_capable = (
+                    "thinking" in lower_id
+                    or "gemini-2.5" in lower_id
+                    or "gemini-3" in lower_id
+                    or "gemini-4" in lower_id
+                )
+                caps_list = ["chat", "completion", "vision", "tools"]
+                if thinking_capable:
+                    caps_list.append("thinking")
+                models.append(
+                    {
+                        "name": f"gemini/{model_id}",
+                        "label": str(row.get("name") or row.get("id")).strip(),
+                        "provider": "gemini_api",
+                        "provider_label": "Gemini · API",
+                        "size": 0,
+                        "parameter_size": "",
+                        "family": "Gemini",
+                        "quantization": "",
+                        "modified_at": "",
+                        "capabilities": caps_list,
+                        "chat_capable": True,
+                        "vision_capable": True,
+                        "thinking_capable": thinking_capable,
+                        "tools_capable": True,
+                        "context_length": int(row.get("context_length", 0)),
+                        "remote": True,
+                        "remote_host": "Google AI Studio mediante la credencial protegida de MyKOS",
+                        "benchmark_capable": False,
+                        "auth_method": "Google AI Studio API Key",
+                        "auth_status": "autenticado",
+                        "auth_error": "",
+                    }
+                )
             GEMINI_MODEL_CACHE.update(checked_at=now, models=models, authenticated=True, error="")
             return models, True, ""
         except (RuntimeError, ValueError, TypeError) as exc:
@@ -302,11 +348,20 @@ def mistral_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bo
             raw_rows = mistral_models()
             models = []
             for row in raw_rows:
+                if not is_mistral_chat_model(row):
+                    continue
                 model_id = str(row.get("id", "")).strip()
                 caps = row.get("capabilities") or {}
                 has_vision = bool(caps.get("vision"))
                 has_reasoning = bool(caps.get("reasoning"))
                 has_tools = bool(caps.get("function_calling", True))
+                caps_list = ["chat", "completion"]
+                if has_vision:
+                    caps_list.append("vision")
+                if has_reasoning:
+                    caps_list.append("thinking")
+                if has_tools:
+                    caps_list.append("tools")
                 context_len = int(row.get("max_context_length") or 128000)
                 models.append({
                     "name": f"mistral/{model_id}",
@@ -318,7 +373,7 @@ def mistral_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bo
                     "family": "Mistral",
                     "quantization": "",
                     "modified_at": "",
-                    "capabilities": ["chat", "completion", "tools"] if has_tools else ["chat", "completion"],
+                    "capabilities": caps_list,
                     "chat_capable": True,
                     "vision_capable": has_vision,
                     "thinking_capable": has_reasoning,
@@ -339,6 +394,7 @@ def mistral_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bo
 
 
 def refresh_mistral_models() -> dict[str, Any]:
+    clear_mistral_auth_cache()
     models, authenticated, error = mistral_model_catalog(True)
     if error and not models:
         raise RuntimeError(error)
@@ -353,13 +409,8 @@ def _logout_mistral() -> dict[str, Any]:
     return {"ok": True, "provider": "mistral_api", "status": "logged_out"}
 
 
-ANTHROPIC_LOCK = threading.RLock()
-ANTHROPIC_MODEL_CACHE: dict[str, Any] = {"checked_at": 0.0, "models": [], "authenticated": False, "error": ""}
-ANTHROPIC_MODEL_CACHE_SECONDS = 60
-
-
 def refresh_anthropic_models() -> dict[str, Any]:
-    models, authenticated, error = anthropic_model_catalog()
+    models, authenticated, error = anthropic_model_catalog(force=True)
     with ANTHROPIC_LOCK:
         ANTHROPIC_MODEL_CACHE.update(checked_at=time.monotonic(), models=models, authenticated=authenticated, error=error)
     return {"ok": True, "provider": "anthropic_api", "authenticated": authenticated, "models": len(models), "error": error}
@@ -404,54 +455,65 @@ def refresh_openrouter_models() -> dict[str, Any]:
 
 
 def meta_ai_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool, str]:
-    auth = meta_ai_auth_status()
-    authenticated = bool(auth.get("authenticated"))
-    rows = meta_ai_models(force=force)
-    models = []
-    for row in rows:
-        provider = str(row.get("provider", "meta_ai_oauth")).strip()
-        is_api = provider == "meta_ai_api"
-        family = "Muse (Meta AI)" if is_api else "Llama 4 (Meta AI)"
-        remote_host = (
-            "Meta Model API (compatible OpenAI SDK)"
-            if is_api
-            else "Meta AI (gateway.meta.ai DGW) mediante sesión OAuth de MyKOS"
-        )
-        auth_method = "Meta Model API Key" if is_api else "Meta AI OAuth (ecto1 / OIDC)"
-        auth_status = "requiere clave API" if is_api else ("autenticado" if authenticated else "no autenticado")
-        caps = ["chat", "completion", "tools"]
-        if row.get("enable_thinking"):
-            caps.append("thinking")
-        if is_api and "image" in str(row.get("name", "")).lower():
-            caps.append("image_generation")
-        models.append({
-            "name": str(row.get("name", "")).strip(),
-            "label": str(row.get("label") or row.get("name", "")).strip(),
-            "provider": provider,
-            "provider_label": "Meta AI · API" if is_api else "Meta AI · OAuth",
-            "size": 0,
-            "parameter_size": "",
-            "family": family,
-            "quantization": "",
-            "modified_at": "",
-            "capabilities": caps,
-            "chat_capable": True,
-            "vision_capable": False,
-            "thinking_capable": bool(row.get("enable_thinking")),
-            "tools_capable": True,
-            "context_length": int(row.get("context_length", 128000)),
-            "remote": True,
-            "remote_host": remote_host,
-            "benchmark_capable": False,
-            "auth_method": auth_method,
-            "auth_status": auth_status,
-            "auth_error": "",
-            "free": bool(row.get("free", False)),
-            "recommended": bool(row.get("recommended", False)),
-            "description": str(row.get("description", "")).strip() or "",
-        })
-    has_any = bool(models)
-    return models, authenticated or any(m["provider"] == "meta_ai_api" for m in models), ""
+    now = time.monotonic()
+    with META_AI_LOCK:
+        cached = META_AI_MODEL_CACHE.get("models") or []
+        if not force and cached and now - float(META_AI_MODEL_CACHE.get("checked_at", 0.0)) < META_AI_MODEL_CACHE_SECONDS:
+            return list(cached), bool(META_AI_MODEL_CACHE.get("authenticated")), str(META_AI_MODEL_CACHE.get("error", ""))
+        auth = meta_ai_auth_status()
+        has_oauth = bool(auth.get("has_oauth"))
+        has_api_key = bool(auth.get("has_api_key")) or "API Key" in str(auth.get("auth_method", ""))
+        if not auth.get("has_oauth") and not auth.get("has_api_key") and auth.get("authenticated"):
+            has_oauth = "OAuth" in str(auth.get("auth_method", "")) or not has_api_key
+        rows = meta_ai_models(force=force)
+        models = []
+        for row in rows:
+            model_name = str(row.get("name", "")).strip()
+            if model_name in {"meta-ai/muse-image", "meta-ai/sam-3.1", "meta-ai/muse-voice-transcribe"}:
+                continue
+            provider = str(row.get("provider", "meta_ai_oauth")).strip()
+            is_api = provider == "meta_ai_api"
+            is_authed = has_api_key if is_api else has_oauth
+            family = "Muse (Meta AI)" if is_api else "Llama 4 (Meta AI)"
+            remote_host = (
+                "Meta Model API (compatible OpenAI SDK)"
+                if is_api
+                else "Meta AI (gateway.meta.ai DGW) mediante sesión OAuth de MyKOS"
+            )
+            auth_method = "Meta Model API Key" if is_api else "Meta AI OAuth (ecto1 / OIDC)"
+            auth_status = "autenticado" if is_authed else ("requiere clave API" if is_api else "no autenticado")
+            caps = ["chat", "completion", "tools"]
+            if row.get("enable_thinking"):
+                caps.append("thinking")
+            models.append({
+                "name": model_name,
+                "label": str(row.get("label") or model_name).strip(),
+                "provider": provider,
+                "provider_label": "Meta AI · API" if is_api else "Meta AI · OAuth",
+                "size": 0,
+                "parameter_size": "",
+                "family": family,
+                "quantization": "",
+                "modified_at": "",
+                "capabilities": caps,
+                "chat_capable": bool(is_authed),
+                "vision_capable": False,
+                "thinking_capable": bool(row.get("enable_thinking")),
+                "tools_capable": True,
+                "context_length": int(row.get("context_length", 128000)),
+                "remote": True,
+                "remote_host": remote_host,
+                "benchmark_capable": False,
+                "auth_method": auth_method,
+                "auth_status": auth_status,
+                "auth_error": "",
+                "free": bool(row.get("free", False)),
+                "recommended": bool(row.get("recommended", False)),
+                "description": str(row.get("description", "")).strip() or "",
+            })
+        any_authed = bool(has_oauth or has_api_key)
+        META_AI_MODEL_CACHE.update(checked_at=now, models=models, authenticated=any_authed, error="")
+        return models, any_authed, ""
 
 
 def start_meta_ai_login() -> dict[str, Any]:
@@ -460,14 +522,15 @@ def start_meta_ai_login() -> dict[str, Any]:
 
 def refresh_meta_ai_models() -> dict[str, Any]:
     models, authenticated, error = meta_ai_model_catalog(force=True)
-    if not authenticated:
-        start_meta_ai_oauth(open_browser=False)
-        models, authenticated, error = meta_ai_model_catalog(force=True)
     return {"ok": True, "provider": "meta_ai_oauth", "authenticated": authenticated, "models": len(models), "error": error}
 
 
 def logout_meta_ai() -> dict[str, Any]:
-    return logout_meta_ai_oauth()
+    result = logout_meta_ai_oauth()
+    with META_AI_LOCK:
+        META_AI_MODEL_CACHE.clear()
+        META_AI_MODEL_CACHE.update(checked_at=0.0, models=[], authenticated=False, error="")
+    return result
 
 
 def grok_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool, str]:
@@ -513,8 +576,12 @@ def grok_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool,
             GROK_MODEL_CACHE.update(checked_at=now, models=models, authenticated=True, error="")
             return models, True, ""
         except RuntimeError as exc:
-            GROK_MODEL_CACHE.update(checked_at=now, error=str(exc))
-            return list(cached), bool(GROK_MODEL_CACHE.get("authenticated")), str(exc)
+            err = str(exc)
+            if "401" in err or "403" in err:
+                GROK_MODEL_CACHE.update(checked_at=now, models=[], authenticated=False, error=err)
+                return [], False, err
+            GROK_MODEL_CACHE.update(checked_at=now, error=err)
+            return list(cached), bool(GROK_MODEL_CACHE.get("authenticated")), err
 
 
 def start_grok_login() -> dict[str, Any]:

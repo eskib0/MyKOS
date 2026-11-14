@@ -5,6 +5,7 @@ Usa la sesión OAuth propia de agy. No lee ni gestiona tokens.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -41,9 +42,38 @@ def is_antigravity_enabled() -> bool:
     return False
 
 
+def ensure_safe_settings() -> None:
+    """Garantiza que SAFE_SETTINGS exista y deniegue todas las herramientas del CLI."""
+    SAFE_SETTINGS.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        existing = json.loads(SAFE_SETTINGS.read_text(encoding="utf-8")) if SAFE_SETTINGS.is_file() else {}
+    except (OSError, ValueError, TypeError):
+        existing = {}
+    if not isinstance(existing, dict):
+        existing = {}
+    perms = existing.get("permissions")
+    if not isinstance(perms, dict):
+        perms = {}
+    deny_list = perms.get("deny")
+    if not isinstance(deny_list, list):
+        deny_list = []
+    merged = sorted({str(x) for x in deny_list if x} | DENIED_TOOLS)
+    if set(merged) != {str(x) for x in deny_list if x} or not SAFE_SETTINGS.is_file():
+        perms["deny"] = merged
+        existing["permissions"] = perms
+        tmp = SAFE_SETTINGS.with_suffix(".tmp")
+        tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        tmp.replace(SAFE_SETTINGS)
+
+
 def enable_antigravity() -> dict[str, Any]:
     if not (shutil.which(AGY_PATH) or Path(AGY_PATH).is_file()):
         raise RuntimeError(f"No se encuentra el ejecutable {AGY_PATH}.")
+    ensure_safe_settings()
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     temp = CONFIG_FILE.with_suffix(".tmp")
     temp.write_text(json.dumps({"enabled": True}, ensure_ascii=False), encoding="utf-8")
@@ -71,14 +101,19 @@ DEFAULT_ANTIGRAVITY_MODELS: list[tuple[str, str, str]] = [
     ("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)", "GPT-OSS"),
 ]
 
-ANTIGRAVITY_LOCK = threading.Lock()
+ANTIGRAVITY_LOCK = threading.RLock()
 ANTIGRAVITY_CACHE: dict[str, Any] = {"checked_at": 0.0, "models": []}
 CACHE_TTL_SECONDS = 300.0
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
 def _fetch_agy_models() -> list[tuple[str, str, str]]:
     has_binary = bool(shutil.which(AGY_PATH) or Path(AGY_PATH).is_file())
     if not has_binary:
+        return []
+    try:
+        ensure_safe_settings()
+    except OSError:
         return []
     try:
         env = {
@@ -97,9 +132,9 @@ def _fetch_agy_models() -> list[tuple[str, str, str]]:
         )
         if res.returncode == 0 and res.stdout:
             discovered: list[tuple[str, str, str]] = []
-            for line in res.stdout.splitlines():
-                line = line.strip()
-                if not line or line.startswith("Fetching"):
+            for raw_line in res.stdout.replace("\r", "\n").splitlines():
+                line = _ANSI_RE.sub("", raw_line).strip()
+                if not line or "Fetching available models" in line or line.startswith(("Fetching", "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")):
                     continue
                 parts = line.split("\t", 1)
                 if len(parts) == 2:
@@ -128,11 +163,10 @@ def _fetch_agy_models() -> list[tuple[str, str, str]]:
                 else:
                     family = "Antigravity"
                 discovered.append((m_id, m_label, family))
-            if discovered:
-                return discovered
+            return discovered
     except Exception:
         pass
-    return DEFAULT_ANTIGRAVITY_MODELS
+    return []
 
 
 def disable_antigravity() -> dict[str, Any]:
@@ -151,6 +185,10 @@ def disable_antigravity() -> dict[str, Any]:
 
 
 def antigravity_auth_status() -> dict[str, Any]:
+    try:
+        ensure_safe_settings()
+    except OSError:
+        pass
     has_binary = bool(shutil.which(AGY_PATH) or Path(AGY_PATH).is_file())
     enabled = is_antigravity_enabled()
     error = ""
@@ -181,7 +219,9 @@ def antigravity_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]]
         if not force and cached and (now - checked_at < CACHE_TTL_SECONDS):
             return list(cached), True, ""
 
-    raw_models = _fetch_agy_models() or DEFAULT_ANTIGRAVITY_MODELS
+    raw_models = _fetch_agy_models()
+    if not raw_models:
+        return [], False, "No se pudieron obtener modelos de Antigravity CLI (agy)."
     models: list[dict[str, Any]] = []
     for model_name, model_label, family in raw_models:
         models.append({

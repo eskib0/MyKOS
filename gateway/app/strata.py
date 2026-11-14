@@ -54,6 +54,8 @@ KNOWN_STRATA_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
+STRATA_MODELS = KNOWN_STRATA_MODELS
+
 
 def strata_request(path: str, payload: dict[str, Any] | None = None, timeout: int = 5) -> dict[str, Any]:
     """Realiza una petición HTTP al servidor local de Strata."""
@@ -75,82 +77,112 @@ def strata_status() -> dict[str, Any]:
     """Comprueba si el servidor local de Strata está en línea y qué modelo tiene cargado."""
     try:
         data = strata_request("/health", timeout=1)
-        is_ok = data.get("status") in {"ok", "loading model"}
-        if is_ok:
+        health_status = str(data.get("status") or "").strip()
+        if health_status in {"ok", "loading model"}:
+            models_list: list[dict[str, Any]] = []
+            loaded_id = ""
             try:
                 models_data = strata_request("/v1/models", timeout=2)
-                models_list = models_data.get("data", [])
-                loaded_id = models_list[0].get("id", "") if models_list else ""
+                raw_list = models_data.get("data", [])
+                if isinstance(raw_list, list):
+                    models_list = [m for m in raw_list if isinstance(m, dict)]
+                    for item in models_list:
+                        st = item.get("status") if isinstance(item.get("status"), dict) else {}
+                        if st.get("value") == "loaded":
+                            loaded_id = str(item.get("id") or "")
+                            break
+                    if not loaded_id and models_list:
+                        first_st = models_list[0].get("status") if isinstance(models_list[0].get("status"), dict) else {}
+                        if not first_st or (first_st.get("value") not in {"unloaded", "failed"} and not first_st.get("failed")):
+                            loaded_id = str(models_list[0].get("id") or "")
             except Exception:
-                loaded_id = ""
-            return {"online": True, "loaded_model": loaded_id}
+                pass
+            return {"online": True, "loaded_model": loaded_id, "status": health_status, "models": models_list}
     except Exception:
         pass
-    return {"online": False, "loaded_model": ""}
+    return {"online": False, "loaded_model": "", "status": "offline", "models": []}
+
+
+def _strata_catalog_entry(model_key: str, info: dict[str, Any], active: bool) -> dict[str, Any]:
+    """Construye una entrada homogénea del catálogo de Strata."""
+    param_size = str(info.get("parameter_size") or "")
+    short_tag = param_size.split(" ", 1)[0] if param_size else model_key
+    return {
+        "name": f"strata/{model_key}",
+        "label": str(info.get("label") or f"Strata · {model_key}"),
+        "provider": "strata",
+        "provider_label": "Strata · GPU CUDA",
+        "size": int(info.get("size") or 0),
+        "parameter_size": param_size,
+        "family": str(info.get("family") or "Strata CUDA"),
+        "quantization": str(info.get("quantization") or ""),
+        "modified_at": "",
+        "capabilities": list(info.get("capabilities") or ["chat", "completion", "thinking", "tools"]),
+        "chat_capable": True,
+        "vision_capable": bool(info.get("vision_capable", False)),
+        "thinking_capable": bool(info.get("thinking_capable", True)),
+        "tools_capable": bool(info.get("tools_capable", True)),
+        "context_length": int(info.get("context_length") or 32768),
+        "remote": False,
+        "remote_host": "",
+        "benchmark_capable": True,
+        "engine": f"Strata {short_tag} (En línea)" if active else f"Strata {short_tag} (Local en reposo)",
+        "status": "online" if active else "standby",
+    }
 
 
 def strata_model_catalog() -> list[dict[str, Any]]:
     """Devuelve los modelos de Strata para el catálogo /api/models de MyKOS."""
     status = strata_status()
-    online = status["online"]
-    if not online:
+    if not status["online"]:
         return []
 
-    loaded = status.get("loaded_model", "")
-    catalog = []
-    # Modelo 1: Qwen3.8 Flash-Next 125B MoE
-    m1_key = "qwen3.8-flash-next-iq2_xs-32k"
-    m1_info = KNOWN_STRATA_MODELS[m1_key]
-    m1_active = online and (loaded == m1_key or not loaded)
-    catalog.append({
-        "name": f"strata/{m1_key}",
-        "label": m1_info["label"],
-        "provider": "strata",
-        "provider_label": "Strata · GPU CUDA",
-        "size": 0,
-        "parameter_size": m1_info["parameter_size"],
-        "family": m1_info["family"],
-        "quantization": m1_info["quantization"],
-        "modified_at": "",
-        "capabilities": m1_info["capabilities"],
-        "chat_capable": True,
-        "vision_capable": m1_info["vision_capable"],
-        "thinking_capable": m1_info["thinking_capable"],
-        "tools_capable": m1_info["tools_capable"],
-        "context_length": m1_info["context_length"],
-        "remote": False,
-        "remote_host": "",
-        "benchmark_capable": True,
-        "engine": "Strata 125B (En línea)" if m1_active else "Strata 125B (Local en reposo)",
-        "status": "online" if m1_active else "standby",
-    })
+    loaded = str(status.get("loaded_model") or "").strip()
+    if loaded.startswith("strata/"):
+        loaded = loaded[len("strata/"):]
 
-    # Modelo 2: Qwen3.6-35B-A3B Visión + MTP
-    m2_key = "qwen3.6-35b-a3b"
-    m2_info = KNOWN_STRATA_MODELS[m2_key]
-    m2_active = online and loaded == m2_key
-    catalog.append({
-        "name": f"strata/{m2_key}",
-        "label": m2_info["label"],
-        "provider": "strata",
-        "provider_label": "Strata · GPU CUDA",
-        "size": 0,
-        "parameter_size": m2_info["parameter_size"],
-        "family": m2_info["family"],
-        "quantization": m2_info["quantization"],
-        "modified_at": "",
-        "capabilities": m2_info["capabilities"],
-        "chat_capable": True,
-        "vision_capable": m2_info["vision_capable"],
-        "thinking_capable": m2_info["thinking_capable"],
-        "tools_capable": m2_info["tools_capable"],
-        "context_length": m2_info["context_length"],
-        "remote": False,
-        "remote_host": "",
-        "benchmark_capable": True,
-        "engine": "Strata 35B (En línea)" if m2_active else "Strata 35B (Local en reposo)",
-        "status": "online" if m2_active else "standby",
-    })
+    catalog: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+
+    for m_key, m_info in STRATA_MODELS.items():
+        active = bool(loaded and loaded == m_key)
+        catalog.append(_strata_catalog_entry(m_key, m_info, active))
+        seen_keys.add(m_key)
+
+    for item in status.get("models") or []:
+        st = item.get("status") if isinstance(item.get("status"), dict) else {}
+        if st.get("failed") or str(st.get("value") or "").lower() == "failed":
+            continue
+        raw_id = str(item.get("id") or "").strip()
+        clean_id = raw_id[len("strata/"):] if raw_id.startswith("strata/") else raw_id
+        if not clean_id or clean_id in seen_keys:
+            continue
+        arch = item.get("architecture") if isinstance(item.get("architecture"), dict) else {}
+        input_mods = [str(x).lower() for x in (arch.get("input_modalities") or [])]
+        vision = "image" in input_mods or "vision" in clean_id.lower()
+        caps = ["chat", "completion", "thinking", "tools"] + (["vision"] if vision else [])
+        meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+        ctx = int(meta.get("n_ctx") or item.get("context_length") or 32768)
+        active = bool(loaded and loaded == clean_id)
+        catalog.append(
+            _strata_catalog_entry(
+                clean_id,
+                {
+                    "label": f"Strata · {clean_id}",
+                    "parameter_size": "",
+                    "family": "Strata CUDA",
+                    "quantization": str(meta.get("ftype") or ""),
+                    "context_length": ctx,
+                    "capabilities": caps,
+                    "vision_capable": vision,
+                    "thinking_capable": True,
+                    "tools_capable": True,
+                    "size": int(meta.get("size") or 0),
+                },
+                active,
+            )
+        )
+        seen_keys.add(clean_id)
 
     return catalog
 
@@ -170,6 +202,8 @@ def strata_chat_request(
     if clean_model.startswith("strata/"):
         clean_model = clean_model[len("strata/"):]
 
+    raw_temp = options.get("temperature")
+
     payload: dict[str, Any] = {
         "model": clean_model,
         "messages": [
@@ -182,7 +216,7 @@ def strata_chat_request(
         ],
         "stream": False,
         "max_tokens": int(options.get("num_predict", 2048) or 2048),
-        "temperature": float(options.get("temperature", 0.5) or 0.5),
+        "temperature": float(raw_temp) if raw_temp is not None else 0.5,
     }
 
     effort = str(generation.get("effort", "")).strip().casefold()

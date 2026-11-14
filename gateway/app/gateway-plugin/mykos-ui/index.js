@@ -128,7 +128,7 @@ const localNode = () => ({
   capabilities: ["chat", "files", "microphone", "tts"], platform: `${os.type()} ${os.release()}`, pid: process.pid,
   last_seen: utcNow(),
 });
-const REMOTE_MODEL_PREFIXES = ["antigravity/", "qwen-cli/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "openrouter/", "openai-codex-oauth/", "gemini/", "anthropic/", "grok/"];
+const REMOTE_MODEL_PREFIXES = ["antigravity/", "qwen-cli/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "openrouter/", "openai-codex-oauth/", "openai/", "gemini/", "anthropic/", "grok/"];
 const isRemoteModelName = (name) => REMOTE_MODEL_PREFIXES.some((prefix) => name.startsWith(prefix)) || name === "claude-sonnet-oauth";
 const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 const READY_TIMEOUT_MS = 90_000;
@@ -180,6 +180,7 @@ function contextMeter(apiUrl, storeRuntime, cfg) {
   const model = String(apiUrl.searchParams.get("model") || "").trim();
   if (model === "claude-sonnet-oauth") numCtx = 131072;
   if (model.startsWith("openai-codex-oauth/")) numCtx = 258400;
+  if (model.startsWith("openai/")) numCtx = 128000;
   const source = (Array.isArray(conversation?.messages) ? conversation.messages : []).filter(isObject).map((m) => ({ role: m.role, content: m.content, tool_calls: m.tool_calls, images: m.images }));
   const manualCompacted = Boolean(conversation?.context_summary);
   const manualOmitted = Number(conversation?.context_omitted_count || 0);
@@ -777,21 +778,21 @@ function resolveConfig(api) {
   const realtimeRaw = raw.realtime && typeof raw.realtime === "object" ? raw.realtime : {};
   const geminiLiveRaw = raw.geminiLive && typeof raw.geminiLive === "object" ? raw.geminiLive : {};
   const storedVoiceMode = String(realtimeRaw.mode || "").trim().toLowerCase();
+  const llamaBinName = process.platform === "win32" ? "llama-server.exe" : "llama-server";
   const defaultLlamaDir = path.join(os.homedir(), ".local", "llama-quick", "llama-b12211");
-  const defaultLlamaBin = path.join(defaultLlamaDir, process.platform === "win32" ? "llama-server.exe" : "llama-server");
-  const defaultModelsDir = path.join(os.homedir(), "models");
-  let defaultLlamaModel = path.join(defaultModelsDir, "qwen3.5-0.8b.gguf");
-  if (!existsSync(defaultLlamaModel)) {
-    try {
-      const candidates = readdirSync(defaultModelsDir).filter(f => f.endsWith(".gguf"));
-      if (candidates.length) defaultLlamaModel = path.join(defaultModelsDir, candidates[0]);
-    } catch {}
-  }
+  const llamaExeCandidates = [
+    path.join(defaultLlamaDir, llamaBinName),
+    path.join(os.homedir(), ".local", "bin", llamaBinName),
+    ...(process.platform === "win32" ? [] : [path.join(os.homedir(), ".local", "bin", "llama")]),
+    path.join(os.homedir(), "llama.cpp", "build", "bin", llamaBinName),
+  ];
+  const resolvedDefaultLlamaBin = llamaExeCandidates.find((p) => existsSync(p)) || llamaExeCandidates[llamaExeCandidates.length - 1];
+  const defaultLlamaModel = resolveGgufModelPath("") || path.join(os.homedir(), "models", "qwen3.5-0.8b.gguf");
   const model = {
     llamaUrl: String(modelRaw.llamaUrl || process.env.MYKOS_LLAMA_CPP_URL || "http://127.0.0.1:9931").replace(/\/+$/, ""),
     strataUrl: String(modelRaw.strataUrl || process.env.MYKOS_STRATA_URL || process.env.STRATA_URL || "http://127.0.0.1:18080").replace(/\/+$/, ""),
     ollamaUrl: String(modelRaw.ollamaUrl || process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/+$/, ""),
-    llamaExe: String(modelRaw.llamaExe || process.env.MYKOS_LLAMA_CPP_EXE || (existsSync(defaultLlamaBin) ? defaultLlamaBin : path.join(os.homedir(), "llama.cpp", "build", "bin", defaultLlamaBin))),
+    llamaExe: String(modelRaw.llamaExe || process.env.MYKOS_LLAMA_CPP_EXE || resolvedDefaultLlamaBin),
     llamaModel: String(modelRaw.llamaModel || process.env.MYKOS_LLAMA_CPP_MODEL || defaultLlamaModel),
     llamaContext: Number(modelRaw.llamaContext || process.env.MYKOS_LLAMA_CPP_CONTEXT || 32768),
     llamaStartTimeoutMs: Number(modelRaw.llamaStartTimeoutMs || 120000),
@@ -975,6 +976,87 @@ function persistVoiceMode(configFile, mode, cfg, logger) {
   }
 }
 
+function listLocalGgufFiles() {
+  const results = [];
+  const modelsDir = path.join(os.homedir(), "models");
+  try {
+    for (const f of readdirSync(modelsDir).sort()) {
+      if (f.endsWith(".gguf")) results.push(path.join(modelsDir, f));
+    }
+  } catch {}
+  const hfHub = path.join(os.homedir(), ".cache", "huggingface", "hub");
+  try {
+    for (const repoDir of readdirSync(hfHub).sort()) {
+      if (!repoDir.startsWith("models--")) continue;
+      const snapsDir = path.join(hfHub, repoDir, "snapshots");
+      let snaps = [];
+      try { snaps = readdirSync(snapsDir).sort(); } catch { continue; }
+      for (const snap of snaps) {
+        const snapPath = path.join(snapsDir, snap);
+        let files = [];
+        try { files = readdirSync(snapPath).sort(); } catch { continue; }
+        for (const f of files) {
+          const low = f.toLowerCase();
+          if (!low.endsWith(".gguf") || low.startsWith("mmproj-") || low.startsWith("dflash-")) continue;
+          const full = path.join(snapPath, f);
+          try {
+            if (statSync(full).size > 200_000_000) results.push(full);
+          } catch {}
+        }
+      }
+    }
+  } catch {}
+  return results;
+}
+
+function resolveGgufModelPath(modelKey = "") {
+  const files = listLocalGgufFiles();
+  if (!files.length) return "";
+  const key = stripLlamaPrefix(modelKey);
+  if (!key || key === "mykos-cuda") {
+    const preferred = files.find((f) => path.basename(f).toLowerCase() === "qwen3.5-0.8b.gguf");
+    return preferred || files[0];
+  }
+  const req = key.toLowerCase();
+  const exact = files.find((f) => path.basename(f, ".gguf").toLowerCase() === req);
+  if (exact) return exact;
+  const norm = (s) => s.toLowerCase().split(":")[0].split("/").pop().replace(/-gguf$/i, "").replace(/_/g, "-");
+  const normReq = norm(req);
+  const byNorm = files.find((f) => {
+    const base = norm(path.basename(f, ".gguf"));
+    return base === normReq || base.startsWith(`${normReq}-`) || normReq.startsWith(`${base}-`);
+  });
+  return byNorm || "";
+}
+
+function stripLlamaPrefix(modelKey) {
+  let clean = String(modelKey || "").trim();
+  if (clean.startsWith("llama_cpp/")) clean = clean.slice("llama_cpp/".length);
+  if (clean.startsWith("llamacpp/")) clean = clean.slice("llamacpp/".length);
+  return clean;
+}
+
+function matchLlamaServerModel(list, modelKey) {
+  const valid = list.filter((m) => m && !m?.status?.failed && m?.status?.value !== "failed");
+  if (!valid.length) return "";
+  const cleanKey = stripLlamaPrefix(modelKey);
+  if (!cleanKey || cleanKey === "mykos-cuda") {
+    const exactAlias = valid.find((m) => String(m.id || "").toLowerCase() === "mykos-cuda");
+    if (exactAlias) return exactAlias.id;
+    const loaded = valid.find((m) => m?.status?.value === "loaded");
+    return (loaded || valid[0]).id || "";
+  }
+  const req = cleanKey.toLowerCase();
+  const ordered = [...valid].sort((a, b) => (a?.status?.value === "loaded" ? 0 : 1) - (b?.status?.value === "loaded" ? 0 : 1));
+  const exact = ordered.find((m) => String(m.id || "").toLowerCase() === req);
+  if (exact) return exact.id;
+  const suffixOrBase = ordered.find((m) => {
+    const id = String(m.id || "").toLowerCase();
+    return id.endsWith(`/${req}`) || req.endsWith(`/${id}`) || id.split(":")[0] === req.split(":")[0];
+  });
+  return suffixOrBase ? suffixOrBase.id : "";
+}
+
 function loadModelPreset(modelKey) {
   const iniPath = path.join(os.homedir(), "models", "models.ini");
   let ngl = 20;
@@ -1036,17 +1118,11 @@ class ModelController {
     if (!modelKey) return true;
     try {
       const modelsRes = await probeJson(`${this.config.llamaUrl}/v1/models`, 2_000);
-      const list = Array.isArray(modelsRes?.json?.data) ? modelsRes.json.data : [];
-      let cleanKey = String(modelKey || "").trim();
-      if (cleanKey.startsWith("llama_cpp/")) cleanKey = cleanKey.slice("llama_cpp/".length);
-      if (cleanKey.startsWith("llamacpp/")) cleanKey = cleanKey.slice("llamacpp/".length);
-      const match = list.find((m) => {
-        const id = String(m?.id || "").toLowerCase();
-        const target = cleanKey.toLowerCase();
-        return id === target || id.endsWith(`/${target}`) || target.endsWith(`/${id}`);
-      });
-      if (match) return true;
-      return list.length > 0;
+      if (!modelsRes || modelsRes.status >= 400 || !Array.isArray(modelsRes?.json?.data)) {
+        return true;
+      }
+      const list = modelsRes.json.data;
+      return Boolean(matchLlamaServerModel(list, modelKey));
     } catch {
       return true;
     }
@@ -1060,23 +1136,15 @@ class ModelController {
       await this.stopLlama();
       await this.unloadOllama();
 
+      let cleanKey = stripLlamaPrefix(modelKey);
       let targetModel = this.config.llamaModel;
-      let cleanKey = String(modelKey || "").trim();
-      if (cleanKey.startsWith("llama_cpp/")) cleanKey = cleanKey.slice("llama_cpp/".length);
-      if (cleanKey.startsWith("llamacpp/")) cleanKey = cleanKey.slice("llamacpp/".length);
-      if (cleanKey === "mykos-cuda") cleanKey = "qwen2.5-7b";
-
-      if (cleanKey) {
-        const candidate = path.join(os.homedir(), "models", `${cleanKey}.gguf`);
-        if (existsSync(candidate)) {
-          targetModel = candidate;
-        } else {
-          try {
-            const files = readdirSync(path.join(os.homedir(), "models"));
-            const match = files.find((f) => f.toLowerCase() === `${cleanKey.toLowerCase()}.gguf`);
-            if (match) targetModel = path.join(os.homedir(), "models", match);
-          } catch {}
-        }
+      if (!cleanKey || cleanKey === "mykos-cuda") {
+        const discovered = resolveGgufModelPath("");
+        if (discovered) targetModel = discovered;
+        cleanKey = path.basename(targetModel, ".gguf") || "mykos-cuda";
+      } else {
+        const matched = resolveGgufModelPath(cleanKey);
+        if (matched) targetModel = matched;
       }
 
       try {
@@ -1098,7 +1166,7 @@ class ModelController {
         "--no-webui",
         "--host", target.hostname || "127.0.0.1",
         "--port", String(target.port || 9931),
-        "--alias", cleanKey || "qwen2.5-7b",
+        "--alias", cleanKey,
       ];
       if (preset.reasoning && ["off", "on", "auto"].includes(preset.reasoning)) {
         args.push("--reasoning", preset.reasoning);
@@ -1203,38 +1271,16 @@ class ModelController {
 
   async resolveLlamaModelId(modelKey) {
     if (!modelKey) return modelKey;
+    const cleanKey = stripLlamaPrefix(modelKey);
     try {
       const modelsRes = await probeJson(`${this.config.llamaUrl}/v1/models`, 2_000);
-      const list = Array.isArray(modelsRes?.json?.data) ? modelsRes.json.data : [];
-      if (!list.length) return modelKey;
-
-      let cleanKey = String(modelKey || "").trim();
-      if (cleanKey.startsWith("llama_cpp/")) cleanKey = cleanKey.slice("llama_cpp/".length);
-      if (cleanKey.startsWith("llamacpp/")) cleanKey = cleanKey.slice("llamacpp/".length);
-      const req = cleanKey.toLowerCase();
-
-      const loadedModels = list.filter((m) => m?.status?.value === "loaded");
-      const loadedExact = loadedModels.find((m) => String(m.id || "").toLowerCase() === req);
-      if (loadedExact) return loadedExact.id;
-
-      for (const m of loadedModels) {
-        const id = String(m.id || "").toLowerCase();
-        if (id.includes(req) || req.includes(id) || id.replace(/[^a-z0-9]/g, "").includes(req.replace(/[^a-z0-9]/g, ""))) {
-          return m.id;
-        }
+      if (!modelsRes || modelsRes.status >= 400 || !Array.isArray(modelsRes?.json?.data)) {
+        return cleanKey;
       }
-
-      const exact = list.find((m) => String(m.id || "").toLowerCase() === req);
-      if (exact) return exact.id;
-
-      for (const m of list) {
-        const id = String(m.id || "").toLowerCase();
-        if (id.includes(req) || req.includes(id) || id.replace(/[^a-z0-9]/g, "").includes(req.replace(/[^a-z0-9]/g, ""))) {
-          return m.id;
-        }
-      }
+      const matched = matchLlamaServerModel(modelsRes.json.data, cleanKey);
+      if (matched) return matched;
     } catch {}
-    return modelKey;
+    return cleanKey;
   }
 
   async request(provider, payload) {
@@ -1350,16 +1396,19 @@ class ControlPlane {
         return message;
       },
       remoteModel: async (model, messages, conversationId, generation, signal, permissionMode = "supervisado") => {
+        const isVoice = meta?.operation === "voice-turn" || Boolean(meta?.call_id);
         const result = await post("remote-model", {
           model,
           messages,
           conversation_id: conversationId,
           supports_vision: false,
           generation: isObject(generation) ? generation : {},
-          activity_id: `voice_${String(meta.call_id || "")}`,
+          activity_id: isVoice ? `voice_${String(meta.call_id || "")}` : String(meta?.activity_id || ""),
           permission_mode: permissionMode,
         }, 900_000, {}, signal);
-        if (result.status >= 400 || !isObject(result.body)) throw failure("No se pudo consultar el modelo de voz", result);
+        if (result.status >= 400 || !isObject(result.body)) {
+          throw failure(isVoice ? "No se pudo consultar el modelo de voz" : "No se pudo consultar el modelo remoto", result);
+        }
         return result.body;
       },
       tts: async (text, voice = "em_alex", signal) => {
@@ -2798,6 +2847,7 @@ export default {
 
             // — Actividad —
             const activityId = String(chatPayload.activity_id ?? "").trim() || randomUUID().replace(/-/g, "");
+            chatMeta.activity_id = activityId;
             controlPlane.activity.update(activityId, { status: "working", phase: "preparing", label: "Preparando contexto." });
 
             // — Conversación del almacén —
@@ -2881,7 +2931,7 @@ export default {
             };
 
             // — Despacho: local (runChatLoop) o remoto (remoteModel) —
-            const REMOTE_PREFIXES = ["antigravity/", "qwen-cli/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "gemini/", "openrouter/", "openai-codex-oauth/", "anthropic/", "grok/"];
+            const REMOTE_PREFIXES = ["antigravity/", "qwen-cli/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "gemini/", "openrouter/", "openai-codex-oauth/", "openai/", "anthropic/", "grok/"];
             const isRemote = REMOTE_PREFIXES.some((p) => model.startsWith(p)) || model === "claude-sonnet-oauth" || model === "gpt-live-1-codex";
 
             // — Contexto: mensajes de la conversación → array para el modelo —
@@ -3277,12 +3327,36 @@ export default {
           recordApiResult(200, { owner: "mykos-gateway" });
           return true;
         }
-        if (req.method === "POST" && ["/api/oauth/openrouter/refresh", "/api/oauth/meta/refresh", "/api/oauth/grok/refresh"].includes(apiPath)) {
+        if (req.method === "POST" && ["/api/oauth/openai/refresh", "/api/oauth/claude/refresh", "/api/oauth/openrouter/refresh", "/api/oauth/meta/refresh", "/api/oauth/grok/refresh"].includes(apiPath)) {
+          const isOpenAI = apiPath === "/api/oauth/openai/refresh";
+          const isClaude = apiPath === "/api/oauth/claude/refresh";
           const isMeta = apiPath === "/api/oauth/meta/refresh";
           const isGrok = apiPath === "/api/oauth/grok/refresh";
           let payload = {};
           try { payload = JSON.parse((await readBody(req, 2048)) || "{}"); } catch {
             sendJson(res, 400, { error: "El cuerpo debe ser JSON válido." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
+          }
+          if (isOpenAI) {
+            if (payload?.provider !== undefined && !["openai", "openai_codex_oauth", "openai_api"].includes(payload.provider)) {
+              sendJson(res, 400, { error: "Proveedor OAuth no compatible." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
+            }
+            const refreshed = await jsonRequest(`${backend.config.url}/mykos-control/oauth/openai/refresh`, { provider: String(payload?.provider || "openai_codex_oauth") }, 30_000, { "X-MyKOS-Control-Token": cfg.control.token });
+            const status = refreshed.status >= 400 ? refreshed.status : 503;
+            if (refreshed.status >= 400 || !isObject(refreshed.body)) {
+              sendJson(res, status, { ok: false, error: String(refreshed.body?.error || "No se pudo refrescar OpenAI."), models: 0 }); recordApiResult(status, { owner: "mykos-gateway" }); return true;
+            }
+            sendJson(res, 200, refreshed.body); recordApiResult(200, { owner: "mykos-gateway" }); return true;
+          }
+          if (isClaude) {
+            if (payload?.provider !== undefined && !["claude", "anthropic_oauth", "claude_oauth", "anthropic_api"].includes(payload.provider)) {
+              sendJson(res, 400, { error: "Proveedor OAuth no compatible." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
+            }
+            const refreshed = await jsonRequest(`${backend.config.url}/mykos-control/oauth/claude/refresh`, { provider: String(payload?.provider || "anthropic_oauth") }, 30_000, { "X-MyKOS-Control-Token": cfg.control.token });
+            const status = refreshed.status >= 400 ? refreshed.status : 503;
+            if (refreshed.status >= 400 || !isObject(refreshed.body)) {
+              sendJson(res, status, { ok: false, error: String(refreshed.body?.error || "No se pudo refrescar Claude / Anthropic."), models: 0 }); recordApiResult(status, { owner: "mykos-gateway" }); return true;
+            }
+            sendJson(res, 200, refreshed.body); recordApiResult(200, { owner: "mykos-gateway" }); return true;
           }
           if (isGrok) {
             if (payload?.provider !== undefined && payload.provider !== "grok" && payload.provider !== "grok_oauth" && payload.provider !== "grok_api") {
@@ -3323,7 +3397,8 @@ export default {
           try { payload = JSON.parse((await readBody(req, 2048)) || "{}"); } catch {
             sendJson(res, 400, { error: "El cuerpo debe ser JSON válido." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
           }
-          if (!provider || (payload?.provider !== undefined && payload.provider !== provider && payload.provider !== name)) {
+          const allowExtra = name === "openai" && payload?.provider === "openai_api";
+          if (!provider || (payload?.provider !== undefined && !allowExtra && payload.provider !== provider && payload.provider !== name)) {
             sendJson(res, 400, { error: "Proveedor OAuth no compatible." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
           }
           const reqBody = { provider };
@@ -3343,55 +3418,70 @@ export default {
           const status = await proxyRequest(req, res, backend.config.url, null, `/mykos-control/oauth/openrouter/callback${apiUrl.search}`, { "x-mykos-control-token": cfg.control.token });
           recordApiResult(status, { owner: "mykos-gateway", internal_path: "/mykos-control/oauth/openrouter/callback" }); return true;
         }
-        if (req.method === "POST" && ["/api/oauth/openai/logout", "/api/oauth/claude/logout", "/api/oauth/openrouter/logout", "/api/oauth/meta/logout", "/api/oauth/grok/logout", "/api/providers/nvidia/logout", "/api/providers/kimi/logout", "/api/providers/gemini/logout", "/api/providers/mistral/logout", "/api/providers/anthropic/logout", "/api/providers/antigravity/logout", "/api/providers/qwen/logout", "/api/providers/grok/logout"].includes(apiPath)) {
+        if (req.method === "POST" && ["/api/oauth/openai/logout", "/api/oauth/claude/logout", "/api/oauth/openrouter/logout", "/api/oauth/meta/logout", "/api/oauth/grok/logout", "/api/providers/nvidia/logout", "/api/providers/kimi/logout", "/api/providers/gemini/logout", "/api/providers/mistral/logout", "/api/providers/anthropic/logout", "/api/providers/antigravity/logout", "/api/providers/qwen/logout", "/api/providers/grok/logout", "/api/providers/openai/logout", "/api/providers/openrouter/logout", "/api/providers/meta/logout"].includes(apiPath)) {
           const match = apiPath.match(/^\/api\/(oauth|providers)\/([^/]+)\/logout$/);
           const group = match?.[1] || "";
           const name = match?.[2] || "";
-          const provider = ({ openai: "openai_codex_oauth", claude: "anthropic_oauth", openrouter: "openrouter", meta: "meta_ai_oauth", grok: group === "oauth" ? "grok_oauth" : "grok_api", nvidia: "nvidia_api", kimi: "kimi_api", gemini: "gemini_api", mistral: "mistral_api", anthropic: "anthropic_api", antigravity: "antigravity_cli", qwen: "qwen_cli" })[name];
+          const provider = ({ openai: group === "providers" ? "openai_api" : "openai_codex_oauth", claude: "anthropic_oauth", openrouter: "openrouter", meta: group === "providers" ? "meta_ai_api" : "meta_ai_oauth", grok: group === "oauth" ? "grok_oauth" : "grok_api", nvidia: "nvidia_api", kimi: "kimi_api", gemini: "gemini_api", mistral: "mistral_api", anthropic: "anthropic_api", antigravity: "antigravity_cli", qwen: "qwen_cli" })[name];
           let payload = {};
           try { payload = JSON.parse((await readBody(req, 2048)) || "{}"); } catch {
             sendJson(res, 400, { error: "El cuerpo debe ser JSON válido." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
           }
-          if (!provider || (payload?.provider !== undefined && payload.provider !== provider && payload.provider !== name && payload.provider !== provider.replace(/_api$/, "") && payload.provider !== provider.replace(/_cli$/, ""))) {
+          const allowExtra = (name === "openai" && ["openai_api", "openai_codex_oauth"].includes(payload?.provider))
+            || (name === "claude" && payload?.provider === "claude_oauth")
+            || (name === "openrouter" && ["openrouter_oauth", "openrouter_api"].includes(payload?.provider))
+            || (name === "meta" && ["meta_ai", "meta_ai_oauth", "meta_ai_api"].includes(payload?.provider))
+            || (name === "grok" && ["grok_oauth", "grok_api"].includes(payload?.provider));
+          if (!provider || (payload?.provider !== undefined && !allowExtra && payload.provider !== provider && payload.provider !== name && payload.provider !== provider.replace(/_api$/, "") && payload.provider !== provider.replace(/_cli$/, ""))) {
             sendJson(res, 400, { error: "Proveedor no compatible." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
           }
-          const loggedOut = await jsonRequest(`${backend.config.url}/mykos-control/${group}/${name}/logout`, { provider }, 60_000, { "X-MyKOS-Control-Token": cfg.control.token });
+          const forwardedProvider = payload?.provider ? String(payload.provider) : (group === "oauth" && name === "openai" ? "openai" : provider);
+          const loggedOut = await jsonRequest(`${backend.config.url}/mykos-control/${group}/${name}/logout`, { provider: forwardedProvider }, 60_000, { "X-MyKOS-Control-Token": cfg.control.token });
           const status = loggedOut.status >= 400 ? loggedOut.status : 503;
           if (loggedOut.status >= 400 || !isObject(loggedOut.body)) {
             sendJson(res, status, { ok: false, error: String(loggedOut.body?.error || `No se pudo cerrar ${name}.`) }); recordApiResult(status, { owner: "mykos-gateway" }); return true;
           }
           sendJson(res, 200, loggedOut.body); recordApiResult(200, { owner: "mykos-gateway" }); return true;
         }
-        if (req.method === "POST" && /^\/api\/providers\/(nvidia|kimi|gemini|mistral|anthropic|antigravity|qwen|grok)\/refresh$/.test(apiPath)) {
+        if (req.method === "POST" && /^\/api\/providers\/(nvidia|kimi|gemini|mistral|anthropic|antigravity|qwen|grok|openai|openrouter|meta)\/refresh$/.test(apiPath)) {
           const match = apiPath.match(/^\/api\/providers\/([^/]+)\/refresh$/);
           const provider = match?.[1] || "";
-          const expectedProvider = (provider === "antigravity" || provider === "qwen") ? `${provider}_cli` : `${provider}_api`;
+          const expectedProvider = (provider === "antigravity" || provider === "qwen")
+            ? `${provider}_cli`
+            : (provider === "openrouter" ? "openrouter" : (provider === "meta" ? "meta_ai_oauth" : `${provider}_api`));
+          const accepted = new Set([provider, expectedProvider, `${provider}_api`, `${provider}_oauth`]);
+          if (provider === "openai") accepted.add("openai_codex_oauth");
+          if (provider === "meta") accepted.add("meta_ai");
           let payload = {};
           try { payload = JSON.parse((await readBody(req, 2048)) || "{}"); } catch {
             sendJson(res, 400, { error: "El cuerpo debe ser JSON válido." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
           }
-          if (payload?.provider !== undefined && payload.provider !== provider && payload.provider !== expectedProvider) {
+          if (payload?.provider !== undefined && !accepted.has(payload.provider)) {
             sendJson(res, 400, { error: "Proveedor no compatible." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
           }
-          const refreshed = await jsonRequest(`${backend.config.url}/mykos-control/providers/${provider}/refresh`, { provider: expectedProvider }, 30_000, { "X-MyKOS-Control-Token": cfg.control.token });
+          const refreshed = await jsonRequest(`${backend.config.url}/mykos-control/providers/${provider}/refresh`, { provider: String(payload?.provider || expectedProvider) }, 60_000, { "X-MyKOS-Control-Token": cfg.control.token });
           const status = refreshed.status >= 400 ? refreshed.status : 503;
           if (refreshed.status >= 400 || !isObject(refreshed.body)) {
             sendJson(res, status, { ok: false, error: String(refreshed.body?.error || `No se pudo refrescar ${provider}.`), models: 0 }); recordApiResult(status, { owner: "mykos-gateway" }); return true;
           }
           sendJson(res, 200, refreshed.body); recordApiResult(200, { owner: "mykos-gateway" }); return true;
         }
-        if (req.method === "POST" && /^\/api\/providers\/(nvidia|kimi|gemini|mistral|anthropic|antigravity|qwen|grok)\/connect$/.test(apiPath)) {
+        if (req.method === "POST" && /^\/api\/providers\/(nvidia|kimi|gemini|mistral|anthropic|antigravity|qwen|grok|openai|openrouter|meta)\/connect$/.test(apiPath)) {
           const match = apiPath.match(/^\/api\/providers\/([^/]+)\/connect$/);
           const provider = match?.[1] || "";
-          const expectedProvider = (provider === "antigravity" || provider === "qwen") ? `${provider}_cli` : `${provider}_api`;
+          const expectedProvider = (provider === "antigravity" || provider === "qwen")
+            ? `${provider}_cli`
+            : (provider === "openrouter" ? "openrouter" : (provider === "meta" ? "meta_ai_api" : `${provider}_api`));
+          const accepted = new Set([provider, expectedProvider, `${provider}_api`, `${provider}_oauth`]);
+          if (provider === "meta") accepted.add("meta_ai");
           let payload = {};
           try { payload = JSON.parse((await readBody(req, 2048)) || "{}"); } catch {
             sendJson(res, 400, { error: "El cuerpo debe ser JSON válido." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
           }
-          if (payload?.provider !== undefined && payload.provider !== provider && payload.provider !== expectedProvider) {
+          if (payload?.provider !== undefined && !accepted.has(payload.provider)) {
             sendJson(res, 400, { error: "Proveedor no compatible." }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
           }
-          let forwardPayload = { provider: expectedProvider };
+          let forwardPayload = { provider: String(payload?.provider || expectedProvider) };
           if (provider === "antigravity" || provider === "qwen") {
             // Antigravity y Qwen Code se activan/desactivan usando la configuración/sesión local del CLI
             forwardPayload.enabled = true;
@@ -3400,7 +3490,7 @@ export default {
           } else {
             const apiKey = typeof payload?.api_key === "string" ? payload.api_key.trim() : "";
             if (!apiKey) {
-              const names = { nvidia: "NVIDIA", gemini: "Google AI Studio (Gemini)", kimi: "Kimi", mistral: "Mistral", anthropic: "Anthropic", grok: "xAI (Grok)" };
+              const names = { nvidia: "NVIDIA", gemini: "Google AI Studio (Gemini)", kimi: "Kimi", mistral: "Mistral", anthropic: "Anthropic", grok: "xAI (Grok)", openai: "OpenAI", openrouter: "OpenRouter", meta: "Meta Model API" };
               sendJson(res, 400, { ok: false, error: `Introduce una clave personal de ${names[provider] || provider}.` }); recordApiResult(400, { owner: "mykos-gateway" }); return true;
             }
             forwardPayload.api_key = apiKey;

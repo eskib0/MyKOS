@@ -2,18 +2,18 @@
   "roots": [
     {
       "name": "workspace",
-      "path": "~/.mykos/workspace",
-      "description": "Área de trabajo personal del usuario"
+      "path": "~/.mykos/cortex/workspace",
+      "description": "Área de trabajo personal del usuario integrada en Cortex"
     },
     {
-      "name": "obsidian",
-      "path": "~/Documentos/Obsidian Vault",
-      "description": "Cerebro MyKOS: Base de conocimiento y notas en Obsidian"
+      "name": "cortex",
+      "path": "~/.mykos/cortex",
+      "description": "MyKOS Cortex: Grafo de conocimiento y memoria viva integrada"
     },
     {
       "name": "cerebro",
-      "path": "~/Documentos/Obsidian Vault",
-      "description": "Segundo cerebro y memoria viva estructurada en Obsidian"
+      "path": "~/.mykos/cortex",
+      "description": "MyKOS Cortex: Grafo de conocimiento y memoria viva integrada"
     },
     {
       "name": "mykos",

@@ -2,7 +2,7 @@
 cortex.py — Motor oficial de índice de conocimiento, enlaces y grafo de MyKOS Cortex.
 
 Basado en Python stdlib (PyYAML opcional si está disponible).
-Implementa el indexador incremental de notas Markdown estilo Obsidian:
+Implementa el indexador incremental de notas Markdown de la bóveda Cortex nativa:
   - Escaneo seguro con `followlinks=False` (evita bucles por symlinks recursivos).
   - Caché de metadatos por hash SHA-256 de contenido.
   - Resolución fiel de wikilinks (`[[Nota|alias]]`, `[[Nota#Sección]]`),
@@ -16,6 +16,7 @@ import datetime
 import hashlib
 import os
 import re
+import shutil
 import threading
 import time
 import unicodedata
@@ -29,8 +30,9 @@ try:
 except Exception:  # pragma: no cover
     yaml = None
 
-DEFAULT_VAULT_PATH = Path.home() / "Documentos" / "Obsidian Vault"
-FALLBACK_VAULT_PATH = Path.home() / ".mykos" / "workspace" / "Cerebro_Obsidian"
+DEFAULT_VAULT_PATH = Path.home() / ".mykos" / "cortex"
+FALLBACK_VAULT_PATH = Path.home() / ".mykos" / "workspace"
+_OFFICIAL_DEFAULT_VAULT = DEFAULT_VAULT_PATH
 
 # ───────────────────────── 1. PARSER ─────────────────────────
 WIKILINK_RE = re.compile(r"(!?)\[\[(.+?)\]\]")
@@ -276,6 +278,118 @@ class Diff:
         }
 
 
+def _has_markdown_notes(root: Path, *, ignore_subdirs: set[str] | None = None) -> bool:
+    if not root.exists():
+        return False
+    skip_dirs = ignore_subdirs or set()
+    for dp, dn, fn in os.walk(root, followlinks=False):
+        dp_path = Path(dp)
+        is_top = dp_path == root
+        dn[:] = [
+            d
+            for d in dn
+            if not d.startswith(".")
+            and d != "node_modules"
+            and not (is_top and d in skip_dirs)
+            and not (dp_path / d).is_symlink()
+        ]
+        for fname in fn:
+            if not fname.startswith(".") and fname.lower().endswith(".md") and not (dp_path / fname).is_symlink():
+                return True
+    return False
+
+
+def _unlink_if_symlink(path: Path) -> None:
+    try:
+        if path.is_symlink():
+            path.unlink()
+    except OSError:
+        pass
+
+
+def _copy_legacy_tree(src: Path, dst: Path) -> None:
+    dst.mkdir(parents=True, exist_ok=True)
+    for dp, dn, fn in os.walk(src, followlinks=False):
+        dp_path = Path(dp)
+        dn[:] = [
+            d
+            for d in dn
+            if not d.startswith(".")
+            and d != "node_modules"
+            and not (dp_path / d).is_symlink()
+        ]
+        rel_dir = dp_path.relative_to(src)
+        target_dir = dst / rel_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for fname in fn:
+            if fname.startswith("."):
+                continue
+            src_file = dp_path / fname
+            if src_file.is_symlink():
+                continue
+            dst_file = target_dir / fname
+            if not dst_file.exists():
+                try:
+                    shutil.copy2(src_file, dst_file)
+                except OSError:
+                    pass
+
+
+def _sync_workspace_into_cortex(cortex_root: Path) -> None:
+    target_ws = cortex_root / "workspace"
+    home_ws = Path.home() / ".mykos" / "workspace"
+    legacy_ws_link_name = "Cerebro_" + "Obsidian"
+
+    _unlink_if_symlink(home_ws / legacy_ws_link_name)
+    if home_ws.is_dir() and not home_ws.is_symlink():
+        try:
+            if not target_ws.exists() and not target_ws.is_symlink():
+                shutil.move(str(home_ws), str(target_ws))
+                home_ws.symlink_to(target_ws)
+            elif target_ws.is_dir() and not target_ws.is_symlink() and not any(target_ws.iterdir()):
+                target_ws.rmdir()
+                shutil.move(str(home_ws), str(target_ws))
+                home_ws.symlink_to(target_ws)
+        except OSError:
+            pass
+    elif not home_ws.exists() and not home_ws.is_symlink():
+        target_ws.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            home_ws.symlink_to(target_ws)
+        except OSError:
+            pass
+    _unlink_if_symlink(target_ws / legacy_ws_link_name)
+
+
+def _migrate_legacy_vault(target: Path) -> None:
+    """Migra bóveda y workspace previos hacia la bóveda Cortex nativa en `~/.mykos/cortex`."""
+    target.mkdir(parents=True, exist_ok=True)
+    legacy_ws_link = Path.home() / ".mykos" / "workspace" / ("Cerebro_" + "Obsidian")
+    legacy_docs_vault = Path.home() / "Documentos" / ("Obsidian" + " Vault")
+
+    legacy_sources: list[Path] = []
+    if legacy_ws_link.is_symlink():
+        try:
+            resolved_legacy = legacy_ws_link.resolve()
+            if resolved_legacy.is_dir():
+                legacy_sources.append(resolved_legacy)
+        except OSError:
+            pass
+    elif legacy_ws_link.is_dir():
+        legacy_sources.append(legacy_ws_link)
+    if legacy_docs_vault.is_dir():
+        legacy_sources.append(legacy_docs_vault)
+
+    if not _has_markdown_notes(target, ignore_subdirs={"workspace"}):
+        for src in legacy_sources:
+            if src != target.resolve() and _has_markdown_notes(src):
+                _copy_legacy_tree(src, target)
+                break
+
+    _unlink_if_symlink(target / "01 - Proyectos MyKOS" / "Workspace (Archivos MyKOS)")
+    _sync_workspace_into_cortex(target)
+
+
 def resolve_vault_path(vault_path: str | Path | None = None) -> Path:
     """Resuelve la ruta de la bóveda: explícita -> env -> default -> fallback."""
     if vault_path is not None and str(vault_path).strip():
@@ -284,6 +398,10 @@ def resolve_vault_path(vault_path: str | Path | None = None) -> Path:
     env_vault = os.environ.get("MYKOS_CORTEX_VAULT") or os.environ.get("MYKOS_BRAIN_VAULT")
     if env_vault and env_vault.strip():
         return Path(env_vault).expanduser().resolve()
+
+    if DEFAULT_VAULT_PATH == _OFFICIAL_DEFAULT_VAULT:
+        _migrate_legacy_vault(DEFAULT_VAULT_PATH)
+        return DEFAULT_VAULT_PATH.resolve()
 
     if DEFAULT_VAULT_PATH.exists():
         return DEFAULT_VAULT_PATH.resolve()
@@ -300,7 +418,7 @@ class CortexEngine:
     def __init__(
         self,
         vault_path: str | Path | None = None,
-        ignore: tuple[str, ...] = (".obsidian", ".git", ".trash", "node_modules"),
+        ignore: tuple[str, ...] = (".cortex", ".git", ".trash", "node_modules"),
         auto_build: bool = True,
     ):
         self.root: Path = resolve_vault_path(vault_path)
@@ -317,8 +435,82 @@ class CortexEngine:
         self._last_build_ms: float = 0.0
         self._last_sync_time: float = time.perf_counter()
 
-        if auto_build and self.root.exists():
+        if auto_build:
+            self.root.mkdir(parents=True, exist_ok=True)
+            self._ensure_starter_vault()
             self.full_build()
+
+    def _ensure_starter_vault(self) -> None:
+        """Inicializa la estructura base de memoria MyKOS si la bóveda Cortex aún no tiene notas."""
+        try:
+            official = _OFFICIAL_DEFAULT_VAULT.resolve()
+        except OSError:
+            official = _OFFICIAL_DEFAULT_VAULT
+        is_official = self.root == official
+        if is_official:
+            (self.root / "workspace").mkdir(parents=True, exist_ok=True)
+            repo_docs = Path(__file__).resolve().parents[2] / "docs"
+            docs_link = self.root / "docs"
+            if repo_docs.is_dir() and not docs_link.exists() and not docs_link.is_symlink():
+                try:
+                    docs_link.symlink_to(repo_docs)
+                except OSError:
+                    pass
+
+        ignore_subdirs = {"workspace"} if is_official else set()
+        if _has_markdown_notes(self.root, ignore_subdirs=ignore_subdirs):
+            return
+
+        starter_notes: dict[str, str] = {
+            "00 - Centro de Mando/00 - Dashboard MyKOS.md": (
+                "---\n"
+                "aliases: [Dashboard, Inicio, Home]\n"
+                "tags: [moc, dashboard, mykos]\n"
+                "---\n\n"
+                "# Centro de Mando — MyKOS Cortex\n\n"
+                "Bóveda nativa integrada en `~/.mykos/cortex` (con `workspace/` vivo incluido).\n\n"
+                "## Mapa de Contenidos\n"
+                "- [[00 - Preferencias y Memoria]]\n"
+                "- [[01 - Arquitectura MyKOS]]\n"
+                "- [[Bitacora Inicial]]\n"
+            ),
+            "00 - Centro de Mando/00 - Preferencias y Memoria.md": (
+                "---\n"
+                "aliases: [Preferencias, Memoria, Perfil del Usuario]\n"
+                "tags: [memoria, preferencias, perfil, mykos]\n"
+                "---\n\n"
+                "# Preferencias y Memoria Persistente\n\n"
+                "Aquí guarda MyKOS tus preferencias de trato, idioma, proyectos y recuerdos clave.\n\n"
+                "- Plataforma soberana ejecutada localmente (GPU CUDA, Ollama o proveedores configurados en MyKOS).\n"
+                "- Vuelve al índice en [[00 - Dashboard MyKOS]].\n"
+                "- Documentación técnica del sistema en [[01 - Arquitectura MyKOS]].\n"
+            ),
+            "01 - Proyectos MyKOS/01 - Arquitectura MyKOS.md": (
+                "---\n"
+                "tags: [proyecto, arquitectura, mykos]\n"
+                "---\n\n"
+                "# Arquitectura MyKOS\n\n"
+                "- Gateway HTTP y políticas en Node.js (`gateway/app/gateway-plugin/mykos-ui`).\n"
+                "- Worker Python de herramientas y memoria (`gateway/app/server.py`).\n"
+                "- Documentación técnica del repositorio disponible en `docs/`.\n"
+                "- Índice general: [[00 - Dashboard MyKOS]] · Registro inicial: [[Bitacora Inicial]].\n"
+            ),
+            "04 - Bitácora y Diario/Bitacora Inicial.md": (
+                "---\n"
+                "tags: [bitacora, diario, mykos]\n"
+                "---\n\n"
+                "# Bitácora Inicial de Cortex\n\n"
+                "Bóveda inicializada automáticamente por MyKOS Cortex para seguimiento diario, "
+                "investigaciones en `workspace/` y memoria viva enlazada.\n\n"
+                "- Volver a [[00 - Dashboard MyKOS]].\n"
+                "- Ver [[00 - Preferencias y Memoria]] y [[01 - Arquitectura MyKOS]].\n"
+            ),
+        }
+        for rel_path, content in starter_notes.items():
+            dst = self.root / rel_path
+            if not dst.exists():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_text(content, encoding="utf-8")
 
     # ---- escaneo y utilidades internas
     def _scan(self) -> dict[str, FileInfo]:

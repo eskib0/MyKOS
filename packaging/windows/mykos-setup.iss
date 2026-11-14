@@ -1,11 +1,11 @@
 ; ==============================================================================
 ; Script de Inno Setup 6 para MyKOS Ecosystem (Instalador Oficial de Windows)
-; Genera: dist\MyKOS-Setup-2.0.5.exe (Instalador para usuario, sin requerir admin)
+; Genera: dist\MyKOS-Setup-2.0.7.exe (Instalador para usuario, sin requerir admin)
 ; ==============================================================================
 
 #define MyAppName "MyKOS"
 #define MyAppFullName "MyKOS Ecosystem"
-#define MyAppVersion "2.0.5"
+#define MyAppVersion "2.0.7"
 #define MyAppPublisher "Ruben (eskib0)"
 #define MyAppURL "https://github.com/eskib0/MyKOS"
 #define MyAppExeName "MyKOS.vbs"

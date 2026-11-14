@@ -75,9 +75,11 @@ async function acquireSession() {
     throw new Error("No se pudo obtener token OAuth de Meta AI (ecto1)");
   }
   const scripts = [
-    ...new Set(
-      [...text.matchAll(/src="(\/_next\/static\/[^"]+\.js)"/g)].map((m) => m[1])
-    ),
+    ...new Set([
+      ...[...text.matchAll(/src="(\/_next\/static\/[^"]+\.js)"/g)].map((m) => m[1]),
+      ...[...text.matchAll(/href="(\/_next\/static\/[^"]+\.js)"/g)].map((m) => m[1]),
+      ...[...text.matchAll(/static\/[^"'\s<>]+\.js/g)].map((m) => "/_next/" + m[0]),
+    ]),
   ];
   return {
     accessToken: tempUser.accessToken,
@@ -88,14 +90,229 @@ async function acquireSession() {
   };
 }
 
+const CHUNK_CACHE_TTL_SECONDS = 24 * 3600;
+
+async function fetchTextBatch(urls, cookieHeader, concurrency = 12) {
+  const results = new Map();
+  let cursor = 0;
+  async function worker() {
+    while (cursor < urls.length) {
+      const idx = cursor++;
+      const url = urls[idx];
+      if (!url || results.has(url)) continue;
+      try {
+        const res = await fetch("https://www.meta.ai" + url, {
+          headers: { "User-Agent": UA, Cookie: cookieHeader || "" },
+        });
+        if (res.ok) {
+          results.set(url, await res.text());
+        }
+      } catch {}
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, urls.length)) }, () => worker()));
+  return results;
+}
+
+function registerTurbopackArray(arr, startIdx, sourceUrl, factories) {
+  let i = startIdx;
+  while (i < arr.length) {
+    if (Array.isArray(arr[i])) {
+      registerTurbopackArray(arr[i], 0, sourceUrl, factories);
+      i++;
+      continue;
+    }
+    const ids = [];
+    while (i < arr.length && typeof arr[i] === "number") {
+      ids.push(arr[i++]);
+    }
+    const fn = arr[i++];
+    if (typeof fn === "function") {
+      for (const id of ids) factories.set(id, { ids, fn, sourceUrl });
+    }
+  }
+}
+
+function parseAsyncLoaders(chunkTexts) {
+  const asyncLoaders = new Map();
+  const re = /(\d+),\w+=>\{\w+\.v\(\w+=>Promise\.all\(\[([^\]]+)\].{0,120}?=>\w+\((\d+)\)\)/g;
+  for (const txt of chunkTexts) {
+    for (const m of txt.matchAll(re)) {
+      const urls = [...m[2].matchAll(/"([^"]+\.js)"/g)].map((x) =>
+        x[1].startsWith("/") ? x[1] : "/_next/" + x[1]
+      );
+      asyncLoaders.set(Number(m[1]), { urls, targetId: Number(m[3]) });
+    }
+  }
+  return asyncLoaders;
+}
+
+function resolveDgwRootIds(dgwChunkText, factories) {
+  const ids = {
+    dgwClient: 105667,
+    encodeReqProto: 501697,
+    decodeProto: 70540,
+    fileDescProto: 408787,
+    getMsgDesc: 328693,
+    txDep: 162485,
+  };
+  if (!factories.has(ids.dgwClient)) {
+    const m = dgwChunkText.match(/get endpoint\(\)\{return [^}]+\}get appId\(\)\{return [^}]+\}\}\],(\d+)\)/);
+    if (m) {
+      ids.dgwClient = Number(m[1]);
+    } else {
+      for (const [id, entry] of factories) {
+        const src = entry.fn.toString();
+        if (src.includes("DGWConnectionContext") && src.includes("createStreamGroup")) {
+          ids.dgwClient = id;
+          break;
+        }
+      }
+    }
+  }
+  if (!factories.has(ids.decodeProto) || !factories.has(ids.fileDescProto)) {
+    const m = dgwChunkText.match(
+      /e\.s\(\["f",0,\w+\],(\d+)\),e\.s\(\["f",0,\w+\],(\d+)\);let \w+=\w+\("ChllY3RvX3JlcXVlc3RfY2xpZW50LnByb3Rv/
+    );
+    if (m) {
+      ids.decodeProto = Number(m[1]);
+      ids.fileDescProto = Number(m[2]);
+    }
+  }
+  if (!factories.has(ids.getMsgDesc)) {
+    const m = dgwChunkText.match(
+      /function \w+\(\w+,\w+,\.\.\.\w+\)\{return \w+\.reduce\(\(\w+,\w+\)=>\w+\.nestedMessages\[\w+\],\w+\.messages\[\w+\]\)\}e\.s\(\["f",0,\w+\],(\d+)\)/
+    );
+    if (m) ids.getMsgDesc = Number(m[1]);
+  }
+  if (!factories.has(ids.txDep)) {
+    const m = dgwChunkText.match(/e\.s\(\[[^\]]*?"Tx",0,\w+\],(\d+)\)/);
+    if (m) ids.txDep = Number(m[1]);
+  }
+  if (!factories.has(ids.encodeReqProto)) {
+    const m = dgwChunkText.match(
+      /KADABRA__HOME__UNIFIED_INPUT_BAR[\s\S]{0,600}?return \(0,\w+\.f\)\([^)]+\)\}\],(\d+)\)/
+    );
+    if (m) ids.encodeReqProto = Number(m[1]);
+  }
+  return ids;
+}
+
+const KNOWN_STUB_IDS = new Set([
+  846411,
+  724765,
+  115212,
+  443051,
+  892803,
+  185870,
+  254607,
+  840387,
+  82833,
+  546963,
+]);
+
+function collectNeededChunkUrls(fetchedMap, dgwChunkUrl, rootIds, asyncLoaders) {
+  const sandbox = Object.create(null);
+  Object.assign(sandbox, {
+    TURBOPACK: [],
+    Object,
+    Array,
+    Function,
+    Number,
+    String,
+    Boolean,
+    Error,
+    Math,
+    Date,
+    RegExp,
+    Map,
+    Set,
+    Promise,
+    JSON,
+    Symbol,
+  });
+  sandbox.globalThis = sandbox;
+  sandbox.self = sandbox;
+  sandbox.window = sandbox;
+  const ctxVm = vm.createContext(sandbox);
+  const factories = new Map();
+  for (const [url, txt] of fetchedMap) {
+    if (!txt || !txt.includes("TURBOPACK")) continue;
+    const before = sandbox.TURBOPACK.length;
+    try {
+      vm.runInContext(txt, ctxVm, { timeout: 2000 });
+    } catch {
+      continue;
+    }
+    for (let k = before; k < sandbox.TURBOPACK.length; k++) {
+      const entry = sandbox.TURBOPACK[k];
+      if (Array.isArray(entry)) registerTurbopackArray(entry, 1, url, factories);
+    }
+  }
+
+  const roots = resolveDgwRootIds(fetchedMap.get(dgwChunkUrl) || "", factories);
+  Object.assign(rootIds, roots);
+  const queue = [
+    roots.dgwClient,
+    roots.encodeReqProto,
+    roots.decodeProto,
+    roots.fileDescProto,
+    roots.getMsgDesc,
+    roots.txDep,
+  ];
+  const wasmLoader = asyncLoaders.get(9658);
+  if (wasmLoader?.targetId != null) queue.push(wasmLoader.targetId);
+  else queue.push(66134);
+
+  const visited = new Set();
+  const neededChunks = new Set([dgwChunkUrl]);
+  while (queue.length > 0) {
+    const id = queue.shift();
+    if (visited.has(id) || KNOWN_STUB_IDS.has(id)) continue;
+    visited.add(id);
+    const factory = factories.get(id);
+    if (!factory) continue;
+    neededChunks.add(factory.sourceUrl);
+    const src = factory.fn.toString();
+    for (const m of src.matchAll(/\b[a-zA-Z_$]\w*\.(?:i|r)\((\d+)\)/g)) {
+      const depId = Number(m[1]);
+      if (!visited.has(depId) && !KNOWN_STUB_IDS.has(depId)) queue.push(depId);
+    }
+    for (const m of src.matchAll(/\b[a-zA-Z_$]\w*\.A\((\d+)\)/g)) {
+      const loader = asyncLoaders.get(Number(m[1]));
+      if (loader) {
+        for (const u of loader.urls) neededChunks.add(u);
+        if (loader.targetId != null && !visited.has(loader.targetId)) queue.push(loader.targetId);
+      }
+    }
+  }
+  return neededChunks;
+}
+
 async function loadChunks(cacheDir, session, forceRefresh = false) {
   const cachePath = cacheDir ? path.join(cacheDir, "chunks-cache.json") : null;
+  if (forceRefresh && cachePath && fs.existsSync(cachePath)) {
+    try {
+      fs.unlinkSync(cachePath);
+    } catch {}
+  }
   if (!forceRefresh && cachePath && fs.existsSync(cachePath)) {
     try {
       const cached = JSON.parse(fs.readFileSync(cachePath, "utf8"));
-      if (cached.dgwChunkText && cached.wasmChunkText) {
+      const ageSeconds = Math.floor(Date.now() / 1000) - Number(cached.cachedAt || 0);
+      if (
+        cached.dgwChunkText &&
+        cached.wasmChunkText &&
+        Array.isArray(cached.extraChunkTexts) &&
+        cached.cachedAt &&
+        ageSeconds >= 0 &&
+        ageSeconds < CHUNK_CACHE_TTL_SECONDS
+      ) {
         return cached;
       }
+      try {
+        fs.unlinkSync(cachePath);
+      } catch {}
     } catch {}
   }
 
@@ -107,34 +324,54 @@ async function loadChunks(cacheDir, session, forceRefresh = false) {
     cookieHeader = fresh.cookieHeader;
   }
 
+  const candidateUrls = scripts.filter((u) => !u.includes("turbopack-"));
+  const fetchedMap = await fetchTextBatch(candidateUrls, cookieHeader, 12);
+
+  let dgwChunkUrl = "";
   let dgwChunkText = "";
-  let wasmChunkUrl = "/_next/static/immutable/chunks/02h3llx9n0qf1.js";
-  for (const sc of scripts) {
-    const txt = await (
-      await fetch("https://www.meta.ai" + sc, {
-        headers: { "User-Agent": UA, Cookie: cookieHeader },
-      })
-    ).text();
+  for (const [url, txt] of fetchedMap) {
     if (txt.includes("DGWConnectionContext") && txt.includes("createStreamGroup")) {
+      dgwChunkUrl = url;
       dgwChunkText = txt;
-    }
-    const wm = txt.match(/9658,e=>\{e\.v\(t=>Promise\.all\(\["([^"]+)"\]/);
-    if (wm) {
-      wasmChunkUrl = "/_next/" + wm[1];
+      break;
     }
   }
   if (!dgwChunkText) {
     throw new Error("No se encontró el chunk DGW de Meta AI");
   }
-  const wasmChunkText = await (
-    await fetch("https://www.meta.ai" + wasmChunkUrl, {
-      headers: { "User-Agent": UA, Cookie: cookieHeader },
-    })
-  ).text();
+
+  const asyncLoaders = parseAsyncLoaders(fetchedMap.values());
+  const defaultWasmUrl = "/_next/static/immutable/chunks/02h3llx9n0qf1.js";
+  const asyncUrls = new Set();
+  for (const loader of asyncLoaders.values()) {
+    for (const u of loader.urls) asyncUrls.add(u);
+  }
+  const wasmLoader = asyncLoaders.get(9658);
+  const wasmChunkUrl = wasmLoader?.urls?.[0] || defaultWasmUrl;
+  asyncUrls.add(wasmChunkUrl);
+
+  const missingAsyncUrls = [...asyncUrls].filter((u) => !fetchedMap.has(u));
+  if (missingAsyncUrls.length) {
+    const extraAsync = await fetchTextBatch(missingAsyncUrls, cookieHeader, 8);
+    for (const [u, t] of extraAsync) fetchedMap.set(u, t);
+  }
+  const wasmChunkText = fetchedMap.get(wasmChunkUrl) || "";
+  if (!wasmChunkText) {
+    throw new Error("No se encontró el chunk WASM de Meta AI");
+  }
+
+  const rootIds = {};
+  const neededChunkUrls = collectNeededChunkUrls(fetchedMap, dgwChunkUrl, rootIds, asyncLoaders);
+  const extraChunkTexts = [...neededChunkUrls]
+    .filter((u) => u !== dgwChunkUrl && u !== wasmChunkUrl)
+    .map((u) => fetchedMap.get(u))
+    .filter(Boolean);
 
   const result = {
     dgwChunkText,
     wasmChunkText,
+    extraChunkTexts,
+    asyncLoaders: [...asyncLoaders.entries()],
     cachedAt: Math.floor(Date.now() / 1000),
   };
   if (cachePath) {
@@ -146,7 +383,20 @@ async function loadChunks(cacheDir, session, forceRefresh = false) {
   return result;
 }
 
-function initTurbopackRuntime(wasmChunkText, dgwChunkText, cookieHeader) {
+function initTurbopackRuntime(chunkBundle, cookieHeader) {
+  const { wasmChunkText, dgwChunkText, extraChunkTexts = [], asyncLoaders: rawAsyncLoaders = [] } = chunkBundle;
+  const asyncLoaders = new Map(Array.isArray(rawAsyncLoaders) ? rawAsyncLoaders : []);
+  class CustomWS extends WebSocket {
+    constructor(url) {
+      super(url, {
+        headers: {
+          Origin: "https://www.meta.ai",
+          "User-Agent": UA,
+          Cookie: cookieHeader || "",
+        },
+      });
+    }
+  }
   const sandbox = Object.create(null);
   Object.assign(sandbox, {
     TURBOPACK: [],
@@ -196,6 +446,7 @@ function initTurbopackRuntime(wasmChunkText, dgwChunkText, cookieHeader) {
     WebAssembly,
     Buffer,
     crypto,
+    WebSocket: CustomWS,
     setTimeout,
     clearTimeout,
     setInterval,
@@ -211,37 +462,20 @@ function initTurbopackRuntime(wasmChunkText, dgwChunkText, cookieHeader) {
   const vmContext = vm.createContext(sandbox, {
     codeGeneration: { strings: false, wasm: true },
   });
-  vm.runInContext(wasmChunkText, vmContext, { timeout: 5000 });
-  vm.runInContext(dgwChunkText, vmContext, { timeout: 5000 });
+  for (const chunkText of [wasmChunkText, dgwChunkText, ...extraChunkTexts]) {
+    if (chunkText) {
+      vm.runInContext(chunkText, vmContext, { timeout: 5000 });
+    }
+  }
 
   const factories = new Map();
   for (const entry of sandbox.TURBOPACK) {
-    let i = 1;
-    while (i < entry.length) {
-      const ids = [];
-      while (i < entry.length && typeof entry[i] === "number") {
-        ids.push(entry[i++]);
-      }
-      const fn = entry[i++];
-      if (typeof fn === "function") {
-        for (const id of ids) factories.set(id, { ids, fn });
-      }
+    if (Array.isArray(entry)) {
+      registerTurbopackArray(entry, 1, "bundle", factories);
     }
   }
 
   const moduleCache = new Map();
-  class CustomWS extends WebSocket {
-    constructor(url) {
-      super(url, {
-        headers: {
-          Origin: "https://www.meta.ai",
-          "User-Agent": UA,
-          Cookie: cookieHeader || "",
-        },
-      });
-    }
-  }
-
   const stubs = {
     846411: { default: { env: {}, versions: { node: "24.0.0" } } },
     724765: CustomWS,
@@ -306,6 +540,8 @@ function initTurbopackRuntime(wasmChunkText, dgwChunkText, cookieHeader) {
       i: (depId) => requireMod(depId),
       r: (depId) => requireMod(depId),
       A: async (asyncId) => {
+        const loader = asyncLoaders.get(asyncId);
+        if (loader?.targetId != null) return requireMod(loader.targetId);
         if (asyncId === 9658) return requireMod(66134);
         throw new Error("Unknown async module " + asyncId);
       },
@@ -342,12 +578,13 @@ function initTurbopackRuntime(wasmChunkText, dgwChunkText, cookieHeader) {
     return moduleCache.get(id);
   }
 
-  const DgwClient = requireMod(105667).f;
-  const encodeReqProto = requireMod(501697).f;
-  const decodeProto = requireMod(70540).f;
-  const fileDescProto = requireMod(408787).f;
-  const getMsgDesc = requireMod(328693).f;
-  const txDep = requireMod(162485).Tx;
+  const rootIds = resolveDgwRootIds(dgwChunkText, factories);
+  const DgwClient = requireMod(rootIds.dgwClient).f;
+  const encodeReqProto = requireMod(rootIds.encodeReqProto).f;
+  const decodeProto = requireMod(rootIds.decodeProto).f;
+  const fileDescProto = requireMod(rootIds.fileDescProto).f;
+  const getMsgDesc = requireMod(rootIds.getMsgDesc).f;
+  const txDep = requireMod(rootIds.txDep).Tx;
 
   const respProtoB64Match = dgwChunkText.match(
     /"(ChplY3RvX3Jlc3BvbnNlX2NsaWVudC5wcm90bx[^"]+)"/
@@ -361,15 +598,44 @@ function initTurbopackRuntime(wasmChunkText, dgwChunkText, cookieHeader) {
   return { DgwClient, encodeReqProto, decodeProto, ResponseDesc };
 }
 
-async function runChat({ prompt, enableThinking, session, cacheDir }) {
+function extractTextFromUnifiedResponse(rawUnified) {
+  if (!rawUnified || typeof rawUnified !== "string") return "";
+  try {
+    const doc = JSON.parse(rawUnified);
+    const texts = [];
+    const visit = (node) => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) {
+        for (const item of node) visit(item);
+        return;
+      }
+      if (typeof node.text === "string" && node.text.trim()) {
+        const t = String(node.__typename || "");
+        if (!t || t.includes("Markdown") || t.includes("Text") || t.includes("Primitive")) {
+          texts.push(node.text.trim());
+        }
+      }
+      if (node.view_model) visit(node.view_model);
+      if (node.primitive) visit(node.primitive);
+      if (node.primitives) visit(node.primitives);
+      if (node.sections) visit(node.sections);
+    };
+    visit(doc);
+    return texts.join("\n\n").trim();
+  } catch {
+    return "";
+  }
+}
+
+async function runChat({ prompt, enableThinking, session, cacheDir, forceRefresh = false }) {
   let activeSession = session;
   if (!activeSession?.accessToken || !activeSession?.abraUserId) {
     activeSession = await acquireSession();
   }
 
-  const { wasmChunkText, dgwChunkText } = await loadChunks(cacheDir, activeSession);
+  const chunkBundle = await loadChunks(cacheDir, activeSession, forceRefresh);
   const { DgwClient, encodeReqProto, decodeProto, ResponseDesc } =
-    initTurbopackRuntime(wasmChunkText, dgwChunkText, activeSession.cookieHeader);
+    initTurbopackRuntime(chunkBundle, activeSession.cookieHeader);
 
   const client = new DgwClient({
     authToken: activeSession.accessToken,
@@ -383,6 +649,7 @@ async function runChat({ prompt, enableThinking, session, cacheDir }) {
 
   let responseText = "";
   let rawAccumulated = "";
+  let unifiedFallback = "";
   let streamErr = null;
   let doneResolve;
   const donePromise = new Promise((r) => {
@@ -423,8 +690,9 @@ async function runChat({ prompt, enableThinking, session, cacheDir }) {
         if (bytes.length > 0 && bytes[0] === 123) {
           return;
         }
-        const messages = [];
+        let messages = [];
         let pos = 0;
+        let framedOk = true;
         while (pos < bytes.length) {
           try {
             let len = 0,
@@ -437,15 +705,20 @@ async function runChat({ prompt, enableThinking, session, cacheDir }) {
               if ((b & 128) === 0) break;
               if ((shift += 7) > 35) throw new Error("Varint overflow");
             }
-            if (len <= 0 || pos + read + len > bytes.length) break;
+            if (len <= 0 || pos + read + len > bytes.length) {
+              framedOk = false;
+              break;
+            }
             const slice = bytes.slice(pos + read, pos + read + len);
             messages.push(decodeProto(ResponseDesc, slice));
             pos += read + len;
           } catch {
+            framedOk = false;
             break;
           }
         }
-        if (messages.length === 0) {
+        if (!framedOk || pos !== bytes.length || messages.length === 0) {
+          messages = [];
           try {
             messages.push(decodeProto(ResponseDesc, bytes));
           } catch {}
@@ -461,6 +734,10 @@ async function runChat({ prompt, enableThinking, session, cacheDir }) {
             } else if (rawAccumulated) {
               responseText = rawAccumulated;
             }
+            if (!responseText && inner.value.rawUnifiedResponse) {
+              const extracted = extractTextFromUnifiedResponse(inner.value.rawUnifiedResponse);
+              if (extracted) unifiedFallback = extracted;
+            }
             if (inner.value.isFinalChunk || msg.isFinalChunk) {
               doneResolve();
             }
@@ -473,7 +750,7 @@ async function runChat({ prompt, enableThinking, session, cacheDir }) {
             }
           } else if (inner?.case === "error" && inner.value) {
             streamErr = new Error(
-              inner.value.errorMessage || "Error devuelto por Meta AI"
+              inner.value.message || inner.value.errorMessage || "Error devuelto por Meta AI"
             );
             doneResolve();
           } else if (msg?.isFinalChunk) {
@@ -542,11 +819,12 @@ async function runChat({ prompt, enableThinking, session, cacheDir }) {
     streamGroup.close();
   } catch {}
 
-  if (!responseText && streamErr) {
+  const finalResponse = (responseText || rawAccumulated || unifiedFallback || "").trim();
+  if (!finalResponse && streamErr) {
     throw streamErr instanceof Error ? streamErr : new Error(String(streamErr));
   }
   return {
-    response: (responseText || rawAccumulated || "").trim(),
+    response: finalResponse,
     session: activeSession,
   };
 }
@@ -584,12 +862,18 @@ async function main() {
         cacheDir,
       });
     } catch {
+      if (cacheDir) {
+        try {
+          fs.unlinkSync(path.join(cacheDir, "chunks-cache.json"));
+        } catch {}
+      }
       const freshSession = await acquireSession();
       result = await runChat({
         prompt: input.prompt,
         enableThinking: input.enableThinking,
         session: freshSession,
         cacheDir,
+        forceRefresh: true,
       });
     }
 

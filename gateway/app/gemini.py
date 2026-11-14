@@ -5,13 +5,14 @@ import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
 from nvidia import _decode_key, _encode_key
 
 ROOT = Path(__file__).resolve().parent
-_GATEWAY_CREDS = ROOT.parent / "state" / "mykos" / "credentials"
+_GATEWAY_CREDS = Path.home() / ".mykos" / "gateway-state" / "mykos" / "credentials"
 _CREDS_BASE = os.environ.get("MYKOS_CREDENTIALS_DIR")
 if _CREDS_BASE:
     HOME = Path(_CREDS_BASE).expanduser() / "gemini"
@@ -122,25 +123,38 @@ def _request(
 
 
 def gemini_models(key: str = "") -> list[dict[str, Any]]:
-    result = _request("models", key=key)
-    raw_models = result.get("models", [])
-    if not isinstance(raw_models, list):
-        raise RuntimeError("Gemini devolvió un catálogo de modelos no válido.")
-    
+    raw_models: list[dict[str, Any]] = []
+    page_token = ""
+    seen_tokens: set[str] = set()
+    while True:
+        query = "models?pageSize=100"
+        if page_token:
+            query += f"&pageToken={urllib.parse.quote(page_token, safe='')}"
+        result = _request(query, key=key)
+        page_items = result.get("models", [])
+        if not isinstance(page_items, list):
+            raise RuntimeError("Gemini devolvió un catálogo de modelos no válido.")
+        raw_models.extend(item for item in page_items if isinstance(item, dict))
+        next_token = str(result.get("nextPageToken") or "").strip()
+        if not next_token or next_token in seen_tokens:
+            break
+        seen_tokens.add(next_token)
+        page_token = next_token
+
+    specialized_markers = ("live", "-tts", "transcribe", "image", "lyria")
     rows: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     for item in raw_models:
-        if not isinstance(item, dict):
-            continue
         raw_name = str(item.get("name", "")).strip()
         clean_id = raw_name.removeprefix("models/").strip()
-        if not clean_id:
+        if not clean_id or clean_id in seen_ids:
             continue
+        seen_ids.add(clean_id)
         methods = item.get("supportedGenerationMethods", [])
         # ``generateContent`` también se anuncia en modelos especializados
         # (TTS, transcripción, imagen y música). El adaptador de MyKOS sólo
         # implementa conversación de texto/visión y devuelve exclusivamente
         # partes de texto, así que no debemos ofrecer esos modelos como chat.
-        specialized_markers = ("live", "-tts", "transcribe", "image", "lyria")
         if any(marker in clean_id.lower() for marker in specialized_markers):
             continue
         if isinstance(methods, list) and "generateContent" in methods:

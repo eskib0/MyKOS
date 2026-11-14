@@ -105,6 +105,7 @@ from llamacpp import (
     stop_llamacpp_server,
 )
 from oauth import (
+    OPENAI_API_URL,
     _save_openrouter_key,
     complete_openrouter_oauth,
     get_openai_api_key,
@@ -116,6 +117,7 @@ from oauth import (
     openrouter_auth_status,
     openrouter_models,
     oauth_status,
+    refresh_openai_models,
     run_openai_codex,
     save_openai_api_key,
     start_openai_login,
@@ -154,6 +156,8 @@ from core.claude import (
     CLAUDE_MODEL_LABEL,
     CLAUDE_MODEL_NAME,
     CLAUDE_RESPONSE_SCHEMA,
+    CLAUDE_STATUS_CACHE as CORE_CLAUDE_STATUS_CACHE,
+    CLAUDE_STATUS_LOCK as CORE_CLAUDE_STATUS_LOCK,
     claude_auth_status,
     claude_executable_path,
     claude_model_summary,
@@ -247,13 +251,8 @@ CLAUDE_MODEL_NAME = "claude-sonnet-oauth"
 CLAUDE_MODEL_LABEL = "Claude Sonnet · OAuth"
 CLAUDE_CLI_MODEL = os.environ.get("MYKOS_CLAUDE_MODEL", "sonnet").strip() or "sonnet"
 CLAUDE_CONTEXT_LENGTH = 131_072
-CLAUDE_STATUS_CACHE_SECONDS = 30
 CLAUDE_REQUEST_TIMEOUT_SECONDS = 15 * 60
-OPENROUTER_MODEL_CACHE_SECONDS = 60
 OPENROUTER_REQUEST_TIMEOUT_SECONDS = 15 * 60
-NVIDIA_MODEL_CACHE_SECONDS = 60
-KIMI_MODEL_CACHE_SECONDS = 60
-GEMINI_MODEL_CACHE_SECONDS = 60
 # NVIDIA NIM has occasionally left a transport request open; keep MyKOS responsive.
 NVIDIA_REQUEST_TIMEOUT_SECONDS = 120
 LLAMA_CPP_MODEL_NAME = "mykos-cuda"
@@ -268,10 +267,14 @@ MYKOS_GATEWAY_ENABLED = os.environ.get("MYKOS_USE_GATEWAY", "1").strip().casefol
 # proceso solo ejecuta las herramientas y acciones que el Gateway le pide. Lo pone el Gateway al lanzar el trabajador
 # (chatLoop.enabled); sin la variable, o con «0», el bucle sigue siendo el de aquí.
 MYKOS_GATEWAY_CHAT_LOOP = os.environ.get("MYKOS_GATEWAY_CHAT_LOOP", "0").strip().casefold() in {"1", "true", "yes", "on"}
-LLAMA_CPP_EXE = os.environ.get(
-    "MYKOS_LLAMA_CPP_EXE",
-    str(Path.home() / "llama.cpp" / "build" / "bin" / "llama-server"),
-).strip()
+_LLAMA_EXE_CANDIDATES = (
+    Path.home() / ".local" / "llama-quick" / "llama-b12211" / "llama-server",
+    Path.home() / ".local" / "bin" / "llama-server",
+    Path.home() / ".local" / "bin" / "llama",
+    Path.home() / "llama.cpp" / "build" / "bin" / "llama-server",
+)
+_DEFAULT_LLAMA_EXE = next((p for p in _LLAMA_EXE_CANDIDATES if p.is_file()), _LLAMA_EXE_CANDIDATES[-1])
+LLAMA_CPP_EXE = os.environ.get("MYKOS_LLAMA_CPP_EXE", str(_DEFAULT_LLAMA_EXE)).strip()
 LLAMA_CPP_MODEL = os.environ.get(
     "MYKOS_LLAMA_CPP_MODEL",
     str(Path.home() / ".ollama" / "models" / "blobs" / "sha256-d372de8e934898a59e6ccfabc3368474711384d8f1fd4d22d87a3f0a45400cdc"),
@@ -304,8 +307,10 @@ GATEWAY_DECISION_ROUTES = {
     ("POST", "/api/automations/create-request"),
     ("POST", "/api/automations/delete-request"),
     ("POST", "/api/oauth/openai/start"),
+    ("POST", "/api/oauth/openai/refresh"),
     ("POST", "/api/oauth/openai/logout"),
     ("POST", "/api/oauth/claude/start"),
+    ("POST", "/api/oauth/claude/refresh"),
     ("POST", "/api/oauth/claude/logout"),
     ("POST", "/api/oauth/openrouter/start"),
     ("POST", "/api/oauth/openrouter/refresh"),
@@ -341,6 +346,15 @@ GATEWAY_DECISION_ROUTES = {
     ("POST", "/api/providers/grok/connect"),
     ("POST", "/api/providers/grok/logout"),
     ("POST", "/api/providers/grok/refresh"),
+    ("POST", "/api/providers/openai/connect"),
+    ("POST", "/api/providers/openai/logout"),
+    ("POST", "/api/providers/openai/refresh"),
+    ("POST", "/api/providers/openrouter/connect"),
+    ("POST", "/api/providers/openrouter/logout"),
+    ("POST", "/api/providers/openrouter/refresh"),
+    ("POST", "/api/providers/meta/connect"),
+    ("POST", "/api/providers/meta/logout"),
+    ("POST", "/api/providers/meta/refresh"),
     ("POST", "/api/uploads"),
     ("POST", "/api/nodes/heartbeat"),
 }
@@ -464,26 +478,10 @@ STORE_LOCK = threading.RLock()
 UPLOADS_LOCK = threading.RLock()
 OLLAMA_JOBS_LOCK = threading.RLock()
 BENCHMARK_LOCK = threading.Lock()
-CLAUDE_STATUS_LOCK = threading.RLock()
-OPENROUTER_LOCK = threading.RLock()
-NVIDIA_LOCK = threading.RLock()
 ACTIVITY_LOCK = threading.RLock()
 UPLOADS: dict[str, dict[str, Any]] = {}
 OLLAMA_JOBS: dict[str, dict[str, Any]] = {}
-CLAUDE_STATUS_CACHE: dict[str, Any] = {"checked_at": 0.0, "status": None}
 CLAUDE_LOGIN_PROCESS: subprocess.Popen[Any] | None = None
-OPENROUTER_MODEL_CACHE: dict[str, Any] = {"checked_at": 0.0, "models": [], "authenticated": False, "error": ""}
-NVIDIA_MODEL_CACHE: dict[str, Any] = {"checked_at": 0.0, "models": [], "authenticated": False, "error": ""}
-KIMI_LOCK = threading.RLock()
-KIMI_MODEL_CACHE: dict[str, Any] = {"checked_at": 0.0, "models": [], "authenticated": False, "error": ""}
-GEMINI_LOCK = threading.RLock()
-GEMINI_MODEL_CACHE: dict[str, Any] = {"checked_at": 0.0, "models": [], "authenticated": False, "error": ""}
-MISTRAL_LOCK = threading.RLock()
-MISTRAL_MODEL_CACHE: dict[str, Any] = {"checked_at": 0.0, "models": [], "authenticated": False, "error": ""}
-MISTRAL_MODEL_CACHE_SECONDS = 300.0
-GROK_LOCK = threading.RLock()
-GROK_MODEL_CACHE: dict[str, Any] = {"checked_at": 0.0, "models": [], "authenticated": False, "error": ""}
-GROK_MODEL_CACHE_SECONDS = 60.0
 from core.activity import (
     activity_public_view,
     finish_activity,
@@ -552,14 +550,48 @@ def load_system_prompt() -> str:
     return prompt or DEFAULT_SYSTEM_PROMPT
 
 
+def _cortex_engine_and_root() -> tuple[Any | None, Path]:
+    """Resuelve el motor activo de Cortex y su ruta raíz de forma multiplataforma."""
+    env_vault = (
+        os.environ.get("MYKOS_CORTEX_VAULT")
+        or os.environ.get("MYKOS_BRAIN_VAULT")
+        or ""
+    ).strip()
+    if env_vault:
+        env_path = Path(env_vault).expanduser().resolve()
+        try:
+            return get_cortex(env_path), env_path
+        except Exception:
+            return None, env_path
+    try:
+        engine = get_cortex()
+        root = getattr(engine, "root", None)
+        if root:
+            return engine, Path(root)
+    except Exception:
+        pass
+    return None, (Path.home() / ".mykos" / "cortex")
+
+
 def load_user_profile() -> str:
-    """Lee el perfil del usuario (USER.md) desde el espacio de trabajo o configuración."""
+    """Lee el perfil del usuario (USER.md o Preferencias de Cortex) de workspace o configuración."""
+    _, cortex_root = _cortex_engine_and_root()
     candidates = [
         WORKSPACE_DIR / "USER.md",
+        cortex_root / "workspace" / "USER.md",
         Path.home() / ".mykos" / "USER.md",
         CONFIG_DIR / "USER.md",
+        cortex_root / "00 - Centro de Mando" / "00 - Preferencias y Memoria.md",
     ]
+    seen: set[Path] = set()
     for path in candidates:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        if resolved in seen:
+            continue
+        seen.add(resolved)
         try:
             content = path.read_text(encoding="utf-8").strip()
             if content:
@@ -575,21 +607,128 @@ def load_base_system_prompt() -> str:
     if user_profile:
         header = "" if user_profile.startswith("#") else "# Perfil del Usuario\n\n"
         prompt += f"\n\n{header}{user_profile}"
+    core_memory = load_core_memory()
+    if core_memory:
+        prompt += f"\n\n{core_memory}"
     return prompt
 
 
+_CORTEX_CORE_FILES = [
+    ("00 - Centro de Mando/00 - Preferencias y Memoria.md", "## Preferencias y Memoria (Cortex)"),
+    ("00 - Centro de Mando/00 - Dashboard MyKOS.md",        "## Dashboard MyKOS (Cortex)"),
+]
 _CORE_MEMORY_FILES = [
     ("identity.md",            "## Identidad del asistente"),
     ("operational-lessons.md", "## Lecciones operativas"),
     ("preferences.md",         "## Preferencias de Usuario"),
 ]
+_MAX_CORE_NOTE_CHARS = 8_000
+_MAX_CORTEX_INDEX_NOTES = 80
+_CORTEX_SKIP_DIRS = {".cortex", ".git", ".trash", "node_modules", "workspace"}
+
+
+def _read_cortex_note_content(engine: Any | None, cortex_root: Path, rel_path: str) -> str:
+    """Lee una nota de Cortex usando el motor o directamente en disco, con límite seguro."""
+    content = ""
+    if engine is not None:
+        try:
+            note = engine.get_note(rel_path)
+            content = str(note.get("content", "")).strip()
+        except Exception:
+            content = ""
+    if not content:
+        disk_path = cortex_root / Path(*rel_path.split("/"))
+        try:
+            content = disk_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+    if len(content) > _MAX_CORE_NOTE_CHARS:
+        content = (
+            content[:_MAX_CORE_NOTE_CHARS].rstrip()
+            + "\n\n[... contenido truncado; consulta la nota completa en Cortex]"
+        )
+    return content
+
+
+def _collect_cortex_note_paths(engine: Any | None, cortex_root: Path) -> list[str]:
+    """Obtiene un listado ordenado de notas Markdown de Cortex fuera de workspace."""
+    if engine is not None:
+        try:
+            files_map = getattr(engine, "files", None)
+            if isinstance(files_map, dict):
+                try:
+                    last_sync = float(getattr(engine, "_last_sync_time", 0.0) or 0.0)
+                    if time.perf_counter() - last_sync > 2.0 and hasattr(engine, "sync"):
+                        engine.sync()
+                        files_map = getattr(engine, "files", files_map)
+                except Exception:
+                    pass
+                return sorted(
+                    rel
+                    for rel, fi in files_map.items()
+                    if getattr(fi, "ext", "") == "md" and not rel.startswith("workspace/")
+                )
+        except Exception:
+            pass
+    if not cortex_root.is_dir():
+        return []
+    found: list[str] = []
+    for dp, dn, fn in os.walk(cortex_root, followlinks=False):
+        dp_path = Path(dp)
+        dn[:] = sorted(
+            d
+            for d in dn
+            if d not in _CORTEX_SKIP_DIRS and not d.startswith(".") and not (dp_path / d).is_symlink()
+        )
+        for f in sorted(fn):
+            if f.startswith(".") or not f.lower().endswith(".md"):
+                continue
+            full = dp_path / f
+            if full.is_symlink():
+                continue
+            try:
+                found.append(full.relative_to(cortex_root).as_posix())
+            except ValueError:
+                pass
+    return sorted(found)
+
+
+def _format_cortex_index(cortex_root: Path, all_notes: list[str], loaded_paths: set[str]) -> str:
+    """Construye un índice compacto de la bóveda Cortex y sus carpetas."""
+    lines = [
+        f"- **Bóveda Cortex:** `{cortex_root}`",
+        f"- **Workspace vinculado:** `{cortex_root / 'workspace'}`",
+    ]
+    other_notes = [p for p in all_notes if p not in loaded_paths]
+    if other_notes:
+        shown = other_notes[:_MAX_CORTEX_INDEX_NOTES]
+        lines.append(
+            "- **Otras notas disponibles en Cortex** (usa `search_cortex` / `read_cortex_note` o accede en disco si necesitas el detalle):"
+        )
+        for rel in shown:
+            lines.append(f"  - `{rel}`")
+        if len(other_notes) > _MAX_CORTEX_INDEX_NOTES:
+            lines.append(f"  - ... (+{len(other_notes) - _MAX_CORTEX_INDEX_NOTES} notas más en Cortex)")
+    return "## Índice de notas y carpetas en Cortex\n\n" + "\n".join(lines)
 
 
 def load_core_memory() -> str:
-    """Lee los archivos de memoria persistente de MyKOS (core/) e inyecta su
-    contenido directamente en el System Prompt para que el modelo los tenga
-    disponibles desde el primer token, sin necesidad de usar herramientas."""
+    """Lee la memoria persistente real desde MyKOS Cortex y archivos core/ heredados
+    e inyecta su contenido directamente en el System Prompt."""
     sections: list[str] = []
+    engine, cortex_root = _cortex_engine_and_root()
+    loaded_cortex_paths: set[str] = set()
+
+    for rel_path, header in _CORTEX_CORE_FILES:
+        content = _read_cortex_note_content(engine, cortex_root, rel_path)
+        if content:
+            loaded_cortex_paths.add(rel_path)
+            sections.append(f"{header} (`{rel_path}`)\n\n{content}")
+
+    all_notes = _collect_cortex_note_paths(engine, cortex_root)
+    if loaded_cortex_paths or all_notes or cortex_root.is_dir():
+        sections.append(_format_cortex_index(cortex_root, all_notes, loaded_cortex_paths))
+
     for filename, header in _CORE_MEMORY_FILES:
         path = MEMORY_CORE_DIR / filename
         try:
@@ -597,10 +736,8 @@ def load_core_memory() -> str:
             if content:
                 sections.append(f"{header}\n\n{content}")
         except OSError:
-            pass  # Si el archivo no existe todavía, se omite sin error.
-    # El diario y el corpus completo son histórico: no se inyectan como
-    # instrucciones de sistema. El modelo debe consultarlos de forma acotada
-    # cuando el asunto lo requiera, igual que cualquier otra fuente documental.
+            pass  # Fallback a archivos legacy en MEMORY_CORE_DIR si existen.
+
     if not sections:
         return ""
     joined = "\n\n---\n\n".join(sections)
@@ -1519,17 +1656,26 @@ def ensure_llama_cpp_server() -> None:
 
 
 def llama_cpp_model_summary() -> dict[str, Any] | None:
+    try:
+        catalog = llamacpp_model_catalog()
+        if catalog:
+            loaded = next((item for item in catalog if item.get("status") == "online"), None)
+            return loaded or catalog[0]
+    except Exception:
+        pass
     if not llama_cpp_configured():
         return None
+    model_path = Path(LLAMA_CPP_MODEL)
+    stem = model_path.stem
     return {
-        "name": LLAMA_CPP_MODEL_NAME,
-        "label": LLAMA_CPP_MODEL_LABEL,
+        "name": f"llama_cpp/{stem}",
+        "label": f"llama.cpp · {stem}",
         "provider": "llama_cpp",
         "provider_label": "llama.cpp · CUDA",
-        "size": Path(LLAMA_CPP_MODEL).stat().st_size,
-        "parameter_size": "35.5B",
-        "family": "Qwen3.6 · qwen35moe",
-        "quantization": "Q4_K_M",
+        "size": model_path.stat().st_size,
+        "parameter_size": "",
+        "family": "llama.cpp GGUF",
+        "quantization": "GGUF",
         "modified_at": "",
         "capabilities": ["chat", "completion", "thinking", "tools"],
         "chat_capable": True,
@@ -1548,7 +1694,7 @@ def llama_cpp_chat_request(
     messages: list[dict[str, Any]],
     generation: dict[str, Any],
     tool_schemas: list[dict[str, Any]] | None = None,
-    model_name: str = "qwen2.5-7b",
+    model_name: str = "mykos-cuda",
 ) -> dict[str, Any]:
     requester = controller_request_model if (MYKOS_GATEWAY_ENABLED and MYKOS_CONTROL_TOKEN) else None
     return llamacpp_chat_request(
@@ -1563,25 +1709,32 @@ def llama_cpp_chat_request(
 def model_summary(model: dict[str, Any]) -> dict[str, Any]:
     details = model.get("details") or {}
     capabilities = [str(item) for item in (model.get("capabilities") or [])]
+    name = str(model.get("name", ""))
     remote = bool(
         model.get("remote_model")
         or model.get("remote_host")
-        or str(model.get("name", "")).endswith(":cloud")
+        or name.endswith(":cloud")
+    )
+    is_non_chat_utility = bool(
+        re.search(r"(nomic-embed|whisper|embed|bge-|all-minilm|rerank)", name, re.IGNORECASE)
     )
     return {
-        "name": model.get("name", ""),
-        "label": model.get("name", ""),
+        "name": name,
+        "label": name,
         "provider": "ollama",
+        "provider_label": "Ollama (nube)" if remote else "Ollama Local",
         "size": model.get("size", 0),
         "parameter_size": details.get("parameter_size", ""),
         "family": details.get("family", ""),
         "quantization": details.get("quantization_level", ""),
         "modified_at": model.get("modified_at", ""),
         "capabilities": capabilities,
-        # Sin capacidades declaradas se asume chat (Ollama antiguo), salvo que la entrada no tenga
-        # formato de modelo o sea de voz/embeddings (p. ej. mannix/whisper): esas no saben conversar.
-        "chat_capable": bool(CHAT_CAPABILITIES.intersection(capabilities)) if capabilities else bool(
-            details.get("format") and not re.search(r"whisper|embed", str(model.get("name", "")), re.IGNORECASE)
+        # Excluir siempre utilidades puras de embeddings/transcripción del selector de chat,
+        # incluso si anuncian capacidades genéricas. Sin capacidades declaradas asume chat solo con format válido.
+        "chat_capable": False if is_non_chat_utility else (
+            bool(CHAT_CAPABILITIES.intersection(capabilities))
+            if capabilities
+            else bool(details.get("format"))
         ),
         "vision_capable": "vision" in capabilities,
         "thinking_capable": "thinking" in capabilities,
@@ -1624,12 +1777,21 @@ from core.providers import (
     _logout_kimi,
     _logout_mistral,
     _logout_nvidia,
+    ANTHROPIC_LOCK,
     ANTHROPIC_MODEL_CACHE,
+    GEMINI_LOCK,
     GEMINI_MODEL_CACHE,
+    GROK_LOCK,
     GROK_MODEL_CACHE,
+    KIMI_LOCK,
     KIMI_MODEL_CACHE,
+    META_AI_LOCK,
+    META_AI_MODEL_CACHE,
+    MISTRAL_LOCK,
     MISTRAL_MODEL_CACHE,
+    NVIDIA_LOCK,
     NVIDIA_MODEL_CACHE,
+    OPENROUTER_LOCK,
     OPENROUTER_MODEL_CACHE,
 )
 
@@ -1688,6 +1850,53 @@ def get_model_catalog() -> tuple[list[dict[str, Any]], str]:
 def get_models() -> list[dict[str, Any]]:
     models, _ollama_error = get_model_catalog()
     return models
+
+
+def build_status_catalog_payload() -> dict[str, Any]:
+    """Construye la carga útil compartida para GET/POST /mykos-control/status-catalog."""
+    models, ollama_err = get_model_catalog()
+    ollama_models = [m for m in models if m.get("provider") == "ollama"]
+    engines: dict[str, Any] = {
+        "llamacpp": {"online": False, "loaded_model": "", "status": "offline", "endpoint": "http://127.0.0.1:9931"},
+        "ollama": {
+            "online": not bool(ollama_err),
+            "models_count": len(ollama_models),
+            "status": "offline" if ollama_err else "online",
+            "endpoint": OLLAMA_URL,
+        },
+        "strata": {"online": False, "loaded_model": "", "status": "offline", "endpoint": "http://127.0.0.1:18080"},
+    }
+    try:
+        l_status = llamacpp_status()
+        engines["llamacpp"] = {
+            "online": bool(l_status.get("online")),
+            "status": l_status.get("status", "offline"),
+            "loaded_model": l_status.get("loaded_model", ""),
+            "endpoint": "http://127.0.0.1:9931",
+        }
+    except Exception:
+        pass
+    try:
+        s_status = strata_status()
+        engines["strata"] = {
+            "online": bool(s_status.get("online")),
+            "status": s_status.get("status", "online" if s_status.get("online") else "offline"),
+            "loaded_model": s_status.get("loaded_model", ""),
+            "endpoint": "http://127.0.0.1:18080",
+        }
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "ollama_url": OLLAMA_URL,
+        "models": models,
+        "engines": engines,
+        "default_model": DEFAULT_MODEL or choose_default_model(models),
+        "tools": tool_catalog(),
+        "allowed_roots": allowed_root_catalog(),
+        "memory": memory_catalog(),
+        "benchmark_profiles": benchmark_profile_catalog(),
+    }
 
 
 def available_chat_models(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1749,6 +1958,8 @@ def normalise_generation_settings(
         num_ctx = CLAUDE_CONTEXT_LENGTH
     elif selected_model.get("provider") == "openai_codex_oauth":
         num_ctx = 258_400
+    elif selected_model.get("provider") == "openai_api":
+        num_ctx = 128_000
 
     thinking_capable = bool(selected_model.get("thinking_capable"))
     # Los modelos locales con razonamiento (p. ej. Qwen3.6) alucinan y afirman acciones que no han
@@ -1756,7 +1967,7 @@ def normalise_generation_settings(
     if (
         thinking_capable
         and effort == "off"
-        and selected_model.get("provider") in {"ollama", "llama_cpp"}
+        and selected_model.get("provider") in {"ollama", "llama_cpp", "strata"}
         and os.environ.get("MYKOS_FORCE_THINK", "1").strip() != "0"
     ):
         effort = "medium"
@@ -1786,8 +1997,12 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
     if not provider:
         if model_name.startswith("openai-codex-oauth/") or model_name == "gpt-live-1-codex":
             provider = "openai_codex_oauth"
+        elif model_name.startswith("openai/"):
+            provider = "openai_api"
         elif model_name == CLAUDE_MODEL_NAME:
             provider = "anthropic_oauth"
+        elif model_name.startswith("anthropic/"):
+            provider = "anthropic_api"
         elif model_name == LLAMA_CPP_MODEL_NAME or model_name.startswith("llama_cpp/") or model_name.startswith("llamacpp/"):
             provider = "llama_cpp"
         elif model_name.startswith("strata/"):
@@ -1802,6 +2017,10 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
             provider = "gemini_api"
         elif model_name.startswith("mistral/"):
             provider = "mistral_api"
+        elif model_name.startswith("grok/"):
+            provider = "grok_oauth" if grok_auth_status().get("mode") == "oauth" else "grok_api"
+        elif model_name.startswith("meta-ai/"):
+            provider = "meta_ai_api" if get_meta_ai_api_key() else "meta_ai_oauth"
         elif model_name.startswith("antigravity/"):
             provider = "antigravity_cli"
         elif model_name.startswith("qwen-cli/"):
@@ -1813,12 +2032,24 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
             "Codex no debe usar sus herramientas nativas: las herramientas válidas son únicamente las de MyKOS, "
             "solicitadas mediante el protocolo JSON controlado por el servidor."
         )
+    elif provider == "openai_api":
+        processing_scope = "remoto a través de la API oficial de OpenAI usando tu clave API personal"
+        provider_note = (
+            "Este adaptador usa directamente OpenAI Platform API (/v1/chat/completions). "
+            "Las herramientas válidas son únicamente las de MyKOS, solicitadas mediante el protocolo JSON controlado por el servidor."
+        )
     elif provider == "anthropic_oauth":
         processing_scope = "remoto a través de Claude Code usando la sesión OAuth de claude.ai"
         provider_note = (
             "Este adaptador de Claude funciona sin API key dentro de MyKOS. "
             "Las herramientas de MyKOS se solicitan mediante el protocolo JSON controlado por el servidor; "
             "Claude no recibe acceso directo a PowerShell, archivos ni MCP."
+        )
+    elif provider == "anthropic_api":
+        processing_scope = "remoto a través de la API oficial de Anthropic usando tu clave API personal"
+        provider_note = (
+            "Este adaptador usa directamente Anthropic Messages API con tu clave personal. "
+            "Las herramientas de MyKOS están gestionadas y supervisadas por el servidor."
         )
     elif provider == "llama_cpp":
         processing_scope = "local en este equipo mediante llama.cpp con CUDA"
@@ -1867,6 +2098,22 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
             "La petición se envía a Meta AI (Llama 4) mediante la sesión OAuth protegida de MyKOS. "
             "Las herramientas de MyKOS se solicitan mediante el protocolo JSON controlado por el servidor."
         )
+    elif provider == "meta_ai_api":
+        processing_scope = "remoto a través de Meta AI / Llama API usando tu clave API personal"
+        provider_note = (
+            "La petición se envía a Meta Llama API mediante la clave API protegida de MyKOS. "
+            "Las herramientas de MyKOS se solicitan mediante el protocolo JSON controlado por el servidor."
+        )
+    elif provider in {"grok_oauth", "grok_api"}:
+        processing_scope = (
+            "remoto a través de xAI (Grok) mediante OAuth propio de MyKOS"
+            if provider == "grok_oauth"
+            else "remoto a través de la API oficial de xAI (Grok) usando tu clave API personal"
+        )
+        provider_note = (
+            "La petición se envía directamente al endpoint oficial de xAI (Grok). "
+            "Las herramientas de MyKOS se solicitan mediante el protocolo JSON controlado por el servidor."
+        )
     elif provider == "antigravity_cli":
         processing_scope = "remoto a través de Antigravity CLI (agy) con la sesión Google aislada de MyKOS"
         provider_note = (
@@ -1895,7 +2142,21 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
     )
     if provider_note:
         prompt += f"\n\n{provider_note}"
-        if provider in {"anthropic_oauth", "openai_codex_oauth", "gemini_api", "openrouter", "nvidia_api", "kimi_api", "mistral_api", "meta_ai_oauth"}:
+        if provider in {
+            "anthropic_oauth",
+            "anthropic_api",
+            "openai_codex_oauth",
+            "openai_api",
+            "gemini_api",
+            "openrouter",
+            "nvidia_api",
+            "kimi_api",
+            "mistral_api",
+            "meta_ai_oauth",
+            "meta_ai_api",
+            "grok_oauth",
+            "grok_api",
+        }:
             prompt += f"\n\n{claude_tool_protocol_prompt(arguments_as_string=provider == 'openai_codex_oauth')}"
     if provider == "llama_cpp":
         prompt += "\n\nLas llamadas de herramientas usan el formato OpenAI-compatible del servidor llama.cpp."
@@ -2219,22 +2480,39 @@ def run_openai_until_result(
     activity_id: str | None = None,
     permission_mode: str = "supervisado",
 ) -> dict[str, Any]:
-    if not model.startswith("openai-codex-oauth/"):
+    is_api_model = model.startswith("openai/")
+    is_codex_model = model.startswith("openai-codex-oauth/")
+    if not (is_api_model or is_codex_model):
         raise RuntimeError(f"Modelo OpenAI no reconocido: {model}")
-    api_key = get_openai_api_key()
-    if api_key and openai_auth_status().get("auth_method") == "OpenAI API Key":
-        clean_model = model.removeprefix("openai-codex-oauth/")
+    if is_api_model:
+        api_key = get_openai_api_key()
+        if not api_key:
+            raise ApiError(400, "No hay clave API de OpenAI configurada en MyKOS.")
+        clean_model = model.removeprefix("openai/").strip()
+        gen = generation if isinstance(generation, dict) else {}
+        gen_opts = gen.get("options") if isinstance(gen.get("options"), dict) else {}
+        try:
+            max_tokens = max(512, min(16384, int(gen_opts.get("num_predict") or 4096)))
+        except (TypeError, ValueError):
+            max_tokens = 4096
+        is_reasoning = clean_model.casefold().startswith(("o1", "o3", "o4", "gpt-5"))
+        raw_temp = gen_opts.get("temperature")
+        temp = float(raw_temp) if isinstance(raw_temp, (int, float)) else CREATIVITY_TEMPERATURE.get(str(gen.get("creativity") or ""), 0.3)
+
         def _openai_api_complete(req_messages: list[dict[str, Any]]) -> str:
-            req_data = {
+            req_data: dict[str, Any] = {
                 "model": clean_model,
                 "messages": req_messages,
-                "max_tokens": 4096,
-                "temperature": 0.3,
                 "stream": False,
             }
+            if is_reasoning:
+                req_data["max_completion_tokens"] = max_tokens
+            else:
+                req_data["max_tokens"] = max_tokens
+                req_data["temperature"] = temp
             body = json.dumps(req_data, ensure_ascii=False).encode("utf-8")
             req = urllib.request.Request(
-                "https://api.openai.com/v1/chat/completions",
+                f"{OPENAI_API_URL}/chat/completions",
                 data=body,
                 headers={
                     "Authorization": f"Bearer {api_key}",
@@ -2243,8 +2521,12 @@ def run_openai_until_result(
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            try:
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                detail = exc.read(50_000).decode("utf-8", errors="replace")[:400]
+                raise RuntimeError(f"OpenAI API devolvió HTTP {exc.code}: {detail}") from exc
             choices = data.get("choices", [])
             if not choices:
                 raise RuntimeError("OpenAI no devolvió texto.")
@@ -2252,7 +2534,7 @@ def run_openai_until_result(
 
         return _run_openai_json_tool_loop(
             model,
-            "openai_codex_oauth",
+            "openai_api",
             "OpenAI",
             f"{model} · OpenAI mediante clave API oficial.",
             messages,
@@ -2611,21 +2893,57 @@ def run_antigravity_until_result(
             "usage": result.get("usage", {}), "duration_seconds": result.get("duration_seconds")}
 
 
-def qwen_prompt_from_messages(messages: list[dict[str, Any]], workspace_dir: str = "") -> str:
+def qwen_prompt_from_messages(
+    messages: list[dict[str, Any]],
+    workspace_dir: str = "",
+    cortex_dir: str = "",
+) -> str:
     blocks: list[str] = []
+    has_injected_profile = False
+    has_injected_memory = False
     for message in messages:
         role = str(message.get("role", "mensaje")).strip().upper()
         content = str(message.get("content", "")).strip() or "(sin texto)"
+        if role == "SYSTEM":
+            if "Perfil del Usuario" in content or "Preferencias y Memoria" in content:
+                has_injected_profile = True
+            if "Memoria persistente de MyKOS" in content:
+                has_injected_memory = True
         blocks.append(f"<{role}>\n{content}\n</{role}>")
+
+    if not cortex_dir:
+        _, resolved_cortex = _cortex_engine_and_root()
+        cortex_dir = str(resolved_cortex)
+    cortex_ws = str(Path(cortex_dir) / "workspace")
+
+    context_sections: list[str] = []
+    if not has_injected_profile:
+        user_profile = load_user_profile()
+        if user_profile:
+            header = "" if user_profile.startswith("#") else "# Perfil del Usuario\n\n"
+            context_sections.append(f"{header}{user_profile}")
+    if not has_injected_memory:
+        core_memory = load_core_memory()
+        if core_memory:
+            context_sections.append(core_memory)
+
+    memory_block = ""
+    if context_sections:
+        memory_block = "\n\nMEMORIA PERSISTENTE DEL USUARIO Y CORTEX:\n" + "\n\n".join(context_sections)
+
     workspace_info = f"\nDirectorio de trabajo activo: {workspace_dir}" if workspace_dir else ""
     return (
         "Eres MyKOS operando con el motor Qwen Code CLI y la suscripción oficial Qwen Plus.\n"
         "Dispones de herramientas nativas de programación, inspección y edición de archivos, búsqueda (glob/grep) y comandos.\n"
-        "Cuando el usuario te solicite una acción técnica, utiliza tus herramientas directamente para resolverla."
-        f"{workspace_info}\n\n"
+        "Cuando el usuario te solicite una acción técnica, utiliza tus herramientas directamente para resolverla.\n"
+        "IMPORTANTE SOBRE TU MEMORIA PERSISTENTE: Tu memoria real en MyKOS NO es el directorio interno ~/.qwen/memories del CLI; "
+        f"tu memoria persistente oficial es MyKOS Cortex en `{cortex_dir}` (con workspace en `{cortex_ws}`). "
+        "Puedes inspeccionar, buscar o actualizar las notas Markdown de esa bóveda con tus herramientas de archivos/glob/grep cuando el usuario te pregunte por tu memoria o quiera guardar algo."
+        f"{workspace_info}"
+        f"{memory_block}\n\n"
         "HISTORIAL DE LA CONVERSACIÓN:\n"
         + "\n\n".join(blocks)
-        + "\n\nResponde ahora al último mensaje del usuario utilizando las herramientas necesarias si aplica."
+        + "\n\nResponde ahora al último mensaje del usuario utilizando la memoria cargada y las herramientas necesarias si aplica."
     )
 
 
@@ -2643,9 +2961,18 @@ def run_qwen_until_result(
         raise RuntimeError("Qwen Code CLI en MyKOS solo admite texto por ahora.")
     from qwen_cli import ask_qwen
     update_activity(activity_id, status="working", phase="model", label="Trabajando…", detail=f"{model} · Qwen Code CLI con herramientas.")
+    _, cortex_root = _cortex_engine_and_root()
+    cortex_dir = str(cortex_root) if cortex_root else ""
     workspace_dir = next((r['path'] for r in allowed_root_catalog() if r.get('name') == 'mykos'), str(Path(__file__).resolve().parent.parent.parent))
-    prompt = qwen_prompt_from_messages(messages[-16:], workspace_dir=workspace_dir)
-    result = ask_qwen(prompt, timeout_seconds=120, model=model.removeprefix("qwen-cli/"), cwd=workspace_dir)
+    prompt = qwen_prompt_from_messages(messages[-16:], workspace_dir=workspace_dir, cortex_dir=cortex_dir)
+    add_dirs = [cortex_dir] if cortex_dir and Path(cortex_dir).is_dir() else None
+    result = ask_qwen(
+        prompt,
+        timeout_seconds=120,
+        model=model.removeprefix("qwen-cli/"),
+        cwd=workspace_dir,
+        add_dirs=add_dirs,
+    )
     content = str(result.get("response", "")).strip()
     if not content:
         raise RuntimeError("Qwen Code CLI no devolvió texto.")
@@ -2834,6 +3161,7 @@ def run_anthropic_until_result(
         lambda req_messages: anthropic_chat_completion(
             model,
             req_messages,
+            tool_schemas=TOOL_SCHEMAS,
             generation=generation,
         ),
         supports_vision=supports_vision or has_message_images(messages),
@@ -2895,11 +3223,21 @@ def run_meta_ai_until_result(
     max_tokens = {"fast": 2048, "balanced": 4096, "quality": 6144, "full": 8192}.get(speed, 4096)
     creativity = str(generation.get("creativity", "precise")).strip().casefold()
     temperature = {"precise": 0.2, "balanced": 0.5, "creative": 0.8}.get(creativity, 0.2)
+    is_api = "muse" in model.lower() or (
+        bool(get_meta_ai_api_key()) and not bool(meta_ai_auth_status().get("has_oauth"))
+    )
+    provider_id = "meta_ai_api" if is_api else "meta_ai_oauth"
+    provider_label = "Meta AI · API" if is_api else "Meta AI · OAuth"
+    model_desc = (
+        f"{model} · Meta Model API mediante clave API protegida de MyKOS."
+        if is_api
+        else f"{model} · Meta AI mediante sesión OAuth protegida de MyKOS."
+    )
     return _run_openai_json_tool_loop(
         model,
-        "meta_ai_oauth",
-        "Meta AI · OAuth",
-        f"{model} · Meta AI mediante sesión OAuth protegida de MyKOS.",
+        provider_id,
+        provider_label,
+        model_desc,
         messages,
         conversation_id,
         lambda req_messages: meta_ai_chat_completion(
@@ -2938,7 +3276,9 @@ def run_model_until_result(
         or model.startswith("anthropic/")
         or model.startswith("openrouter/")
         or model.startswith("grok/")
-        or model.startswith("openai-codex-oauth/") or model == "gpt-live-1-codex"
+        or model.startswith("openai-codex-oauth/")
+        or model.startswith("openai/")
+        or model == "gpt-live-1-codex"
         or model == CLAUDE_MODEL_NAME
     )
     if gateway_controls_models and is_remote_model and not remote_worker:
@@ -3054,7 +3394,7 @@ def run_model_until_result(
             activity_id=activity_id,
             permission_mode=permission_mode,
         )
-    if model.startswith("openai-codex-oauth/") or model == "gpt-live-1-codex":
+    if model.startswith("openai-codex-oauth/") or model.startswith("openai/") or model == "gpt-live-1-codex":
         # "gpt-4o" no está soportado por Codex con cuenta ChatGPT (confirmado: error 400
         # del proveedor); la delegación de la llamada Realtime usa el mismo modelo que el
         # resto de MyKOS para Codex OAuth.
@@ -3068,16 +3408,6 @@ def run_model_until_result(
             permission_mode=permission_mode,
         )
     if model == CLAUDE_MODEL_NAME:
-        if get_anthropic_api_key():
-            return run_anthropic_until_result(
-                "anthropic/claude-3-5-sonnet-latest",
-                messages,
-                conversation_id,
-                supports_vision=supports_vision,
-                generation=generation,
-                activity_id=activity_id,
-                permission_mode=permission_mode,
-            )
         return run_claude_until_result(
             model,
             messages,
@@ -3100,7 +3430,7 @@ def run_model_until_result(
 
 
 def fetch_ollama_catalog(query: str = "") -> dict[str, Any]:
-    return core_fetch_ollama_catalog(query, get_models_fn=get_models)
+    return core_fetch_ollama_catalog(query, get_models_fn=get_ollama_models)
 
 
 def _job_public(job: dict[str, Any]) -> dict[str, Any]:
@@ -3390,51 +3720,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "Plano de control no autorizado."}, status=403)
                 return
             try:
-                models, ollama_err = get_model_catalog()
-                ollama_models = [m for m in models if m.get("provider") == "ollama"]
-                engines = {
-                    "llamacpp": {"online": False, "loaded_model": "", "status": "offline", "endpoint": "http://127.0.0.1:9931"},
-                    "ollama": {
-                        "online": not bool(ollama_err),
-                        "models_count": len(ollama_models),
-                        "status": "offline" if ollama_err else "online",
-                        "endpoint": OLLAMA_URL,
-                    },
-                    "strata": {"online": False, "loaded_model": "", "status": "offline", "endpoint": "http://127.0.0.1:18080"},
-                }
-                try:
-                    l_status = llamacpp_status()
-                    engines["llamacpp"] = {
-                        "online": bool(l_status.get("online")),
-                        "status": l_status.get("status", "offline"),
-                        "loaded_model": l_status.get("loaded_model", ""),
-                        "endpoint": "http://127.0.0.1:9931",
-                    }
-                except Exception:
-                    pass
-                try:
-                    s_status = strata_status()
-                    engines["strata"] = {
-                        "online": bool(s_status.get("online")),
-                        "status": s_status.get("status", "offline"),
-                        "loaded_model": s_status.get("loaded_model", ""),
-                        "endpoint": "http://127.0.0.1:18080",
-                    }
-                except Exception:
-                    pass
-                self.send_json(
-                    {
-                        "ok": True,
-                        "ollama_url": OLLAMA_URL,
-                        "models": models,
-                        "engines": engines,
-                        "default_model": DEFAULT_MODEL or choose_default_model(models),
-                        "tools": tool_catalog(),
-                        "allowed_roots": allowed_root_catalog(),
-                        "memory": memory_catalog(),
-                        "benchmark_profiles": benchmark_profile_catalog(),
-                    }
-                )
+                self.send_json(build_status_catalog_payload())
             except RuntimeError as error:
                 self.send_json({"ok": False, "error": str(error), "models": []}, status=503)
             return
@@ -3612,19 +3898,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     self.send_json({"ok": False, "error": "El catálogo de estado no admite parámetros."}, status=400)
                     return
                 try:
-                    models = get_models()
-                    self.send_json(
-                        {
-                            "ok": True,
-                            "ollama_url": OLLAMA_URL,
-                            "models": models,
-                            "default_model": DEFAULT_MODEL or choose_default_model(models),
-                            "tools": tool_catalog(),
-                            "allowed_roots": allowed_root_catalog(),
-                            "memory": memory_catalog(),
-                            "benchmark_profiles": benchmark_profile_catalog(),
-                        }
-                    )
+                    self.send_json(build_status_catalog_payload())
                 except RuntimeError as error:
                     self.send_json({"ok": False, "error": str(error), "models": []}, status=503)
                 return
@@ -3641,6 +3915,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 providers = status.setdefault("providers", [])
                 providers.append({"id": "claude_oauth", "label": "Claude · OAuth", **claude_auth_status()})
                 providers.append({"id": "anthropic_api", "label": "Anthropic · API", **anthropic_auth_status()})
+                providers.append({"id": "nvidia_api", "label": "NVIDIA · API", **nvidia_auth_status()})
                 providers.append({"id": "kimi_api", "label": "Kimi · API", **kimi_auth_status()})
                 providers.append({"id": "gemini_api", "label": "Gemini · API", **gemini_auth_status()})
                 providers.append({"id": "mistral_api", "label": "Mistral · API / Vibe", **mistral_auth_status()})
@@ -3680,12 +3955,50 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     "error": str(status.get("error") or "")[:300],
                 })
                 return
-            if path in {"/mykos-control/openrouter/refresh", "/mykos-control/meta/refresh", "/mykos-control/grok/refresh", "/mykos-control/oauth/grok/refresh"}:
+            if path in {
+                "/mykos-control/oauth/openai/refresh",
+                "/mykos-control/oauth/claude/refresh",
+                "/mykos-control/openrouter/refresh",
+                "/mykos-control/meta/refresh",
+                "/mykos-control/grok/refresh",
+                "/mykos-control/oauth/grok/refresh",
+            }:
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
                 if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
                     self.send_json({"ok": False, "error": "Plano de control no autorizado."}, status=403)
                     return
                 payload = self.read_json()
+                if path == "/mykos-control/oauth/openai/refresh":
+                    if payload.get("provider", "openai_codex_oauth") not in {"openai", "openai_codex_oauth", "openai_api"}:
+                        self.send_json({"ok": False, "error": "Proveedor OAuth no compatible."}, status=400)
+                        return
+                    try:
+                        self.send_json(refresh_openai_models(force=True))
+                    except RuntimeError as error:
+                        self.send_json({"ok": False, "error": str(error), "models": 0}, status=502)
+                    return
+                if path == "/mykos-control/oauth/claude/refresh":
+                    if payload.get("provider", "anthropic_oauth") not in {"claude", "anthropic_oauth", "claude_oauth", "anthropic_api"}:
+                        self.send_json({"ok": False, "error": "Proveedor OAuth no compatible."}, status=400)
+                        return
+                    try:
+                        with CORE_CLAUDE_STATUS_LOCK:
+                            CORE_CLAUDE_STATUS_CACHE["checked_at"] = 0.0
+                            CORE_CLAUDE_STATUS_CACHE["status"] = None
+                        claude_res = claude_auth_status()
+                        anth_res = refresh_anthropic_models() if get_anthropic_api_key() else None
+                        total_models = (1 if claude_res.get("authenticated") else 0) + (int(anth_res.get("models") or 0) if isinstance(anth_res, dict) else 0)
+                        self.send_json({
+                            "ok": True,
+                            "provider": "anthropic_oauth",
+                            "claude_oauth": claude_res,
+                            "anthropic_api": anth_res,
+                            "models": total_models,
+                            **claude_res,
+                        })
+                    except RuntimeError as error:
+                        self.send_json({"ok": False, "error": str(error), "models": 0}, status=502)
+                    return
                 if path in {"/mykos-control/grok/refresh", "/mykos-control/oauth/grok/refresh"}:
                     if payload.get("provider", "grok_oauth") not in {"grok", "grok_oauth", "grok_api"}:
                         self.send_json({"ok": False, "error": "Proveedor OAuth no compatible."}, status=400)
@@ -3696,7 +4009,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                         self.send_json({"ok": False, "error": str(error), "models": 0}, status=502)
                     return
                 if path == "/mykos-control/meta/refresh":
-                    if payload.get("provider", "meta_ai_oauth") not in {"meta", "meta_ai", "meta_ai_oauth"}:
+                    if payload.get("provider", "meta_ai_oauth") not in {"meta", "meta_ai", "meta_ai_oauth", "meta_ai_api"}:
                         self.send_json({"ok": False, "error": "Proveedor OAuth no compatible."}, status=400)
                         return
                     try:
@@ -3704,7 +4017,7 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     except RuntimeError as error:
                         self.send_json({"ok": False, "error": str(error), "models": 0}, status=502)
                     return
-                if payload.get("provider", "openrouter") != "openrouter":
+                if payload.get("provider", "openrouter") not in {"openrouter", "openrouter_oauth", "openrouter_api"}:
                     self.send_json({"ok": False, "error": "Proveedor OAuth no compatible."}, status=400)
                     return
                 try:
@@ -3721,6 +4034,9 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 "/mykos-control/providers/antigravity/refresh",
                 "/mykos-control/providers/qwen/refresh",
                 "/mykos-control/providers/grok/refresh",
+                "/mykos-control/providers/openai/refresh",
+                "/mykos-control/providers/openrouter/refresh",
+                "/mykos-control/providers/meta/refresh",
             }:
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
                 if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
@@ -3728,7 +4044,11 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     return
                 payload = self.read_json()
                 provider = path.split("/")[3]
-                accepted = {provider, f"{provider}_api", f"{provider}_cli"}
+                accepted = {provider, f"{provider}_api", f"{provider}_cli", f"{provider}_oauth"}
+                if provider == "openai":
+                    accepted.add("openai_codex_oauth")
+                elif provider == "meta":
+                    accepted.update({"meta_ai", "meta_ai_oauth", "meta_ai_api"})
                 if payload.get("provider", provider) not in accepted:
                     self.send_json({"ok": False, "error": "Proveedor no compatible."}, status=400)
                     return
@@ -3745,6 +4065,12 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                         res = refresh_anthropic_models()
                     elif provider == "grok":
                         res = refresh_grok_models()
+                    elif provider == "openai":
+                        res = refresh_openai_models(force=True)
+                    elif provider == "openrouter":
+                        res = refresh_openrouter_models()
+                    elif provider == "meta":
+                        res = refresh_meta_ai_models()
                     elif provider == "qwen":
                         res = refresh_qwen_models()
                     else:
@@ -3767,17 +4093,25 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 "/mykos-control/providers/antigravity/logout",
                 "/mykos-control/providers/qwen/logout",
                 "/mykos-control/providers/grok/logout",
+                "/mykos-control/providers/openai/logout",
+                "/mykos-control/providers/openrouter/logout",
+                "/mykos-control/providers/meta/logout",
             }:
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
                 if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
                     self.send_json({"ok": False, "error": "Plano de control no autorizado."}, status=403)
                     return
                 payload = self.read_json()
+                sent_provider = str(payload.get("provider", "")).strip()
+                openai_scope = "api" if sent_provider == "openai_api" else "all"
                 actions = {
-                    "/mykos-control/oauth/openai/logout": ({"openai", "openai_codex", "openai_codex_oauth"}, logout_openai),
+                    "/mykos-control/oauth/openai/logout": ({"openai", "openai_codex", "openai_codex_oauth", "openai_api"}, lambda: logout_openai(scope=openai_scope)),
+                    "/mykos-control/providers/openai/logout": ({"openai", "openai_codex", "openai_codex_oauth", "openai_api"}, lambda: logout_openai(scope=openai_scope)),
                     "/mykos-control/oauth/claude/logout": ({"claude", "anthropic", "anthropic_oauth", "claude_oauth"}, logout_claude),
-                    "/mykos-control/oauth/openrouter/logout": ({"openrouter", "openrouter_oauth"}, logout_openrouter),
-                    "/mykos-control/oauth/meta/logout": ({"meta", "meta_ai", "meta_ai_oauth"}, logout_meta_ai),
+                    "/mykos-control/oauth/openrouter/logout": ({"openrouter", "openrouter_oauth", "openrouter_api"}, logout_openrouter),
+                    "/mykos-control/providers/openrouter/logout": ({"openrouter", "openrouter_oauth", "openrouter_api"}, logout_openrouter),
+                    "/mykos-control/oauth/meta/logout": ({"meta", "meta_ai", "meta_ai_oauth", "meta_ai_api"}, logout_meta_ai),
+                    "/mykos-control/providers/meta/logout": ({"meta", "meta_ai", "meta_ai_oauth", "meta_ai_api"}, logout_meta_ai),
                     "/mykos-control/providers/nvidia/logout": ({"nvidia", "nvidia_api"}, lambda: _logout_nvidia()),
                     "/mykos-control/providers/kimi/logout": ({"kimi", "kimi_api"}, lambda: _logout_kimi()),
                     "/mykos-control/providers/gemini/logout": ({"gemini", "gemini_api"}, lambda: _logout_gemini()),
@@ -3789,7 +4123,6 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     "/mykos-control/providers/grok/logout": ({"grok", "grok_oauth", "grok_api"}, lambda: _logout_grok()),
                 }
                 accepted, action = actions[path]
-                sent_provider = str(payload.get("provider", "")).strip()
                 if sent_provider and sent_provider not in accepted:
                     self.send_json({"ok": False, "error": "Proveedor no compatible."}, status=400)
                     return
@@ -4015,10 +4348,10 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     self.send_json({"ok": False, "error": "Plano de control no autorizado."}, status=403)
                     return
                 actions = {
-                    "/mykos-control/oauth/openai/start": ({"openai", "openai_codex", "openai_codex_oauth"}, start_openai_login),
+                    "/mykos-control/oauth/openai/start": ({"openai", "openai_codex", "openai_codex_oauth", "openai_api"}, start_openai_login),
                     "/mykos-control/oauth/claude/start": ({"claude", "anthropic", "anthropic_oauth", "claude_oauth"}, start_claude_login),
-                    "/mykos-control/oauth/openrouter/start": ({"openrouter", "openrouter_oauth"}, start_openrouter_login),
-                    "/mykos-control/oauth/meta/start": ({"meta", "meta_ai", "meta_ai_oauth"}, start_meta_ai_login),
+                    "/mykos-control/oauth/openrouter/start": ({"openrouter", "openrouter_oauth", "openrouter_api"}, start_openrouter_login),
+                    "/mykos-control/oauth/meta/start": ({"meta", "meta_ai", "meta_ai_oauth", "meta_ai_api"}, start_meta_ai_login),
                     "/mykos-control/oauth/grok/start": ({"grok", "grok_oauth"}, start_grok_login),
                 }
                 accepted, action = actions[path]
@@ -4034,13 +4367,27 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                             self.send_json(res)
                             return
                         if path == "/mykos-control/oauth/openrouter/start":
+                            models = openrouter_models(key=api_key)
                             _save_openrouter_key(api_key, method="api_key")
-                            models = openrouter_models()
+                            with OPENROUTER_LOCK:
+                                OPENROUTER_MODEL_CACHE.clear()
+                                OPENROUTER_MODEL_CACHE.update(checked_at=0.0, models=[], authenticated=False, error="")
                             self.send_json({"ok": True, "provider": "openrouter", "auth_method": "OpenRouter API Key", "status": "saved", "models": len(models)})
                             return
                         if path == "/mykos-control/oauth/meta/start":
                             res = save_meta_ai_api_key(api_key)
+                            with META_AI_LOCK:
+                                META_AI_MODEL_CACHE.clear()
+                                META_AI_MODEL_CACHE.update(checked_at=0.0, models=[], authenticated=False, error="")
                             self.send_json(res)
+                            return
+                        if path == "/mykos-control/oauth/grok/start":
+                            rows = grok_models(key=api_key, strict=True)
+                            save_grok_api_key(api_key)
+                            with GROK_LOCK:
+                                GROK_MODEL_CACHE.clear()
+                                GROK_MODEL_CACHE.update(checked_at=0.0, models=[], authenticated=False, error="")
+                            self.send_json({"ok": True, "provider": "grok_api", "authenticated": True, "models": len(rows)})
                             return
                     except Exception as exc:
                         self.send_json({"ok": False, "error": str(exc)}, status=400)
@@ -4059,6 +4406,9 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 "/mykos-control/providers/antigravity/connect",
                 "/mykos-control/providers/qwen/connect",
                 "/mykos-control/providers/grok/connect",
+                "/mykos-control/providers/openai/connect",
+                "/mykos-control/providers/openrouter/connect",
+                "/mykos-control/providers/meta/connect",
             }:
                 token = self.headers.get("X-MyKOS-Control-Token", "").strip()
                 if not (MYKOS_CONTROL_TOKEN and hmac.compare_digest(token.encode("utf-8"), MYKOS_CONTROL_TOKEN.encode("utf-8"))):
@@ -4066,6 +4416,10 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                     return
                 provider = path.split("/")[3]
                 accepted = {provider, f"{provider}_api", f"{provider}_cli", f"{provider}_oauth"}
+                if provider == "openai":
+                    accepted.add("openai_codex_oauth")
+                elif provider == "meta":
+                    accepted.update({"meta_ai", "meta_ai_oauth", "meta_ai_api"})
                 if payload.get("provider", provider) not in accepted:
                     self.send_json({"ok": False, "error": "Proveedor no compatible."}, status=400)
                     return
@@ -4094,6 +4448,9 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                         "mistral": "Mistral",
                         "anthropic": "Anthropic",
                         "grok": "xAI (Grok)",
+                        "openai": "OpenAI",
+                        "openrouter": "OpenRouter",
+                        "meta": "Meta Model API",
                     }
                     raise ApiError(f"Introduce una clave personal de {provider_names.get(provider, provider)}.")
                 if provider == "nvidia":
@@ -4125,19 +4482,35 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                         MISTRAL_MODEL_CACHE.update(checked_at=0.0, models=[], authenticated=False, error="")
                     self.send_json({"ok": True, "provider": "mistral_api", "authenticated": True, "models": len(rows)})
                 elif provider == "anthropic":
-                    validate_anthropic_api_key(api_key)
+                    discovered_ids = validate_anthropic_api_key(api_key)
                     save_anthropic_api_key(api_key)
                     with ANTHROPIC_LOCK:
                         ANTHROPIC_MODEL_CACHE.clear()
                         ANTHROPIC_MODEL_CACHE.update(checked_at=0.0, models=[], authenticated=False, error="")
-                    self.send_json({"ok": True, "provider": "anthropic_api", "authenticated": True, "models": len(ANTHROPIC_MODELS)})
+                    self.send_json({"ok": True, "provider": "anthropic_api", "authenticated": True, "models": len(discovered_ids or ANTHROPIC_MODELS)})
                 elif provider == "grok":
+                    rows = grok_models(key=api_key, strict=True)
                     save_grok_api_key(api_key)
                     with GROK_LOCK:
                         GROK_MODEL_CACHE.clear()
                         GROK_MODEL_CACHE.update(checked_at=0.0, models=[], authenticated=False, error="")
-                    rows = grok_models(key=api_key)
                     self.send_json({"ok": True, "provider": "grok_api", "authenticated": True, "models": len(rows)})
+                elif provider == "openai":
+                    res = save_openai_api_key(api_key)
+                    self.send_json(res)
+                elif provider == "openrouter":
+                    models = openrouter_models(key=api_key)
+                    _save_openrouter_key(api_key, method="api_key")
+                    with OPENROUTER_LOCK:
+                        OPENROUTER_MODEL_CACHE.clear()
+                        OPENROUTER_MODEL_CACHE.update(checked_at=0.0, models=[], authenticated=False, error="")
+                    self.send_json({"ok": True, "provider": "openrouter", "auth_method": "OpenRouter API Key", "authenticated": True, "models": len(models)})
+                elif provider == "meta":
+                    res = save_meta_ai_api_key(api_key)
+                    with META_AI_LOCK:
+                        META_AI_MODEL_CACHE.clear()
+                        META_AI_MODEL_CACHE.update(checked_at=0.0, models=[], authenticated=False, error="")
+                    self.send_json(res)
                 return
             self.send_json({"error": "Ruta no encontrada."}, status=404)
         except ApiError as error:

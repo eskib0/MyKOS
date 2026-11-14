@@ -103,7 +103,7 @@ def fetch_ollama_catalog(query: str = "", get_models_fn: Callable[[], list[dict[
     installed_names = {
         str(model.get("name", "")).split(":", 1)[0].casefold()
         for model in installed
-        if model.get("name")
+        if model.get("name") and model.get("provider", "ollama") == "ollama"
     }
     for card in cards:
         card["installed"] = str(card["name"]).casefold() in installed_names

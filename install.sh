@@ -33,7 +33,7 @@ EOF
 done
 
 echo "============================================================"
-echo "  Instalador de MyKOS Ecosystem"
+echo "  Instalador de MyKOS Ecosystem (v2.0.7)"
 echo "  Raíz del proyecto: $MYKOS_ROOT"
 echo "============================================================"
 
@@ -85,9 +85,20 @@ chmod 755 "$MYKOS_ROOT/bin/mykos" \
           "$MYKOS_ROOT/apps/monitor/mycos-monitor.py" \
           "$MYKOS_ROOT/apps/analizador/analizador-mykos"
 
-# 3. Directorios de estado privado
-mkdir -p "$STATE_DIR" "$HOME/.mykos/workspace" "$LOCAL_BIN"
-chmod 700 "$HOME/.mykos" "$STATE_DIR" "$HOME/.mykos/workspace" 2>/dev/null || true
+# 3. Directorios de estado privado y Cortex integrado (~/.mykos/cortex + ~/.mykos/cortex/workspace)
+CORTEX_DIR="$HOME/.mykos/cortex"
+CORTEX_WS="$CORTEX_DIR/workspace"
+mkdir -p "$STATE_DIR" "$CORTEX_DIR" "$CORTEX_WS" "$LOCAL_BIN"
+chmod 700 "$HOME/.mykos" "$STATE_DIR" "$CORTEX_DIR" "$CORTEX_WS" 2>/dev/null || true
+if [[ -d "$HOME/.mykos/workspace" && ! -L "$HOME/.mykos/workspace" ]]; then
+  if [[ -z "$(ls -A "$CORTEX_WS" 2>/dev/null)" ]]; then
+    rmdir "$CORTEX_WS" 2>/dev/null || true
+    mv "$HOME/.mykos/workspace" "$CORTEX_WS"
+  fi
+fi
+if [[ ! -e "$HOME/.mykos/workspace" && ! -L "$HOME/.mykos/workspace" ]]; then
+  ln -s "$CORTEX_WS" "$HOME/.mykos/workspace"
+fi
 
 # 4. Entorno virtual Python (opcional, activado por defecto)
 if [[ "$WITH_VENV" -eq 1 ]]; then
@@ -210,7 +221,7 @@ if pgrep -f "mykos-gateway\.mjs" >/dev/null 2>&1; then
 fi
 
 echo ""
-echo "✅ Instalación completada. Prueba ahora:"
+echo "✅ Instalación completada (v2.0.7). Prueba ahora:"
 echo "   mykos test      # Verificar rutas, políticas y seguridad"
 echo "   mykos run       # Arrancar MyKOS en vivo en http://127.0.0.1:3210"
 echo "   mykos status    # Consultar el estado de todos los servicios"

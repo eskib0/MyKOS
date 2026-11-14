@@ -15,7 +15,14 @@ from nvidia import _decode_key, _encode_key
 
 
 ROOT = Path(__file__).resolve().parent
-OAUTH_ROOT = Path(os.environ.get("MYKOS_CREDENTIALS_DIR", str(ROOT / "data" / "oauth"))).expanduser()
+_GATEWAY_CREDS = Path.home() / ".mykos" / "gateway-state" / "mykos" / "credentials"
+_CREDS_BASE = os.environ.get("MYKOS_CREDENTIALS_DIR")
+if _CREDS_BASE:
+  OAUTH_ROOT = Path(_CREDS_BASE).expanduser()
+elif _GATEWAY_CREDS.exists():
+  OAUTH_ROOT = _GATEWAY_CREDS
+else:
+  OAUTH_ROOT = ROOT / "data" / "oauth"
 META_AI_DIR = OAUTH_ROOT / "meta-ai"
 META_AI_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
 META_AI_CREDENTIALS_PATH = META_AI_DIR / "credentials.json"
@@ -312,7 +319,7 @@ def save_meta_ai_api_key(key: str) -> dict[str, Any]:
   except OSError:
     pass
   temporary.replace(META_AI_API_KEY_PATH)
-  return {"ok": True, "provider": "meta_ai_oauth", "auth_method": "Meta Model API Key"}
+  return {"ok": True, "provider": "meta_ai_api", "auth_method": "Meta Model API Key"}
 
 
 def get_meta_ai_api_key() -> str:
@@ -352,6 +359,8 @@ def meta_ai_auth_status() -> dict[str, Any]:
   return {
       "provider": "meta_ai_oauth",
       "authenticated": authenticated,
+      "has_oauth": bool(session),
+      "has_api_key": bool(api_key),
       "auth_method": auth_method,
       "credentials_path": str(META_AI_CREDENTIALS_PATH),
       "token_preview": masked,
@@ -445,20 +454,31 @@ def logout_meta_ai_oauth() -> dict[str, Any]:
   }
 
 
+_NON_CHAT_META_MODELS = {
+    "meta-ai/muse-image",
+    "meta-ai/sam-3.1",
+    "meta-ai/muse-voice-transcribe",
+}
+
+
 def meta_ai_models(*, force: bool = False) -> list[dict[str, Any]]:
   _ = force
   has_oauth_session = bool(_load_meta_ai_session())
   has_api_key = bool(get_meta_ai_api_key())
   result: list[dict[str, Any]] = []
   for item in META_AI_MODELS:
+    name = str(item.get("name", "")).strip()
+    if name in _NON_CHAT_META_MODELS:
+      continue
     provider = item.get("provider", "meta_ai_oauth")
-    if provider == "meta_ai_oauth" and not has_oauth_session and not has_api_key:
+    if provider == "meta_ai_oauth" and not has_oauth_session:
       continue
     if provider == "meta_ai_api" and not has_api_key:
       continue
     row = dict(item)
-    row["chat_capable"] = bool(has_oauth_session or has_api_key)
-    row["auth_status"] = "autenticado" if (has_oauth_session or has_api_key) else "no autenticado"
+    is_auth = has_api_key if provider == "meta_ai_api" else has_oauth_session
+    row["chat_capable"] = bool(is_auth)
+    row["auth_status"] = "autenticado" if is_auth else "no autenticado"
     result.append(row)
   return result
 
@@ -505,6 +525,8 @@ def meta_ai_chat_completion(
   api_key = get_meta_ai_api_key()
   session = _load_meta_ai_session()
   is_muse = "muse" in str(model or "").lower()
+  if is_muse and not api_key:
+    raise RuntimeError("Los modelos Meta AI · Muse requieren una clave personal de Meta Model API.")
   if api_key and (is_muse or not session):
     clean_model = model.removeprefix("meta-ai/")
     req_data = {
@@ -537,10 +559,7 @@ def meta_ai_chat_completion(
 
   _ = (max_tokens, temperature)
   if not session:
-    start_meta_ai_oauth(open_browser=False)
-    session = _load_meta_ai_session()
-  if not session:
-    raise RuntimeError("Meta AI OAuth no está conectado ni hay clave API de Meta configurada.")
+    raise RuntimeError("Meta AI OAuth no está conectado. Inicia sesión con Meta AI en Proveedores.")
 
   enable_thinking = "reasoning" in str(model or "").lower() or "think" in str(model or "").lower()
   prompt = _format_messages_for_meta_ai(messages)

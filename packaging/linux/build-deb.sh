@@ -135,6 +135,7 @@ rsync -a --exclude='.git' \
          --exclude='node_modules' \
          --exclude='gateway-state' \
          --exclude='*.log' \
+         --exclude='skills' \
          --exclude='promo*' \
          --exclude='sliding_window_median.cpp' \
          --exclude='swm' \

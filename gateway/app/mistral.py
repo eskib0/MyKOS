@@ -4,9 +4,12 @@ o desde las credenciales protegidas de MyKOS.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
+import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -23,6 +26,19 @@ except OSError:
     pass
 FILE = MISTRAL_CREDENTIALS_DIR / "credentials.json"
 BASE = os.environ.get("MYKOS_MISTRAL_API_URL", "https://api.mistral.ai/v1").rstrip("/")
+_AUTH_LOCK = threading.RLock()
+_AUTH_CACHE: dict[str, Any] = {"key_hash": "", "base": "", "checked_at": 0.0, "ttl": 60.0, "status": None}
+_NON_CHAT_MISTRAL_MARKERS = (
+    "embed",
+    "moderation",
+    "ocr",
+    "voxtral",
+    "transcribe",
+    "tts",
+    "speech",
+    "whisper",
+    "audio",
+)
 
 
 def _ensure_dbus_session_bus() -> None:
@@ -104,6 +120,8 @@ def save_mistral_api_key(key: str) -> None:
     except OSError:
         pass
     temp.replace(FILE)
+    with _AUTH_LOCK:
+        _AUTH_CACHE.update(key_hash="", base="", checked_at=0.0, ttl=60.0, status=None)
 
 
 def link_vibe_keyring() -> str:
@@ -114,23 +132,74 @@ def link_vibe_keyring() -> str:
     return key
 
 
+def clear_mistral_auth_cache() -> None:
+    with _AUTH_LOCK:
+        _AUTH_CACHE.update(key_hash="", base="", checked_at=0.0, ttl=60.0, status=None)
+
+
 def clear_mistral_api_key() -> None:
     try:
         if FILE.exists():
             FILE.unlink()
     except OSError:
         pass
+    clear_mistral_auth_cache()
 
 
-def mistral_auth_status() -> dict[str, Any]:
+def mistral_auth_status(*, force: bool = False) -> dict[str, Any]:
     key = get_mistral_api_key()
-    ok = bool(key)
-    return {
-        "available": True,
-        "authenticated": ok,
-        "auth_method": "Mistral API / Vibe" if ok else "",
-        "error": "" if ok else "Mistral todavía no está conectado en MyKOS.",
-    }
+    if not key:
+        with _AUTH_LOCK:
+            _AUTH_CACHE.update(key_hash="", base="", checked_at=0.0, ttl=60.0, status=None)
+        return {
+            "available": True,
+            "authenticated": False,
+            "auth_method": "",
+            "error": "Mistral todavía no está conectado en MyKOS.",
+        }
+    key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    now = time.monotonic()
+    with _AUTH_LOCK:
+        cached = _AUTH_CACHE.get("status")
+        if (
+            not force
+            and isinstance(cached, dict)
+            and _AUTH_CACHE.get("key_hash") == key_hash
+            and _AUTH_CACHE.get("base") == BASE
+            and now - float(_AUTH_CACHE.get("checked_at", 0.0)) < float(_AUTH_CACHE.get("ttl", 60.0))
+        ):
+            return dict(cached)
+        try:
+            _request("models", key=key, timeout=6)
+            status = {
+                "available": True,
+                "authenticated": True,
+                "auth_method": "Mistral API / Vibe",
+                "error": "",
+            }
+            ttl = 60.0
+        except RuntimeError as exc:
+            msg = str(exc)
+            if "HTTP 401" in msg or "HTTP 403" in msg:
+                status = {
+                    "available": True,
+                    "authenticated": False,
+                    "auth_method": "",
+                    "error": msg,
+                }
+                ttl = 60.0
+            else:
+                # Si la API no responde temporalmente, conservar el respaldo local indicando validación pendiente.
+                status = {
+                    "available": True,
+                    "authenticated": True,
+                    "auth_method": "Mistral API / Vibe (verificación pendiente)",
+                    "error": "",
+                    "warning": msg,
+                }
+                ttl = 15.0
+        _AUTH_CACHE.update(key_hash=key_hash, base=BASE, checked_at=now, ttl=ttl, status=dict(status))
+        return status
 
 
 def _request(path: str, *, key: str = "", payload: dict[str, Any] | None = None, timeout: int = 60) -> dict[str, Any]:
@@ -161,20 +230,27 @@ def _request(path: str, *, key: str = "", payload: dict[str, Any] | None = None,
     return result
 
 
+def is_mistral_chat_model(row: dict[str, Any]) -> bool:
+    """Devuelve True si el modelo Mistral es apto para conversación de chat."""
+    if not isinstance(row, dict):
+        return False
+    model_id = str(row.get("id", "")).strip()
+    if not model_id:
+        return False
+    caps = row.get("capabilities") or {}
+    if isinstance(caps, dict) and caps.get("completion_chat") is False:
+        return False
+    lowered = model_id.lower()
+    if any(marker in lowered for marker in _NON_CHAT_MISTRAL_MARKERS):
+        return False
+    if isinstance(caps, dict) and caps.get("audio") and not caps.get("completion_chat"):
+        return False
+    return True
+
+
 def mistral_models(key: str = "") -> list[dict[str, Any]]:
     rows = _request("models", key=key).get("data", [])
-    valid = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        model_id = str(row.get("id", "")).strip()
-        if not model_id:
-            continue
-        caps = row.get("capabilities") or {}
-        # Filtrar solo modelos que soporten chat / completions
-        if isinstance(caps, dict) and caps.get("completion_chat") is False:
-            continue
-        valid.append(row)
+    valid = [row for row in rows if is_mistral_chat_model(row)]
     if not valid:
         raise RuntimeError("Mistral aceptó la conexión, pero no devolvió modelos disponibles.")
     return valid

@@ -97,12 +97,17 @@ export const POLICY_TABLE = [
   {
     method: "POST", path: "/api/oauth/openai/start", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
-    fields: { provider: oauthProvider("openai", "openai_codex_oauth"), api_key: { type: "string", required: false, pattern: OPAQUE_RE, max: 400, secret: true } },
+    fields: { provider: { type: "string", enum: ["openai", "openai_codex_oauth", "openai_api"], max: 64 }, api_key: { type: "string", required: false, pattern: OPAQUE_RE, max: 400, secret: true } },
+  },
+  {
+    method: "POST", path: "/api/oauth/openai/refresh", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 12 },
+    fields: { provider: { type: "string", enum: ["openai", "openai_codex_oauth", "openai_api"], max: 64 } },
   },
   {
     method: "POST", path: "/api/oauth/openai/logout", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
-    fields: { provider: oauthProvider("openai", "openai_codex_oauth") },
+    fields: { provider: { type: "string", enum: ["openai", "openai_codex_oauth", "openai_api"], max: 64 } },
   },
   {
     method: "POST", path: "/api/oauth/claude/start", group: "credentials",
@@ -110,39 +115,44 @@ export const POLICY_TABLE = [
     fields: { provider: oauthProvider("claude", "anthropic_oauth") },
   },
   {
+    method: "POST", path: "/api/oauth/claude/refresh", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 12 },
+    fields: { provider: { type: "string", enum: ["claude", "anthropic_oauth", "claude_oauth", "anthropic_api"], max: 64 } },
+  },
+  {
     method: "POST", path: "/api/oauth/claude/logout", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
-    fields: { provider: oauthProvider("claude", "anthropic_oauth") },
+    fields: { provider: { type: "string", enum: ["claude", "anthropic_oauth", "claude_oauth"], max: 64 } },
   },
   {
     method: "POST", path: "/api/oauth/openrouter/start", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
-    fields: { provider: oauthProvider("openrouter", "openrouter"), api_key: { type: "string", required: false, pattern: OPAQUE_RE, max: 400, secret: true } },
+    fields: { provider: { type: "string", enum: ["openrouter", "openrouter_oauth", "openrouter_api"], max: 64 }, api_key: { type: "string", required: false, pattern: OPAQUE_RE, max: 400, secret: true } },
   },
   {
     method: "POST", path: "/api/oauth/openrouter/refresh", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 12 },
-    fields: { provider: oauthProvider("openrouter", "openrouter") },
+    fields: { provider: { type: "string", enum: ["openrouter", "openrouter_oauth", "openrouter_api"], max: 64 } },
   },
   {
     method: "POST", path: "/api/oauth/openrouter/logout", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
-    fields: { provider: oauthProvider("openrouter", "openrouter") },
+    fields: { provider: { type: "string", enum: ["openrouter", "openrouter_oauth", "openrouter_api"], max: 64 } },
   },
   {
     method: "POST", path: "/api/oauth/meta/start", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
-    fields: { provider: oauthProvider("meta", "meta_ai_oauth"), api_key: { type: "string", required: false, pattern: OPAQUE_RE, max: 400, secret: true } },
+    fields: { provider: { type: "string", enum: ["meta", "meta_ai", "meta_ai_oauth", "meta_ai_api"], max: 64 }, api_key: { type: "string", required: false, pattern: OPAQUE_RE, max: 400, secret: true } },
   },
   {
     method: "POST", path: "/api/oauth/meta/refresh", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 12 },
-    fields: { provider: oauthProvider("meta", "meta_ai_oauth") },
+    fields: { provider: { type: "string", enum: ["meta", "meta_ai", "meta_ai_oauth", "meta_ai_api"], max: 64 } },
   },
   {
     method: "POST", path: "/api/oauth/meta/logout", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
-    fields: { provider: oauthProvider("meta", "meta_ai_oauth") },
+    fields: { provider: { type: "string", enum: ["meta", "meta_ai", "meta_ai_oauth", "meta_ai_api"], max: 64 } },
   },
   {
     method: "POST", path: "/api/oauth/grok/start", group: "credentials",
@@ -304,7 +314,61 @@ export const POLICY_TABLE = [
   {
     method: "POST", path: "/api/providers/grok/refresh", group: "credentials",
     body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 12 },
-    fields: { provider: { type: "string", enum: ["grok", "grok_api"], max: 64 } },
+    fields: { provider: { type: "string", enum: ["grok", "grok_api", "grok_oauth"], max: 64 } },
+  },
+  {
+    method: "POST", path: "/api/providers/openai/connect", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
+    fields: {
+      provider: { type: "string", enum: ["openai", "openai_api"], max: 64 },
+      api_key: { type: "string", required: true, pattern: OPAQUE_RE, max: 400, secret: true },
+    },
+  },
+  {
+    method: "POST", path: "/api/providers/openai/logout", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
+    fields: { provider: { type: "string", enum: ["openai", "openai_api", "openai_codex_oauth"], max: 64 } },
+  },
+  {
+    method: "POST", path: "/api/providers/openai/refresh", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 12 },
+    fields: { provider: { type: "string", enum: ["openai", "openai_api", "openai_codex_oauth"], max: 64 } },
+  },
+  {
+    method: "POST", path: "/api/providers/openrouter/connect", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
+    fields: {
+      provider: { type: "string", enum: ["openrouter", "openrouter_api", "openrouter_oauth"], max: 64 },
+      api_key: { type: "string", required: true, pattern: OPAQUE_RE, max: 400, secret: true },
+    },
+  },
+  {
+    method: "POST", path: "/api/providers/openrouter/logout", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
+    fields: { provider: { type: "string", enum: ["openrouter", "openrouter_api", "openrouter_oauth"], max: 64 } },
+  },
+  {
+    method: "POST", path: "/api/providers/openrouter/refresh", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 12 },
+    fields: { provider: { type: "string", enum: ["openrouter", "openrouter_api", "openrouter_oauth"], max: 64 } },
+  },
+  {
+    method: "POST", path: "/api/providers/meta/connect", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
+    fields: {
+      provider: { type: "string", enum: ["meta", "meta_ai", "meta_ai_api", "meta_ai_oauth"], max: 64 },
+      api_key: { type: "string", required: true, pattern: OPAQUE_RE, max: 400, secret: true },
+    },
+  },
+  {
+    method: "POST", path: "/api/providers/meta/logout", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 6 },
+    fields: { provider: { type: "string", enum: ["meta", "meta_ai", "meta_ai_api", "meta_ai_oauth"], max: 64 } },
+  },
+  {
+    method: "POST", path: "/api/providers/meta/refresh", group: "credentials",
+    body: "json", maxBytes: 2 * 1024, limits: { concurrent: 1, perMinute: 12 },
+    fields: { provider: { type: "string", enum: ["meta", "meta_ai", "meta_ai_api", "meta_ai_oauth"], max: 64 } },
   },
 
   // Subidas: el cuerpo puede llegar a 32 MB, así que el Gateway no lo lee; decide por cabeceras.

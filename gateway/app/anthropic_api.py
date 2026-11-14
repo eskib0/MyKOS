@@ -1,10 +1,11 @@
-"""Proveedor directo Anthropic Messages API (Claude 3.5 / 3.7 Sonnet y Haiku).
+"""Proveedor directo Anthropic Messages API (Claude 4 / 3.7 / 3.5 Sonnet, Opus y Haiku).
 La clave se cifra mediante el gestor de credenciales de MyKOS.
 """
 from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -14,7 +15,7 @@ from typing import Any
 from nvidia import _decode_key, _encode_key
 
 ROOT = Path(__file__).resolve().parent
-_GATEWAY_CREDS = ROOT.parent / "state" / "mykos" / "credentials"
+_GATEWAY_CREDS = Path.home() / ".mykos" / "gateway-state" / "mykos" / "credentials"
 _CREDS_BASE = os.environ.get("MYKOS_CREDENTIALS_DIR")
 if _CREDS_BASE:
     HOME = Path(_CREDS_BASE).expanduser() / "anthropic"
@@ -30,8 +31,31 @@ except OSError:
 FILE = HOME / "credentials.json"
 BASE = os.environ.get("MYKOS_ANTHROPIC_API_URL", "https://api.anthropic.com/v1").rstrip("/")
 ANTHROPIC_VERSION = "2023-06-01"
+_CACHE_LOCK = threading.RLock()
+_MODEL_CACHE: dict[str, Any] = {"checked_at": 0.0, "models": [], "error": ""}
+_CACHE_TTL_SECONDS = 120.0
 
 ANTHROPIC_MODELS: list[dict[str, Any]] = [
+    {
+        "id": "claude-sonnet-4-5-20250929",
+        "alias": "claude-sonnet-4-5",
+        "name": "anthropic/claude-sonnet-4-5",
+        "label": "Claude Sonnet 4.5",
+        "family": "Claude Sonnet",
+        "context_length": 200_000,
+        "thinking_capable": True,
+        "vision_capable": True,
+    },
+    {
+        "id": "claude-sonnet-4-20250514",
+        "alias": "claude-sonnet-4-0",
+        "name": "anthropic/claude-sonnet-4-0",
+        "label": "Claude Sonnet 4",
+        "family": "Claude Sonnet",
+        "context_length": 200_000,
+        "thinking_capable": True,
+        "vision_capable": True,
+    },
     {
         "id": "claude-3-7-sonnet-20250219",
         "alias": "claude-3-7-sonnet-latest",
@@ -92,6 +116,8 @@ def save_anthropic_api_key(key: str) -> None:
     except OSError:
         pass
     temp.replace(FILE)
+    with _CACHE_LOCK:
+        _MODEL_CACHE.update(checked_at=0.0, models=[], error="")
 
 
 def clear_anthropic_api_key() -> dict[str, Any]:
@@ -100,16 +126,14 @@ def clear_anthropic_api_key() -> dict[str, Any]:
             FILE.unlink()
     except OSError:
         pass
+    with _CACHE_LOCK:
+        _MODEL_CACHE.update(checked_at=0.0, models=[], error="")
     return {"ok": True, "provider": "anthropic_api", "status": "logged_out"}
 
 
-def validate_anthropic_api_key(key: str) -> list[str]:
-    key = str(key).strip()
-    if not key or not key.startswith("sk-ant-"):
-        raise RuntimeError("La clave debe comenzar con sk-ant-.")
-    url = f"{BASE}/models"
+def _fetch_anthropic_models(key: str) -> list[dict[str, Any]]:
     req = urllib.request.Request(
-        url,
+        f"{BASE}/models",
         headers={
             "x-api-key": key,
             "anthropic-version": ANTHROPIC_VERSION,
@@ -119,8 +143,6 @@ def validate_anthropic_api_key(key: str) -> list[str]:
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            data_list = data.get("data", [])
-            return [str(m.get("id")) for m in data_list if isinstance(m, dict)]
     except urllib.error.HTTPError as error:
         detail = ""
         try:
@@ -128,9 +150,81 @@ def validate_anthropic_api_key(key: str) -> list[str]:
             detail = body.get("error", {}).get("message", "")
         except Exception:
             pass
-        raise RuntimeError(f"Anthropic API rechazó la clave ({error.code}): {detail or error.reason}")
+        raise RuntimeError(f"Anthropic API rechazó la clave ({error.code}): {detail or error.reason}") from error
     except Exception as error:
-        raise RuntimeError(f"No se pudo conectar con Anthropic API: {error}")
+        raise RuntimeError(f"No se pudo conectar con Anthropic API: {error}") from error
+
+    raw_rows = data.get("data", []) if isinstance(data, dict) else []
+    fallback_by_id = {m["id"]: m for m in ANTHROPIC_MODELS}
+    discovered: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for row in raw_rows:
+        if not isinstance(row, dict):
+            continue
+        mid = str(row.get("id") or "").strip()
+        if not mid or mid in seen_ids:
+            continue
+        seen_ids.add(mid)
+        base_meta = fallback_by_id.get(mid)
+        lower = mid.casefold()
+        if base_meta:
+            discovered.append(dict(base_meta))
+            continue
+        family = "Claude Opus" if "opus" in lower else ("Claude Haiku" if "haiku" in lower else "Claude Sonnet")
+        label = str(row.get("display_name") or mid).strip()
+        thinking = "haiku" not in lower or "4" in lower
+        discovered.append({
+            "id": mid,
+            "alias": mid,
+            "name": f"anthropic/{mid}",
+            "label": label,
+            "family": family,
+            "context_length": 200_000,
+            "thinking_capable": thinking,
+            "vision_capable": True,
+        })
+    return discovered
+
+
+def validate_anthropic_api_key(key: str) -> list[str]:
+    key = str(key).strip()
+    if not key or not key.startswith("sk-ant-"):
+        raise RuntimeError("La clave debe comenzar con sk-ant-.")
+    rows = _fetch_anthropic_models(key)
+    with _CACHE_LOCK:
+        if rows:
+            _MODEL_CACHE.update(checked_at=time.monotonic(), models=rows, error="")
+    return [m["id"] for m in rows]
+
+
+def _model_entry(m: dict[str, Any]) -> dict[str, Any]:
+    caps = ["chat", "completion"]
+    if m.get("thinking_capable"):
+        caps.append("thinking")
+    caps.append("tools")
+    return {
+        "name": m["name"],
+        "label": m["label"],
+        "provider": "anthropic_api",
+        "provider_label": "Anthropic · Direct API",
+        "size": 0,
+        "parameter_size": "",
+        "family": m["family"],
+        "quantization": "",
+        "modified_at": "",
+        "capabilities": caps,
+        "chat_capable": True,
+        "vision_capable": bool(m.get("vision_capable", True)),
+        "thinking_capable": bool(m.get("thinking_capable", False)),
+        "tools_capable": True,
+        "context_length": int(m.get("context_length") or 200_000),
+        "remote": True,
+        "remote_host": "api.anthropic.com",
+        "benchmark_capable": False,
+        "auth_method": "API Key (sk-ant-...)",
+        "auth_status": "autenticado",
+        "auth_error": "",
+    }
 
 
 def anthropic_auth_status() -> dict[str, Any]:
@@ -143,56 +237,60 @@ def anthropic_auth_status() -> dict[str, Any]:
             "models": 0,
             "error": "No hay clave personal de Anthropic configurada.",
         }
+    with _CACHE_LOCK:
+        cached = list(_MODEL_CACHE.get("models") or [])
+        last_err = str(_MODEL_CACHE.get("error") or "")
+    count = len(cached) if cached else len(ANTHROPIC_MODELS)
     return {
         "available": True,
-        "authenticated": True,
+        "authenticated": not ("rechazó" in last_err or "(401)" in last_err or "(403)" in last_err),
         "provider": "anthropic_api",
-        "models": len(ANTHROPIC_MODELS),
-        "error": "",
+        "models": count,
+        "error": last_err if ("rechazó" in last_err or "(401)" in last_err or "(403)" in last_err) else "",
     }
 
 
-def anthropic_model_catalog() -> tuple[list[dict[str, Any]], bool, str]:
+def anthropic_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bool, str]:
     key = _key()
     if not key:
         return [], False, ""
-    models = []
-    for m in ANTHROPIC_MODELS:
-        models.append({
-            "name": m["name"],
-            "label": m["label"],
-            "provider": "anthropic_api",
-            "provider_label": "Anthropic · Direct API",
-            "size": 0,
-            "parameter_size": "",
-            "family": m["family"],
-            "quantization": "",
-            "modified_at": "",
-            "capabilities": ["chat", "completion", "thinking" if m["thinking_capable"] else "", "tools"],
-            "chat_capable": True,
-            "vision_capable": m["vision_capable"],
-            "thinking_capable": m["thinking_capable"],
-            "tools_capable": True,
-            "context_length": m["context_length"],
-            "remote": True,
-            "remote_host": "api.anthropic.com",
-            "benchmark_capable": False,
-            "auth_method": "API Key (sk-ant-...)",
-            "auth_status": "autenticado",
-            "auth_error": "",
-        })
-    return models, True, ""
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        cached = list(_MODEL_CACHE.get("models") or [])
+        checked_at = float(_MODEL_CACHE.get("checked_at", 0.0))
+        if not force and cached and (now - checked_at < _CACHE_TTL_SECONDS):
+            return [_model_entry(m) for m in cached], True, ""
+    try:
+        rows = _fetch_anthropic_models(key)
+        selected = rows if rows else list(ANTHROPIC_MODELS)
+        with _CACHE_LOCK:
+            _MODEL_CACHE.update(checked_at=now, models=selected, error="")
+        return [_model_entry(m) for m in selected], True, ""
+    except RuntimeError as exc:
+        err_msg = str(exc)
+        if "rechazó la clave" in err_msg or "(401)" in err_msg or "(403)" in err_msg:
+            with _CACHE_LOCK:
+                _MODEL_CACHE.update(checked_at=now, models=[], error=err_msg)
+            return [], False, err_msg
+        fallback = cached if cached else list(ANTHROPIC_MODELS)
+        with _CACHE_LOCK:
+            _MODEL_CACHE.update(checked_at=now, models=fallback, error="")
+        return [_model_entry(m) for m in fallback], True, ""
 
 
 def _format_tools(tool_schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     formatted = []
     for schema in tool_schemas:
-        if not isinstance(schema, dict) or not schema.get("name"):
+        if not isinstance(schema, dict):
             continue
-        params = schema.get("parameters") or {"type": "object", "properties": {}}
+        fn = schema.get("function") if isinstance(schema.get("function"), dict) else schema
+        name = str(fn.get("name") or "").strip()
+        if not name:
+            continue
+        params = fn.get("parameters") or fn.get("input_schema") or {"type": "object", "properties": {}}
         formatted.append({
-            "name": schema["name"],
-            "description": schema.get("description", ""),
+            "name": name,
+            "description": str(fn.get("description") or ""),
             "input_schema": params,
         })
     return formatted
@@ -210,9 +308,8 @@ def anthropic_chat_completion(
     if not key:
         raise RuntimeError("No hay clave de Anthropic guardada en MyKOS.")
 
-    # Extraer ID del modelo real
-    target_id = "claude-3-5-sonnet-20241022"
-    clean_name = model_name.removeprefix("anthropic/")
+    clean_name = str(model_name or "").strip().removeprefix("anthropic/")
+    target_id = clean_name or "claude-sonnet-4-5-20250929"
     for item in ANTHROPIC_MODELS:
         if clean_name in {item["id"], item["alias"], item["name"]}:
             target_id = item["id"]
@@ -302,16 +399,27 @@ def anthropic_chat_completion(
     if not anthropic_messages:
         anthropic_messages = [{"role": "user", "content": [{"type": "text", "text": "Hola"}]}]
 
+    gen_options = generation.get("options") if isinstance(generation, dict) and isinstance(generation.get("options"), dict) else {}
+    raw_max_tokens = gen_options.get("num_predict")
+    try:
+        max_tokens = max(512, min(8192, int(raw_max_tokens))) if raw_max_tokens is not None else 4096
+    except (TypeError, ValueError):
+        max_tokens = 4096
+
     payload: dict[str, Any] = {
         "model": target_id,
-        "max_tokens": 4096,
+        "max_tokens": max_tokens,
         "messages": anthropic_messages,
     }
+    raw_temp = gen_options.get("temperature")
+    if isinstance(raw_temp, (int, float)) and 0.0 <= float(raw_temp) <= 1.0:
+        payload["temperature"] = float(raw_temp)
     if system_parts:
         payload["system"] = "\n\n".join(system_parts)
 
-    if tool_schemas:
-        payload["tools"] = _format_tools(tool_schemas)
+    formatted_tools = _format_tools(tool_schemas) if tool_schemas else []
+    if formatted_tools:
+        payload["tools"] = formatted_tools
 
     body_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(

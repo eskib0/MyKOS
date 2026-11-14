@@ -58,14 +58,47 @@ def kimi_models(key: str = "") -> list[dict[str, Any]]:
     if not rows: raise RuntimeError("Kimi aceptó la conexión, pero no devolvió modelos disponibles.")
     return rows
 
+def _extract_kimi_parts(raw: Any) -> str:
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, list):
+        parts: list[str] = []
+        for item in raw:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and item.get("text"):
+                parts.append(str(item["text"]))
+        return "".join(parts).strip()
+    return str(raw or "").strip()
+
+
+def _kimi_requires_unit_temperature(model_id: str) -> bool:
+    lowered = model_id.strip().casefold()
+    return "k2.5" in lowered or "k2.6" in lowered or "thinking" in lowered
+
+
 def kimi_chat_completion(model: str, messages: list[dict[str, Any]], *, max_tokens: int = 1536, temperature: float = .2) -> str:
-    # Kimi K2.6 exige temperature=1; usar el valor compatible para todo el
-    # proveedor evita que el selector de creatividad de MyKOS rompa la llamada.
-    data = _request("chat/completions", payload={"model": model.removeprefix("kimi/"), "messages": messages, "max_tokens": max(1, min(8192, int(max_tokens))), "temperature": 1, "stream": False}, timeout=180)
+    clean_model = model.removeprefix("kimi/").strip()
+    # Solo modelos k2.5 / k2-thinking exigen temperature=1; el resto respeta el valor configurado.
+    effective_temp = 1.0 if _kimi_requires_unit_temperature(clean_model) else max(0.0, min(1.0, float(temperature)))
+    data = _request(
+        "chat/completions",
+        payload={
+            "model": clean_model,
+            "messages": messages,
+            "max_tokens": max(1, min(8192, int(max_tokens))),
+            "temperature": effective_temp,
+            "stream": False,
+        },
+        timeout=180,
+    )
     choices = data.get("choices") if isinstance(data.get("choices"), list) else []
     msg = choices[0].get("message", {}) if choices and isinstance(choices[0], dict) else {}
-    text = msg.get("content", "") if isinstance(msg, dict) else ""
-    if isinstance(text, list):
-        text = "".join(str(part.get("text", "")) if isinstance(part, dict) else str(part) for part in text)
-    if not str(text).strip(): raise RuntimeError(str(data.get("error") or "Kimi no devolvió texto."))
-    return str(text).strip()
+    if not isinstance(msg, dict):
+        msg = {}
+    text = _extract_kimi_parts(msg.get("content", ""))
+    reasoning = _extract_kimi_parts(msg.get("reasoning_content", ""))
+    final_text = text or reasoning
+    if not final_text:
+        raise RuntimeError(str(data.get("error") or "Kimi no devolvió texto."))
+    return final_text

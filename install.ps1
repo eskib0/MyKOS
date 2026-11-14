@@ -12,6 +12,8 @@ $MykosRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BinDir = Join-Path $MykosRoot "bin"
 $VenvDir = if ($env:MYKOS_VENV_DIR) { $env:MYKOS_VENV_DIR } else { Join-Path $HOME ".mykos\venv" }
 $StateDir = if ($env:MYKOS_GATEWAY_STATE_DIR) { $env:MYKOS_GATEWAY_STATE_DIR } else { Join-Path $HOME ".mykos\gateway-state" }
+$CortexDir = Join-Path $HOME ".mykos\cortex"
+$CortexWorkspaceDir = Join-Path $CortexDir "workspace"
 $WorkspaceDir = Join-Path $HOME ".mykos\workspace"
 
 Write-Host "============================================================" -ForegroundColor Cyan
@@ -69,8 +71,21 @@ if (-not $HasSystemPy) {
 }
 Write-Host "✔ Node.js $nodeVer y $pyVer listos." -ForegroundColor Green
 
-# 2. Crear carpetas de estado
-New-Item -ItemType Directory -Force -Path $StateDir, $WorkspaceDir | Out-Null
+# 2. Crear carpetas de estado y Cortex integrado (~/.mykos/cortex + ~/.mykos/cortex/workspace)
+New-Item -ItemType Directory -Force -Path $StateDir, $CortexDir, $CortexWorkspaceDir | Out-Null
+if ((Test-Path $WorkspaceDir) -and -not ((Get-Item $WorkspaceDir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    if (-not (Get-ChildItem -Force $CortexWorkspaceDir -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+        Remove-Item $CortexWorkspaceDir -Force -ErrorAction SilentlyContinue
+        Move-Item -Path $WorkspaceDir -Destination $CortexWorkspaceDir
+    }
+}
+if (-not (Test-Path $WorkspaceDir)) {
+    try {
+        New-Item -ItemType Junction -Path $WorkspaceDir -Target $CortexWorkspaceDir | Out-Null
+    } catch {
+        New-Item -ItemType Directory -Force -Path $WorkspaceDir | Out-Null
+    }
+}
 
 # 3. Crear entorno virtual Python e instalar requirements.txt
 if (-not $NoVenv) {
@@ -151,7 +166,7 @@ try {
 } catch {}
 
 Write-Host ""
-Write-Host "✅ Instalación en Windows completada (v2.0.5). Abre una terminal nueva y ejecuta:" -ForegroundColor Green
+Write-Host "✅ Instalación en Windows completada (v2.0.7). Abre una terminal nueva y ejecuta:" -ForegroundColor Green
 Write-Host "   mykos test      # Verificar rutas, políticas y seguridad"
 Write-Host "   mykos run       # Arrancar MyKOS en vivo en http://127.0.0.1:3210"
 Write-Host "   mykos status    # Consultar el estado de todos los servicios"

@@ -391,7 +391,7 @@ export function strataPayload(model, messages, conversationId, generation, toolS
   };
   if (Object.keys(options).length) {
     payload.max_tokens = toInt(options.num_predict ?? 2048, 2048) || 2048;
-    payload.temperature = toFloat(options.temperature ?? 0.5, 0.5) || 0.5;
+    payload.temperature = toFloat(options.temperature ?? 0.5, 0.5);
   }
   const effort = text(generation?.effort).trim().toLowerCase();
   if (effort === "off") payload.reasoning_effort = "none";
@@ -418,7 +418,7 @@ export function llamaPayload(messages, conversationId, generation, toolSchemas, 
   };
   if (Object.keys(options).length) {
     payload.max_tokens = toInt(options.num_predict ?? 1024, 1024) || 1024;
-    payload.temperature = toFloat(options.temperature ?? 0.5, 0.5) || 0.5;
+    payload.temperature = toFloat(options.temperature ?? 0.5, 0.5);
   }
   const effort = text(generation?.effort).trim().toLowerCase();
   if (effort === "off") payload.reasoning_effort = "none";

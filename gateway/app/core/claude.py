@@ -14,7 +14,6 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from anthropic_api import get_anthropic_api_key
 from tools import TOOL_SCHEMAS, _desktop_session_environment
 from worker_helpers import ApiError
 
@@ -143,22 +142,6 @@ def claude_auth_status() -> dict[str, Any]:
         cached = CLAUDE_STATUS_CACHE.get("status")
         if cached is not None and now - float(CLAUDE_STATUS_CACHE.get("checked_at", 0.0)) < CLAUDE_STATUS_CACHE_SECONDS:
             return dict(cached)
-
-        direct_key = get_anthropic_api_key()
-        if direct_key:
-            status = {
-                "available": True,
-                "authenticated": True,
-                "auth_method": "clave_directa",
-                "email": "",
-                "subscription_tier": "API directa",
-                "provider": "anthropic_oauth",
-                "label": "Anthropic · API directa",
-                "error": "",
-            }
-            CLAUDE_STATUS_CACHE["checked_at"] = now
-            CLAUDE_STATUS_CACHE["status"] = status
-            return dict(status)
 
         executable = claude_executable_path()
         if not executable:

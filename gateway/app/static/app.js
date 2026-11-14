@@ -12,6 +12,9 @@ const state = {
   benchmarkResults: {},
   benchmarkBusy: false,
   oauthProviders: [],
+  oauth: {},
+  oauthPollTimers: {},
+  oauthPollSeq: {},
   libraryItems: [],
   libraryResults: [],
   libraryRoot: "mykos",
@@ -406,13 +409,21 @@ function updateModelMeta() {
   elements.privacyNote.textContent = model
     ? model.provider === "anthropic_oauth"
       ? "Claude se ejecuta a través de Claude Code usando tu sesión OAuth de claude.ai; no se guarda ninguna API key en MyKOS."
+      : model.provider === "anthropic_api"
+      ? "Este modelo se conecta directamente a Anthropic Messages API usando tu clave API personal cifrada en MyKOS."
+      : model.provider === "openai_api"
+      ? "Este modelo se conecta directamente a OpenAI API (/v1/chat/completions) usando tu clave API personal cifrada en MyKOS."
+      : model.provider === "openai_codex_oauth"
+      ? "Este modelo se conecta mediante Codex usando tu sesión OpenAI OAuth propia de MyKOS."
       : model.remote
       ? (model.provider === "qwen_cli"
-        ? "Este modelo se conecta vía Qwen Code CLI y razona en la nube de Alibaba Cloud DashScope."
+        ? "Este modelo se conecta vía Qwen Code CLI y razona en la nube (Qwen Plus / OAuth / DashScope)."
         : model.provider === "antigravity" || model.provider === "antigravity_cli"
         ? "Este modelo se conecta vía Antigravity CLI y razona en la nube de Google."
         : "Este modelo puede enviar las peticiones fuera de este equipo a servidores en la nube.")
-      : model.provider === "llama_cpp"
+      : model.provider === "strata"
+      ? "Este modelo se ejecuta localmente mediante Strata con GPU CUDA."
+      : (model.provider === "llama_cpp" || model.provider === "llamacpp")
       ? "Este modelo se ejecuta localmente mediante llama.cpp con CUDA."
       : "Este modelo se ejecuta localmente mediante Ollama."
     : "";
@@ -1048,9 +1059,11 @@ async function updateLocalEnginesStatus(forceReload = false) {
 
   // 1. llama.cpp 0.9 (CUDA)
   const llama = engines.llamacpp;
-  const llamaModel = state.models?.find((m) => m.provider === "llama_cpp" || m.provider === "llamacpp");
-  const llamaOnline = Boolean(llama?.online || llamaModel);
-  const llamaLoaded = llama?.loaded_model || (llamaModel ? (llamaModel.label || llamaModel.name) : "");
+  const llamaModels = state.models?.filter((m) => m.provider === "llama_cpp" || m.provider === "llamacpp") || [];
+  const llamaOnline = Boolean((llama && llama.online) || llamaModels.length > 0);
+  const llamaLoaded = llama
+    ? (llama.loaded_model || "")
+    : (llamaModels.find((m) => m.status === "online")?.label || llamaModels[0]?.label || llamaModels[0]?.name || "");
 
   if (pilotLlama && badgeLlama && infoLlama) {
     if (llamaOnline) {
@@ -1058,7 +1071,9 @@ async function updateLocalEnginesStatus(forceReload = false) {
       pilotLlama.title = "Estado: ON · Aceleración CUDA en RTX 5060";
       badgeLlama.className = "engine-status-badge on";
       badgeLlama.textContent = "ON";
-      infoLlama.textContent = llamaLoaded ? `Cargado: ${llamaLoaded}` : "En línea (CUDA RTX 5060)";
+      infoLlama.textContent = llamaLoaded
+        ? `Cargado: ${llamaLoaded}`
+        : `En línea · ${llamaModels.length} modelo${llamaModels.length === 1 ? "" : "s"} disponible${llamaModels.length === 1 ? "" : "s"}`;
     } else {
       pilotLlama.className = "engine-pilot off";
       pilotLlama.title = "Estado: OFF · Servidor detenido";
@@ -1092,8 +1107,11 @@ async function updateLocalEnginesStatus(forceReload = false) {
 
   // 3. Strata GPU
   const strata = engines.strata;
-  const strataModel = state.models?.find((m) => m.provider === "strata");
-  const strataOnline = Boolean((strata && strata.online) || strataModel);
+  const strataModels = state.models?.filter((m) => m.provider === "strata") || [];
+  const strataOnline = Boolean((strata && strata.online) || strataModels.length > 0);
+  const strataLoaded = strata
+    ? (strata.loaded_model || "")
+    : (strataModels.find((m) => m.status === "online")?.label || "");
 
   if (pilotStrata && badgeStrata && infoStrata) {
     if (strataOnline) {
@@ -1101,7 +1119,7 @@ async function updateLocalEnginesStatus(forceReload = false) {
       pilotStrata.title = "Estado: ON · Strata GPU activo";
       badgeStrata.className = "engine-status-badge on";
       badgeStrata.textContent = "ON";
-      infoStrata.textContent = strata?.loaded_model ? `Cargado: ${strata.loaded_model}` : "En línea";
+      infoStrata.textContent = strataLoaded ? `Cargado: ${strataLoaded}` : "En línea";
     } else {
       pilotStrata.className = "engine-pilot off";
       pilotStrata.title = "Estado: OFF · Desconectado";
@@ -1373,7 +1391,7 @@ async function checkSystemUpdates(force = false) {
         elements.headerUpdatePill.hidden = false;
         elements.headerUpdatePill.classList.remove("has-update");
         elements.headerUpdatePill.classList.add("up-to-date");
-        const curVer = data.current_version ? `v${data.current_version.replace(/^v/, "")}` : "v2.0.5";
+        const curVer = data.current_version ? `v${data.current_version.replace(/^v/, "")}` : "v2.0.7";
         elements.headerUpdatePill.title = `MyKOS ${curVer} · En línea (haz clic para abrir Gestión local)`;
         if (elements.headerUpdateLabel) {
           elements.headerUpdateLabel.textContent = curVer;
@@ -2047,14 +2065,15 @@ function persistOllamaJobs() {
 
 function renderOllamaInstalled() {
   elements.ollamaInstalledList.replaceChildren();
-  if (!state.models.length) {
+  const ollamaModels = state.models.filter((item) => item.provider === "ollama");
+  if (!ollamaModels.length) {
     const empty = document.createElement("div");
     empty.className = "conversation-empty";
     empty.textContent = "No hay modelos instalados.";
     elements.ollamaInstalledList.appendChild(empty);
     return;
   }
-  for (const model of state.models) {
+  for (const model of ollamaModels) {
     const row = document.createElement("div");
     row.className = "ollama-model-row";
     const details = document.createElement("div");
@@ -2085,7 +2104,11 @@ function renderOllamaCatalog() {
     elements.ollamaCatalogList.appendChild(empty);
     return;
   }
-  const installedNames = new Set(state.models.map((model) => model.name.split(":", 1)[0].toLowerCase()));
+  const installedNames = new Set(
+    state.models
+      .filter((model) => model.provider === "ollama")
+      .map((model) => model.name.split(":", 1)[0].toLowerCase()),
+  );
   for (const item of state.ollamaCatalog) {
     const card = document.createElement("article");
     card.className = "ollama-catalog-card";
@@ -2718,32 +2741,26 @@ async function api(path, options = {}) {
 function renderOAuthStatus(data = {}) {
   const providers = data.providers || [];
   state.oauthProviders = providers;
+  state.oauth = Object.fromEntries(providers.filter((item) => item?.id).map((item) => [item.id, item]));
   renderProviderDirectory();
   renderClaudeOAuthStatus();
   renderOpenRouterOAuthStatus();
   renderMetaOAuthStatus();
   renderGrokStatus();
+  renderNvidiaApiStatus();
+  renderKimiApiStatus();
+  renderGeminiApiStatus();
   renderMistralApiStatus();
   renderAntigravityCliStatus();
   renderQwenCliStatus();
-  const openai = providers.find((item) => item.id === "openai_codex_oauth") || {};
-  const login = providers.find((item) => item.id === "openai_codex_oauth_login") || {};
-  if (openai.authenticated) {
-    const isApiKey = openai.auth_method === "OpenAI API Key";
-    elements.oauthStatus.textContent = isApiKey
-      ? "OpenAI conectado mediante clave API personal."
-      : "OpenAI OAuth conectado en MyKOS.";
-    elements.oauthOpenai.textContent = isApiKey ? "OAuth (opcional)" : "OpenAI conectado";
-    elements.oauthOpenai.disabled = !isApiKey;
-    elements.oauthOpenaiLogout.hidden = false;
-    if (elements.openaiApiKeyRow) elements.openaiApiKeyRow.hidden = true;
-    if (elements.openaiModels) {
-      elements.openaiModels.textContent = isApiKey
-        ? "Modelos GPT-4o, o1 y o3-mini listos en el selector principal."
-        : "Modelos GPT-5.6 (Codex OAuth) listos en el selector principal.";
-    }
-  } else if (login.status === "running") {
-    elements.oauthOpenaiLogout.hidden = true;
+  const openai = state.oauth.openai_codex_oauth || {};
+  const openaiApi = state.oauth.openai_api || {};
+  const login = state.oauth.openai_codex_oauth_login || {};
+  const hasOAuth = Boolean(openai.has_oauth ?? (openai.authenticated && openai.auth_method !== "OpenAI API Key"));
+  const hasApiKey = Boolean(openai.has_api_key || openaiApi.authenticated || openai.auth_method === "OpenAI API Key");
+
+  if (login.status === "running" && !hasOAuth) {
+    elements.oauthOpenaiLogout.hidden = !hasApiKey;
     elements.oauthStatus.replaceChildren();
     const textNode = document.createTextNode("Inicio de sesión abierto en Chrome; autoriza el acceso en OpenAI.");
     elements.oauthStatus.appendChild(textNode);
@@ -2765,10 +2782,45 @@ function renderOAuthStatus(data = {}) {
     }
     elements.oauthOpenai.textContent = "Esperando autorización…";
     elements.oauthOpenai.disabled = true;
+    return;
+  }
+
+  if (hasOAuth || hasApiKey) {
+    if (hasOAuth && hasApiKey) {
+      elements.oauthStatus.textContent = "OpenAI conectado: Codex OAuth + API Key personal.";
+      elements.oauthOpenai.textContent = "OAuth conectado";
+      elements.oauthOpenai.disabled = true;
+      if (elements.openaiApiToggle) elements.openaiApiToggle.textContent = "Cambiar API Key";
+      if (elements.openaiModels) {
+        elements.openaiModels.textContent = "Codex OAuth (GPT-5.6) y OpenAI API (openai/…) listos en el selector.";
+      }
+    } else if (hasOAuth) {
+      elements.oauthStatus.textContent = "OpenAI Codex OAuth conectado en MyKOS.";
+      elements.oauthOpenai.textContent = "OAuth conectado";
+      elements.oauthOpenai.disabled = true;
+      if (elements.openaiApiToggle) elements.openaiApiToggle.textContent = "Usar clave API";
+      if (elements.openaiModels) {
+        elements.openaiModels.textContent = "Modelos GPT-5.6 (Codex OAuth) listos en el selector principal.";
+      }
+    } else {
+      const apiCount = state.models.filter((item) => item.provider === "openai_api").length;
+      elements.oauthStatus.textContent = "OpenAI conectado mediante clave API personal.";
+      elements.oauthOpenai.textContent = "Iniciar sesión OAuth (opcional)";
+      elements.oauthOpenai.disabled = false;
+      if (elements.openaiApiToggle) elements.openaiApiToggle.textContent = "Cambiar API Key";
+      if (elements.openaiModels) {
+        elements.openaiModels.textContent = apiCount
+          ? `${apiCount} modelos OpenAI API (openai/…) listos en el selector principal.`
+          : "Modelos GPT-4o, o1 y o3-mini listos en el selector principal.";
+      }
+    }
+    elements.oauthOpenaiLogout.hidden = false;
+    if (elements.openaiApiKeyRow) elements.openaiApiKeyRow.hidden = true;
   } else {
     elements.oauthStatus.textContent = openai.error || "OpenAI todavía no está conectado en MyKOS.";
     elements.oauthOpenai.textContent = "Iniciar sesión OAuth";
     elements.oauthOpenai.disabled = false;
+    if (elements.openaiApiToggle) elements.openaiApiToggle.textContent = "Usar clave API";
     elements.oauthOpenaiLogout.hidden = true;
     if (elements.openaiModels) {
       elements.openaiModels.textContent = "Inicia sesión con OAuth oficial o introduce tu clave personal de OpenAI (sk-…).";
@@ -2780,18 +2832,30 @@ function renderClaudeOAuthStatus() {
   if (!elements.oauthClaudeStatus) return;
   const anthropicModels = state.models.filter((item) => item.provider === "anthropic_api");
   const claudeCliModel = state.models.find((item) => item.provider === "anthropic_oauth");
-  const anthropicAuth = state.oauthProviders.find((item) => item.id === "anthropic_api") || {};
-  const claudeAuth = state.oauthProviders.find((item) => item.id === "claude_oauth") || {};
+  const anthropicAuth = state.oauth?.anthropic_api || state.oauthProviders.find((item) => item.id === "anthropic_api") || {};
+  const claudeAuth = state.oauth?.claude_oauth || state.oauthProviders.find((item) => item.id === "claude_oauth") || {};
 
   const directConnected = Boolean(anthropicAuth.authenticated || anthropicModels.length > 0);
-  const cliConnected = Boolean(claudeAuth.authenticated && claudeCliModel?.chat_capable);
+  const cliConnected = Boolean(claudeAuth.authenticated || claudeCliModel?.chat_capable);
 
-  if (directConnected) {
+  if (directConnected && cliConnected) {
+    elements.oauthClaudeStatus.textContent = `Anthropic API (${anthropicModels.length} modelos) + Claude Code OAuth conectados.`;
+    if (elements.anthropicApiConnect) elements.anthropicApiConnect.textContent = "Actualizar API Key";
+    if (elements.oauthClaude) {
+      elements.oauthClaude.textContent = "OAuth conectado";
+      elements.oauthClaude.disabled = true;
+    }
+    if (elements.oauthClaudeLogout) elements.oauthClaudeLogout.hidden = false;
+    if (elements.anthropicApiKeyRow) elements.anthropicApiKeyRow.hidden = true;
+    if (elements.anthropicApiModels) {
+      elements.anthropicApiModels.textContent = ["Claude Sonnet (OAuth)", ...anthropicModels.map((m) => m.label || m.name)].join(" · ");
+    }
+  } else if (directConnected) {
     elements.oauthClaudeStatus.textContent = `Anthropic API conectada directamente en MyKOS. ${anthropicModels.length} modelos disponibles.`;
     if (elements.anthropicApiConnect) elements.anthropicApiConnect.textContent = "Actualizar modelos";
     if (elements.oauthClaude) {
-      elements.oauthClaude.textContent = "Claude conectado (API)";
-      elements.oauthClaude.disabled = true;
+      elements.oauthClaude.textContent = "OAuth (Claude Code)";
+      elements.oauthClaude.disabled = false;
     }
     if (elements.oauthClaudeLogout) elements.oauthClaudeLogout.hidden = false;
     if (elements.anthropicApiKeyRow) elements.anthropicApiKeyRow.hidden = true;
@@ -2799,17 +2863,19 @@ function renderClaudeOAuthStatus() {
       elements.anthropicApiModels.textContent = anthropicModels.map((m) => m.label || m.name).join(" · ");
     }
   } else if (cliConnected) {
-    elements.oauthClaudeStatus.textContent = "Claude OAuth conectado mediante Claude Code.";
+    elements.oauthClaudeStatus.textContent = claudeAuth.email
+      ? `Claude Code OAuth conectado (${claudeAuth.email}).`
+      : "Claude OAuth conectado mediante Claude Code.";
     if (elements.anthropicApiConnect) elements.anthropicApiConnect.textContent = "Conectar API Key";
     if (elements.oauthClaude) {
-      elements.oauthClaude.textContent = "Claude conectado (OAuth)";
+      elements.oauthClaude.textContent = "OAuth conectado";
       elements.oauthClaude.disabled = true;
     }
     if (elements.oauthClaudeLogout) elements.oauthClaudeLogout.hidden = false;
     if (elements.anthropicApiKeyRow) elements.anthropicApiKeyRow.hidden = true;
     if (elements.anthropicApiModels) elements.anthropicApiModels.textContent = "Claude Sonnet (OAuth)";
   } else {
-    const errorMsg = claudeAuth.error || anthropicAuth.error || "Anthropic / Claude todavía no está conectado en MyKOS.";
+    const errorMsg = anthropicAuth.error || claudeAuth.error || "Anthropic / Claude todavía no está conectado en MyKOS.";
     elements.oauthClaudeStatus.textContent = errorMsg;
     if (elements.anthropicApiConnect) elements.anthropicApiConnect.textContent = "Conectar API Key";
     if (elements.oauthClaude) {
@@ -2818,7 +2884,7 @@ function renderClaudeOAuthStatus() {
     }
     if (elements.oauthClaudeLogout) elements.oauthClaudeLogout.hidden = true;
     if (elements.anthropicApiModels) {
-      elements.anthropicApiModels.textContent = "Introduce una clave de Anthropic (sk-ant-…) para usar Claude 3.5 / 3.7 sin restricciones.";
+      elements.anthropicApiModels.textContent = "Introduce una clave de Anthropic (sk-ant-…) o inicia sesión con Claude Code OAuth.";
     }
   }
 }
@@ -2938,10 +3004,11 @@ function renderGrokStatus() {
 function renderNvidiaApiStatus() {
   if (!elements.nvidiaApiStatus) return;
   const models = state.models.filter((item) => item.provider === "nvidia_api");
-  const connected = models.some((item) => item.auth_status === "autenticado");
+  const auth = state.oauth?.nvidia_api || {};
+  const connected = Boolean(auth.authenticated || models.some((item) => item.auth_status === "autenticado"));
   elements.nvidiaApiStatus.textContent = connected
     ? `NVIDIA NIM conectada directamente desde MyKOS. ${models.length} modelos disponibles.`
-    : "NVIDIA NIM todavía no está conectada en MyKOS.";
+    : (auth.error || "NVIDIA NIM todavía no está conectada en MyKOS.");
   elements.nvidiaApiModels.textContent = models.length
     ? models.map((item) => item.label || item.name).join(" · ")
     : "Abre el catálogo, genera una clave personal y guárdala aquí para cargar los modelos.";
@@ -2956,8 +3023,11 @@ function renderNvidiaApiStatus() {
 function renderKimiApiStatus() {
   if (!elements.kimiApiStatus) return;
   const models = state.models.filter((item) => item.provider === "kimi_api");
-  const connected = models.some((item) => item.auth_status === "autenticado");
-  elements.kimiApiStatus.textContent = connected ? `Kimi conectada directamente desde MyKOS. ${models.length} modelos disponibles.` : "Kimi todavía no está conectada en MyKOS.";
+  const auth = state.oauth?.kimi_api || {};
+  const connected = Boolean(auth.authenticated || models.some((item) => item.auth_status === "autenticado"));
+  elements.kimiApiStatus.textContent = connected
+    ? `Kimi conectada directamente desde MyKOS. ${models.length} modelos disponibles.`
+    : (auth.error || "Kimi todavía no está conectada en MyKOS.");
   elements.kimiApiModels.textContent = models.length ? models.map((item) => item.label || item.name).join(" · ") : "Genera una clave personal en Kimi y guárdala aquí para cargar su catálogo.";
   elements.kimiApiConnect.textContent = connected ? "Actualizar modelos" : "Conectar Kimi";
   elements.kimiApiLogout.hidden = !connected;
@@ -2968,8 +3038,11 @@ function renderKimiApiStatus() {
 function renderGeminiApiStatus() {
   if (!elements.geminiApiStatus) return;
   const models = state.models.filter((item) => item.provider === "gemini_api");
-  const connected = models.some((item) => item.auth_status === "autenticado");
-  elements.geminiApiStatus.textContent = connected ? `Gemini conectada directamente desde Google AI Studio. ${models.length} modelos disponibles.` : "Gemini todavía no está conectada en MyKOS.";
+  const auth = state.oauth?.gemini_api || {};
+  const connected = Boolean(auth.authenticated || models.some((item) => item.auth_status === "autenticado"));
+  elements.geminiApiStatus.textContent = connected
+    ? `Gemini conectada directamente desde Google AI Studio. ${models.length} modelos disponibles.`
+    : (auth.error || "Gemini todavía no está conectada en MyKOS.");
   elements.geminiApiModels.textContent = models.length ? models.map((item) => item.label || item.name).join(" · ") : "Genera una API key en Google AI Studio y guárdala aquí para cargar su catálogo.";
   elements.geminiApiConnect.textContent = connected ? "Actualizar modelos" : "Conectar Gemini";
   elements.geminiApiLogout.hidden = !connected;
@@ -2997,11 +3070,17 @@ function renderMistralApiStatus() {
   if (connected && elements.mistralApiKeyRow) elements.mistralApiKeyRow.hidden = true;
 }
 
+function isAntigravityEnabled() {
+  const auth = state.oauth?.antigravity_cli || state.oauth?.antigravity || state.oauthProviders.find((item) => item.id === "antigravity_cli");
+  if (auth && typeof auth.enabled === "boolean") return auth.enabled;
+  return state.models.some((item) => item.provider === "antigravity_cli");
+}
+
 function renderAntigravityCliStatus() {
   if (!elements.antigravityCliStatus) return;
   const models = state.models.filter((item) => item.provider === "antigravity_cli");
-  const auth = state.oauthProviders.find((item) => item.id === "antigravity_cli") || {};
-  const enabled = Boolean(auth.enabled || models.length > 0);
+  const auth = state.oauth?.antigravity_cli || state.oauthProviders.find((item) => item.id === "antigravity_cli") || {};
+  const enabled = isAntigravityEnabled();
   elements.antigravityCliStatus.textContent = enabled
     ? `Antigravity CLI activo mediante sesión de Google. ${models.length} modelos disponibles.`
     : (auth.error || "Antigravity CLI está desactivado en MyKOS.");
@@ -3015,11 +3094,17 @@ function renderAntigravityCliStatus() {
   }
 }
 
+function isQwenCliEnabled() {
+  const auth = state.oauth?.qwen_cli || state.oauthProviders.find((item) => item.id === "qwen_cli");
+  if (auth && typeof auth.enabled === "boolean") return auth.enabled;
+  return state.models.some((item) => item.provider === "qwen_cli");
+}
+
 function renderQwenCliStatus() {
   if (!elements.qwenCliStatus) return;
   const models = state.models.filter((item) => item.provider === "qwen_cli");
-  const auth = state.oauthProviders.find((item) => item.id === "qwen_cli") || {};
-  const enabled = Boolean(auth.enabled || models.length > 0);
+  const auth = state.oauth?.qwen_cli || state.oauthProviders.find((item) => item.id === "qwen_cli") || {};
+  const enabled = isQwenCliEnabled();
   elements.qwenCliStatus.textContent = enabled
     ? `Qwen Code CLI activo. ${models.length} modelos disponibles.`
     : (auth.error || "Qwen Code CLI está desactivado en MyKOS.");
@@ -3041,6 +3126,7 @@ function providerLabel(provider, models) {
     anthropic_oauth: "Anthropic · Claude OAuth",
     anthropic_api: "Anthropic · Direct API",
     openai_codex_oauth: "OpenAI · Codex OAuth",
+    openai_api: "OpenAI · API Key",
     nvidia_api: "NVIDIA NIM · API",
     kimi_api: "Kimi · API",
     gemini_api: "Gemini · API",
@@ -3048,6 +3134,10 @@ function providerLabel(provider, models) {
     antigravity_cli: "Antigravity CLI · Google",
     qwen_cli: "Qwen Code · CLI",
     meta_ai_oauth: "Meta AI · OAuth",
+    meta_ai_api: "Meta AI · API",
+    grok_oauth: "Grok · xAI (OAuth)",
+    grok_api: "Grok · xAI (API)",
+    openrouter: "OpenRouter",
   };
   return labels[provider] || models[0]?.provider_label || provider || "Proveedor";
 }
@@ -3078,8 +3168,9 @@ function renderProviderDirectory() {
     title.textContent = providerLabel(provider, models);
     const status = document.createElement("span");
     const oauth = oauthById.get(provider);
+    const codexConnected = Boolean(oauth?.has_oauth ?? (oauth?.authenticated && oauth?.auth_method !== "OpenAI API Key"));
     const connected = provider === "openai_codex_oauth"
-      ? Boolean(oauth?.authenticated)
+      ? codexConnected
       : models.some((model) => model.auth_status === "autenticado" || !model.remote);
     status.className = `provider-status ${connected ? "connected" : "available"}`;
     status.textContent = connected ? "Disponible" : "Requiere conexión";
@@ -3109,7 +3200,7 @@ function renderProviderDirectory() {
       modelList.appendChild(row);
     }
     card.appendChild(modelList);
-    if (provider === "openai_codex_oauth" && !oauth?.authenticated) {
+    if (provider === "openai_codex_oauth" && !codexConnected) {
       const connect = document.createElement("button");
       connect.type = "button";
       connect.className = "ollama-action-button provider-connect";
@@ -3130,18 +3221,69 @@ async function loadOAuthStatus() {
   }
 }
 
+function stopOAuthPoll(key) {
+  if (state.oauthPollTimers[key]) {
+    window.clearTimeout(state.oauthPollTimers[key]);
+    delete state.oauthPollTimers[key];
+  }
+  state.oauthPollSeq[key] = (state.oauthPollSeq[key] || 0) + 1;
+}
+
+function startOAuthPoll(key, tickFn, { initialDelayMs = 1500, intervalMs = 2000, maxDurationMs = 120000, onTimeout } = {}) {
+  stopOAuthPoll(key);
+  const seq = state.oauthPollSeq[key];
+  const startedAt = Date.now();
+  const schedule = (delayMs) => {
+    state.oauthPollTimers[key] = window.setTimeout(runTick, delayMs);
+  };
+  const runTick = async () => {
+    if (state.oauthPollSeq[key] !== seq) return;
+    if (Date.now() - startedAt >= maxDurationMs) {
+      stopOAuthPoll(key);
+      await onTimeout?.();
+      return;
+    }
+    let keepGoing = false;
+    try {
+      keepGoing = Boolean(await tickFn());
+    } catch {
+      keepGoing = false;
+    }
+    if (state.oauthPollSeq[key] === seq && keepGoing) {
+      schedule(intervalMs);
+    } else if (state.oauthPollSeq[key] === seq) {
+      stopOAuthPoll(key);
+    }
+  };
+  schedule(initialDelayMs);
+}
+
 async function startClaudeAuth() {
   elements.oauthClaude.disabled = true;
   try {
     await api("/api/oauth/claude/start", { method: "POST", body: JSON.stringify({ provider: "anthropic_oauth" }) });
     elements.oauthClaudeStatus.textContent = "Inicio de sesión de Claude abierto. Esperando autorización…";
-    const poll = async () => {
-      await loadModels();
-      const model = state.models.find((item) => item.provider === "anthropic_oauth");
-      if (model?.chat_capable) return;
-      window.setTimeout(poll, 2000);
-    };
-    window.setTimeout(poll, 1500);
+    startOAuthPoll(
+      "claude",
+      async () => {
+        await loadOAuthStatus();
+        const claudeAuth = state.oauth?.claude_oauth || {};
+        if (claudeAuth.authenticated) {
+          await loadModels();
+          return false;
+        }
+        return true;
+      },
+      {
+        initialDelayMs: 1500,
+        intervalMs: 2500,
+        maxDurationMs: 120000,
+        onTimeout: () => {
+          elements.oauthClaudeStatus.textContent = "El inicio de sesión de Claude ha expirado (120 s).";
+          elements.oauthClaude.disabled = false;
+        },
+      },
+    );
   } catch (error) {
     elements.oauthClaudeStatus.textContent = error.message;
     elements.oauthClaude.disabled = false;
@@ -3154,7 +3296,8 @@ async function startOpenRouterAuth() {
     const connected = state.models.some((item) => item.provider === "openrouter" && item.auth_status === "autenticado");
     if (connected) {
       await api("/api/oauth/openrouter/refresh", { method: "POST", body: JSON.stringify({ provider: "openrouter" }) });
-      await loadModels();
+      await Promise.all([loadModels(), loadOAuthStatus()]);
+      elements.oauthOpenrouter.disabled = false;
       return;
     }
     const data = await api("/api/oauth/openrouter/start", { method: "POST", body: JSON.stringify({ provider: "openrouter" }) });
@@ -3163,14 +3306,33 @@ async function startOpenRouterAuth() {
       if (!popup) window.location.assign(data.login_url);
     }
     renderOpenRouterOAuthStatus();
-    const poll = async () => {
-      await loadModels();
-      const oauth = state.oauthProviders.find((item) => item.id === "openrouter_oauth") || {};
-      const login = state.oauthProviders.find((item) => item.id === "openrouter_oauth_login") || {};
-      if (oauth.authenticated || login.status === "error" || login.status === "expired") return;
-      window.setTimeout(poll, 2000);
-    };
-    window.setTimeout(poll, 1500);
+    startOAuthPoll(
+      "openrouter",
+      async () => {
+        await loadOAuthStatus();
+        const oauth = state.oauthProviders.find((item) => item.id === "openrouter_oauth") || {};
+        const login = state.oauthProviders.find((item) => item.id === "openrouter_oauth_login") || {};
+        if (oauth.authenticated) {
+          await loadModels();
+          elements.oauthOpenrouter.disabled = false;
+          return false;
+        }
+        if (login.status !== "running") {
+          elements.oauthOpenrouter.disabled = false;
+          return false;
+        }
+        return true;
+      },
+      {
+        initialDelayMs: 1500,
+        intervalMs: 2000,
+        maxDurationMs: 120000,
+        onTimeout: () => {
+          elements.oauthOpenrouterStatus.textContent = "El inicio de sesión de OpenRouter ha expirado (120 s).";
+          elements.oauthOpenrouter.disabled = false;
+        },
+      },
+    );
   } catch (error) {
     elements.oauthOpenrouterStatus.textContent = error.message;
     elements.oauthOpenrouter.disabled = false;
@@ -3179,16 +3341,18 @@ async function startOpenRouterAuth() {
 
 async function logoutOAuth(provider, statusElement, logoutButton) {
   if (!window.confirm(`¿Desconectar ${provider} de MyKOS?`)) return;
+  stopOAuthPoll(provider);
   logoutButton.disabled = true;
   try {
     const payloadProvider = provider === "openai"
-      ? "openai_codex_oauth"
+      ? "openai"
       : (provider === "claude" ? "anthropic_oauth" : (provider === "meta" ? "meta_ai_oauth" : provider));
     await api(`/api/oauth/${provider}/logout`, { method: "POST", body: JSON.stringify({ provider: payloadProvider }) });
     statusElement.textContent = `${provider} desconectado de MyKOS.`;
-    await loadModels();
+    await Promise.all([loadModels(), loadOAuthStatus()]);
   } catch (error) {
     statusElement.textContent = error.message;
+  } finally {
     logoutButton.disabled = false;
   }
 }
@@ -3197,16 +3361,39 @@ async function startOpenAIAuth() {
   elements.oauthOpenai.disabled = true;
   try {
     const data = await api("/api/oauth/openai/start", { method: "POST", body: JSON.stringify({ provider: "openai_codex_oauth" }) });
-    renderOAuthStatus({ providers: [{ id: "openai_codex_oauth", authenticated: false, error: "Esperando autorización…" }, { id: "openai_codex_oauth_login", ...data }] });
-    const poll = async () => {
-      await loadOAuthStatus();
-      const state = await api("/api/oauth/status").catch(() => ({}));
-      const login = (state.providers || []).find((item) => item.id === "openai_codex_oauth_login");
-      const openai = (state.providers || []).find((item) => item.id === "openai_codex_oauth");
-      if (login?.status === "running" && !openai?.authenticated) window.setTimeout(poll, 2000);
-      else await loadModels();
-    };
-    window.setTimeout(poll, 1500);
+    const preserved = (state.oauthProviders || []).filter(
+      (item) => item.id !== "openai_codex_oauth" && item.id !== "openai_codex_oauth_login"
+    );
+    const prevOpenai = state.oauth?.openai_codex_oauth || {};
+    renderOAuthStatus({
+      providers: [
+        ...preserved,
+        { ...prevOpenai, id: "openai_codex_oauth", has_oauth: false, error: "Esperando autorización…" },
+        { id: "openai_codex_oauth_login", ...data },
+      ],
+    });
+    startOAuthPoll(
+      "openai",
+      async () => {
+        await loadOAuthStatus();
+        const login = state.oauth?.openai_codex_oauth_login || {};
+        const openai = state.oauth?.openai_codex_oauth || {};
+        const hasOAuth = Boolean(openai?.has_oauth ?? (openai?.authenticated && openai?.auth_method !== "OpenAI API Key"));
+        if (login?.status === "running" && !hasOAuth) return true;
+        await loadModels();
+        elements.oauthOpenai.disabled = false;
+        return false;
+      },
+      {
+        initialDelayMs: 1500,
+        intervalMs: 2000,
+        maxDurationMs: 120000,
+        onTimeout: () => {
+          elements.oauthStatus.textContent = "El inicio de sesión de OpenAI ha expirado (120 s).";
+          elements.oauthOpenai.disabled = false;
+        },
+      },
+    );
   } catch (error) {
     elements.oauthStatus.textContent = error.message;
     elements.oauthOpenai.disabled = false;
@@ -3245,17 +3432,41 @@ elements.openaiApiSave?.addEventListener("click", async () => {
   }
 });
 elements.oauthOpenaiLogout?.addEventListener("click", () => logoutOAuth("openai", elements.oauthStatus, elements.oauthOpenaiLogout));
-elements.oauthRefresh?.addEventListener("click", loadOAuthStatus);
+elements.oauthRefresh?.addEventListener("click", async () => {
+  if (elements.oauthRefresh) elements.oauthRefresh.disabled = true;
+  try {
+    await api("/api/oauth/openai/refresh", { method: "POST", body: JSON.stringify({ provider: "openai_codex_oauth" }) });
+    await Promise.all([loadModels(), loadOAuthStatus()]);
+  } catch (error) {
+    if (elements.oauthStatus) elements.oauthStatus.textContent = error.message;
+  } finally {
+    if (elements.oauthRefresh) elements.oauthRefresh.disabled = false;
+  }
+});
 elements.oauthClaude?.addEventListener("click", startClaudeAuth);
 elements.oauthClaudeLogout?.addEventListener("click", async () => {
-  const isAnthropicApi = state.models.some((item) => item.provider === "anthropic_api" && item.auth_status === "autenticado");
-  if (isAnthropicApi) {
+  const isAnthropicApi = Boolean(state.oauth?.anthropic_api?.authenticated || state.models.some((item) => item.provider === "anthropic_api" && item.auth_status === "autenticado"));
+  const isClaudeOAuth = Boolean(state.oauth?.claude_oauth?.authenticated || state.models.some((item) => item.provider === "anthropic_oauth" && item.chat_capable));
+  if (isAnthropicApi && isClaudeOAuth) {
+    if (!window.confirm("¿Desconectar Anthropic API y Claude Code OAuth de MyKOS?")) return;
+    elements.oauthClaudeLogout.disabled = true;
+    try {
+      await api("/api/providers/anthropic/logout", { method: "POST", body: JSON.stringify({ provider: "anthropic_api" }) });
+      await api("/api/oauth/claude/logout", { method: "POST", body: JSON.stringify({ provider: "anthropic_oauth" }) });
+      elements.oauthClaudeStatus.textContent = "Anthropic API y Claude OAuth desconectados de MyKOS.";
+      await Promise.all([loadModels(), loadOAuthStatus()]);
+    } catch (error) {
+      elements.oauthClaudeStatus.textContent = error.message;
+    } finally {
+      elements.oauthClaudeLogout.disabled = false;
+    }
+  } else if (isAnthropicApi) {
     if (!window.confirm("¿Desconectar la clave de Anthropic de MyKOS?")) return;
     elements.oauthClaudeLogout.disabled = true;
     try {
       await api("/api/providers/anthropic/logout", { method: "POST", body: JSON.stringify({ provider: "anthropic_api" }) });
       elements.oauthClaudeStatus.textContent = "Anthropic desconectado de MyKOS.";
-      await loadModels();
+      await Promise.all([loadModels(), loadOAuthStatus()]);
     } catch (error) {
       elements.oauthClaudeStatus.textContent = error.message;
     } finally {
@@ -3265,10 +3476,24 @@ elements.oauthClaudeLogout?.addEventListener("click", async () => {
     logoutOAuth("claude", elements.oauthClaudeStatus, elements.oauthClaudeLogout);
   }
 });
-elements.oauthClaudeRefresh?.addEventListener("click", loadModels);
+elements.oauthClaudeRefresh?.addEventListener("click", async () => {
+  if (elements.oauthClaudeRefresh) elements.oauthClaudeRefresh.disabled = true;
+  try {
+    await api("/api/oauth/claude/refresh", { method: "POST", body: JSON.stringify({ provider: "anthropic_oauth" }) });
+    await Promise.all([loadModels(), loadOAuthStatus()]);
+  } catch (error) {
+    if (elements.oauthClaudeStatus) elements.oauthClaudeStatus.textContent = error.message;
+  } finally {
+    if (elements.oauthClaudeRefresh) elements.oauthClaudeRefresh.disabled = false;
+  }
+});
 elements.anthropicApiConnect?.addEventListener("click", () => {
   const connected = state.models.some((item) => item.provider === "anthropic_api" && item.auth_status === "autenticado");
-  if (connected) return elements.oauthClaudeRefresh?.click();
+  if (connected) {
+    elements.anthropicApiKeyRow.hidden = !elements.anthropicApiKeyRow.hidden;
+    if (!elements.anthropicApiKeyRow.hidden && elements.anthropicApiKey) elements.anthropicApiKey.focus();
+    return;
+  }
   elements.anthropicApiKeyRow.hidden = false;
   elements.anthropicApiKey.focus();
 });
@@ -3287,7 +3512,7 @@ elements.anthropicApiSave?.addEventListener("click", async () => {
     });
     elements.anthropicApiKey.value = "";
     elements.anthropicApiKeyRow.hidden = true;
-    await loadModels();
+    await Promise.all([loadModels(), loadOAuthStatus()]);
   } catch (error) {
     elements.oauthClaudeStatus.textContent = error.message;
   } finally {
@@ -3411,19 +3636,30 @@ async function startGrokAuth() {
       window.open(res.verification_uri_complete, "_blank", "width=600,height=720");
     }
     await loadOAuthStatus();
-    const poll = async () => {
-      await loadOAuthStatus();
-      const status = await api("/api/oauth/status").catch(() => ({}));
-      const grok = (status.providers || []).find((item) => item.id === "grok_oauth");
-      if (grok?.authenticated) {
+    startOAuthPoll(
+      "grok",
+      async () => {
+        await loadOAuthStatus();
+        const grok = state.oauth?.grok_oauth || {};
+        if (grok.authenticated) {
+          await loadModels();
+          return false;
+        }
+        if (grok?.login?.status === "running") return true;
         await loadModels();
-      } else if (grok?.login?.status === "running") {
-        window.setTimeout(poll, 3000);
-      } else {
-        await loadModels();
-      }
-    };
-    window.setTimeout(poll, 2500);
+        elements.grokOauthConnect.disabled = false;
+        return false;
+      },
+      {
+        initialDelayMs: 2500,
+        intervalMs: 3000,
+        maxDurationMs: 120000,
+        onTimeout: () => {
+          elements.grokStatus.textContent = "El inicio de sesión de Grok ha expirado (120 s).";
+          elements.grokOauthConnect.disabled = false;
+        },
+      },
+    );
   } catch (error) {
     elements.grokStatus.textContent = error.message;
     elements.grokOauthConnect.disabled = false;
@@ -3653,7 +3889,7 @@ elements.mistralApiRefresh?.addEventListener("click", async () => {
 });
 
 elements.antigravityCliToggle?.addEventListener("click", async () => {
-  const enabled = state.models.some((item) => item.provider === "antigravity_cli");
+  const enabled = isAntigravityEnabled();
   elements.antigravityCliToggle.disabled = true;
   try {
     const action = enabled ? "logout" : "connect";
@@ -3661,7 +3897,7 @@ elements.antigravityCliToggle?.addEventListener("click", async () => {
       method: "POST",
       body: JSON.stringify({ provider: "antigravity_cli" }),
     });
-    await loadModels();
+    await Promise.all([loadModels(), loadOAuthStatus()]);
   } catch (error) {
     elements.antigravityCliStatus.textContent = error.message;
   } finally {
@@ -3672,7 +3908,7 @@ elements.antigravityCliRefresh?.addEventListener("click", async () => {
   elements.antigravityCliRefresh.disabled = true;
   try {
     await api("/api/providers/antigravity/refresh", { method: "POST", body: JSON.stringify({ provider: "antigravity_cli" }) });
-    await loadModels();
+    await Promise.all([loadModels(), loadOAuthStatus()]);
   } catch (error) {
     elements.antigravityCliStatus.textContent = error.message;
   } finally {
@@ -3681,7 +3917,7 @@ elements.antigravityCliRefresh?.addEventListener("click", async () => {
 });
 
 elements.qwenCliToggle?.addEventListener("click", async () => {
-  const enabled = state.models.some((item) => item.provider === "qwen_cli");
+  const enabled = isQwenCliEnabled();
   elements.qwenCliToggle.disabled = true;
   try {
     const action = enabled ? "logout" : "connect";
@@ -3689,7 +3925,7 @@ elements.qwenCliToggle?.addEventListener("click", async () => {
       method: "POST",
       body: JSON.stringify({ provider: "qwen_cli" }),
     });
-    await loadModels();
+    await Promise.all([loadModels(), loadOAuthStatus()]);
   } catch (error) {
     elements.qwenCliStatus.textContent = error.message;
   } finally {
@@ -3700,7 +3936,7 @@ elements.qwenCliRefresh?.addEventListener("click", async () => {
   elements.qwenCliRefresh.disabled = true;
   try {
     await api("/api/providers/qwen/refresh", { method: "POST", body: JSON.stringify({ provider: "qwen_cli" }) });
-    await loadModels();
+    await Promise.all([loadModels(), loadOAuthStatus()]);
   } catch (error) {
     elements.qwenCliStatus.textContent = error.message;
   } finally {

@@ -200,13 +200,13 @@ button { cursor: pointer; }
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #ef4444;
-  box-shadow: 0 0 5px #ef4444;
+  background: #22c55e;
+  box-shadow: 0 0 5px #22c55e;
   flex-shrink: 0;
 }
 .cortex-btn.active .cortex-btn-dot {
-  background: #06b6d4;
-  box-shadow: 0 0 6px #06b6d4;
+  background: #3b82f6;
+  box-shadow: 0 0 6px #3b82f6;
 }
 .app-nav {
   display: grid;
