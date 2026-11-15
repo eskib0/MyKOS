@@ -43,6 +43,10 @@ export function unwrapAnswer(value) {
         text = parsed.content ? String(parsed.content).trim() : "";
         break;
       }
+      if (parsed.kind === "answer" && typeof parsed.content === "string") {
+        text = parsed.content.trim();
+        continue;
+      }
       const keys = Object.keys(parsed);
       if (keys.length === 1 && ANSWER_WRAPPER_KEYS.has(keys[0].toLowerCase()) && typeof parsed[keys[0]] === "string") {
         text = parsed[keys[0]].trim();

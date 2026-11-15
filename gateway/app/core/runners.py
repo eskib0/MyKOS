@@ -49,35 +49,48 @@ def parse_gemini_response(result_text: str) -> dict[str, Any]:
     if not cleaned:
         cleaned = result_text.strip()
     text = cleaned
-    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
-    if fenced:
-        text = fenced.group(1).strip()
-    data: Any = None
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
+
+    def _try_load(s: str) -> Any:
+        try:
+            return json.loads(s, strict=False)
+        except Exception:
+            return None
+
+    data: Any = _try_load(text)
+    if data is None:
+        fenced = re.fullmatch(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.IGNORECASE)
+        if fenced:
+            text = fenced.group(1).strip()
+            data = _try_load(text)
+
+    if data is None:
         first_brace = text.find("{")
         last_brace = text.rfind("}")
         if first_brace != -1 and last_brace > first_brace:
             candidate = text[first_brace : last_brace + 1]
-            try:
-                data = json.loads(candidate)
-            except json.JSONDecodeError:
+            data = _try_load(candidate)
+            if data is None:
                 repaired = re.sub(r',\s*"\s*"\s*', ', "', candidate)
                 repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
-                try:
-                    data = json.loads(repaired)
-                except json.JSONDecodeError:
-                    data = None
-        if data is None:
-            repaired = re.sub(r',\s*"\s*"\s*', ', "', text)
-            repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
+                data = _try_load(repaired)
+
+    if data is None:
+        repaired = re.sub(r',\s*"\s*"\s*', ', "', text)
+        repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
+        data = _try_load(repaired)
+
+    if data is None:
+        m_ans = re.search(r'"kind"\s*:\s*"answer"\s*,\s*"content"\s*:\s*"([\s\S]*?)"\s*,\s*"tool_name"', cleaned)
+        if not m_ans:
+            m_ans = re.search(r'"content"\s*:\s*"([\s\S]*?)"\s*,\s*"kind"\s*:\s*"answer"', cleaned)
+        if m_ans:
+            raw_c = m_ans.group(1)
             try:
-                data = json.loads(repaired)
+                c_clean = json.loads(f'"{raw_c}"', strict=False)
             except Exception:
-                data = None
-        if data is None:
-            return {"kind": "answer", "content": cleaned}
+                c_clean = raw_c.replace('\\n', '\n').replace('\\"', '"').replace('\\\\', '\\')
+            return {"kind": "answer", "content": c_clean.strip()}
+        return {"kind": "answer", "content": cleaned}
 
     if not isinstance(data, dict):
         return {"kind": "answer", "content": cleaned}
@@ -88,18 +101,18 @@ def parse_gemini_response(result_text: str) -> dict[str, Any]:
         return {"kind": "answer", "content": content or cleaned}
 
     if kind == "answer":
-        return {"kind": "answer", "content": content.strip() or cleaned}
+        return {"kind": "answer", "content": content.strip() if content is not None else cleaned}
 
     tool_name = str(data.get("tool_name", "")).strip()
     raw_arguments = data.get("arguments", {})
     if isinstance(raw_arguments, str):
         try:
-            arguments = json.loads(raw_arguments)
+            arguments = json.loads(raw_arguments, strict=False)
         except json.JSONDecodeError:
             repaired_args = re.sub(r',\s*"\s*"\s*', ', "', raw_arguments)
             repaired_args = re.sub(r',\s*([}\]])', r'\1', repaired_args)
             try:
-                arguments = json.loads(repaired_args)
+                arguments = json.loads(repaired_args, strict=False)
             except Exception:
                 arguments = {}
     elif isinstance(raw_arguments, dict):

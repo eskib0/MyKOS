@@ -125,5 +125,27 @@ class SafetyTests(unittest.TestCase):
                 self.assertIn("Rubén", prompt)
                 self.assertIn("Directo y al grano", prompt)
 
+    def test_parse_gemini_response_unwraps_embedded_markdown(self):
+        from core.runners import parse_gemini_response
+        raw_json_with_code = (
+            '{"kind":"answer","content":"Paso 1:\\n```bash\\nexit\\n```\\nPaso 2:\\n'
+            '```bash\\nsudo bash /tmp/lfs.sh\\n```","tool_name":"","arguments":""}'
+        )
+        parsed = parse_gemini_response(raw_json_with_code)
+        self.assertEqual(parsed["kind"], "answer")
+        self.assertIn("```bash\nexit\n```", parsed["content"])
+        self.assertFalse(parsed["content"].startswith('{"kind"'))
+
+    def test_parse_gemini_response_fenced_json(self):
+        from core.runners import parse_gemini_response
+        fenced_json = (
+            '```json\n{"kind":"answer","content":"Paso 1:\\n```bash\\nexit\\n```\\nListo",'
+            '"tool_name":"","arguments":""}\n```'
+        )
+        parsed = parse_gemini_response(fenced_json)
+        self.assertEqual(parsed["kind"], "answer")
+        self.assertIn("Paso 1:", parsed["content"])
+        self.assertFalse(parsed["content"].startswith('{"kind"'))
+
 if __name__ == '__main__':
     unittest.main()

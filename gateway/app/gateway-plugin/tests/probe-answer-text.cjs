@@ -31,6 +31,7 @@ const CLEAN = "Entendido, Usuario. A partir de ahora responderé de forma limpia
   check("Gateway: JSON de una clave no reconocida intacto", unwrapAnswer('{"nombre":"Usuario"}') === '{"nombre":"Usuario"}');
   check("Gateway: JSON roto intacto", unwrapAnswer('{"respuesta":"falta el cierre') === '{"respuesta":"falta el cierre');
   check("Gateway: valor no textual intacto", unwrapAnswer('{"respuesta":{"a":1}}') === '{"respuesta":{"a":1}}');
+  check("Gateway: quita envoltorio kind: answer con varias claves", unwrapAnswer('{"kind":"answer","content":"Respuesta limpia","tool_name":"","arguments":""}') === "Respuesta limpia");
   check("Gateway: vacío", unwrapAnswer("") === "" && unwrapAnswer(null) === "");
 
   // Se extraen las funciones del navegador de static/app.js y se ejecutan aisladas.
@@ -44,6 +45,7 @@ const CLEAN = "Entendido, Usuario. A partir de ahora responderé de forma limpia
   const { speakableText, unwrapJsonAnswer } = sandbox;
 
   check("navegador: quita el envoltorio JSON", unwrapJsonAnswer(REAL) === CLEAN);
+  check("navegador: quita envoltorio kind: answer con varias claves", unwrapJsonAnswer('{"kind":"answer","content":"Respuesta limpia","tool_name":"","arguments":""}') === "Respuesta limpia");
   check("navegador: la voz recibe la frase sin comillas ni llaves", speakableText(REAL) === CLEAN, JSON.stringify(speakableText(REAL)));
   const markdown = "## Resumen\n- **Entendido**, mira `esto` y [este enlace](https://x.com/a?b=1).\n> «Cita» (entre paréntesis) y \"comillas\" & 50%.";
   const spoken = speakableText(markdown);

@@ -2663,6 +2663,9 @@ function formatMessageTimestamp(value) {
 }
 
 function addBubble(role, content, isError = false, sources = [], createdAt = "", messageId = "", model = "", meta = "", telemetry = null) {
+  if (role === "assistant" && typeof content === "string" && (content.startsWith("{") || content.startsWith("```json") || content.includes('"kind":"answer"'))) {
+    content = unwrapJsonAnswer(content);
+  }
   const row = document.createElement("div");
   row.className = `message-row ${role}`;
   const bubble = document.createElement("div");
@@ -4956,6 +4959,10 @@ function unwrapJsonAnswer(value) {
       if (parsed.kind === "tool_call" || parsed.tool_name) {
         text = parsed.content ? String(parsed.content).trim() : "";
         break;
+      }
+      if (parsed.kind === "answer" && typeof parsed.content === "string") {
+        text = parsed.content.trim();
+        continue;
       }
       const keys = Object.keys(parsed);
       if (keys.length === 1 && ANSWER_WRAPPER_KEYS.has(keys[0].toLowerCase()) && typeof parsed[keys[0]] === "string") {

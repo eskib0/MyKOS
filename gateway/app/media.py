@@ -310,11 +310,15 @@ def _unwrap_answer(text: str) -> str:
         if isinstance(parsed, str):
             value = parsed.strip()
             continue
-        if isinstance(parsed, dict) and len(parsed) == 1:
-            key, inner = next(iter(parsed.items()))
-            if str(key).lower() in _ANSWER_WRAPPER_KEYS and isinstance(inner, str):
-                value = inner.strip()
+        if isinstance(parsed, dict):
+            if str(parsed.get("kind", "")).strip().casefold() == "answer" and isinstance(parsed.get("content"), str):
+                value = parsed["content"].strip()
                 continue
+            if len(parsed) == 1:
+                key, inner = next(iter(parsed.items()))
+                if str(key).lower() in _ANSWER_WRAPPER_KEYS and isinstance(inner, str):
+                    value = inner.strip()
+                    continue
         break
     return value
 
