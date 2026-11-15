@@ -2662,6 +2662,307 @@ function formatMessageTimestamp(value) {
   return `${values.day}/${values.month}/${values.year} · ${values.hour}:${values.minute}`;
 }
 
+const CHAT_INLINE_TOKEN_RE = /(!\[[^\]]*\]\([^)]+\)|\[\[[^\]]+\]\]|\[[^\]]+\]\([^)]+\)|`[^`\n]+`|\*\*\*[^*\n]+\*\*\*|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g;
+
+function renderInlineMarkdown(parent, inlineText, depth = 0) {
+  if (!parent || !inlineText) return;
+  if (depth > 2) {
+    parent.appendChild(document.createTextNode(inlineText));
+    return;
+  }
+  const tokenRe = new RegExp(CHAT_INLINE_TOKEN_RE.source, "g");
+  let lastIndex = 0;
+  let match;
+  while ((match = tokenRe.exec(inlineText)) !== null) {
+    if (match.index > lastIndex) {
+      parent.appendChild(document.createTextNode(inlineText.slice(lastIndex, match.index)));
+    }
+    const token = match[0];
+    if (token.startsWith("![")) {
+      const split = token.indexOf("](");
+      const alt = token.slice(2, split) || "Imagen";
+      const src = token.slice(split + 2, -1);
+      const isRemote = /^https?:\/\//i.test(src);
+      if (isRemote) {
+        // H3 auditoría: no cargar automáticamente recursos remotos para evitar exfiltración por inyección indirecta
+        const link = document.createElement("a");
+        link.className = "chat-external-media-link";
+        link.href = src;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = `🔗 [Ver medio externo: ${alt}]`;
+        parent.appendChild(link);
+      } else if (/\.(?:mp4|webm)$/i.test(src)) {
+        const vid = document.createElement("video");
+        vid.className = "chat-inline-video";
+        vid.src = src;
+        vid.controls = true;
+        vid.autoplay = true;
+        vid.loop = true;
+        vid.muted = true;
+        vid.playsInline = true;
+        parent.appendChild(vid);
+      } else {
+        const img = document.createElement("img");
+        img.className = "chat-inline-image";
+        img.alt = alt;
+        img.src = src;
+        img.loading = "lazy";
+        parent.appendChild(img);
+      }
+    } else if (token.startsWith("[[")) {
+      const inner = token.slice(2, -2);
+      const bar = inner.indexOf("|");
+      const targetName = (bar > 0 ? inner.slice(0, bar) : inner).split("#")[0].trim();
+      const display = (bar > 0 ? inner.slice(bar + 1) : inner).trim();
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cortex-wikilink";
+      btn.textContent = display || targetName;
+      btn.addEventListener("click", () => navigateCortexByName(targetName));
+      parent.appendChild(btn);
+    } else if (token.startsWith("[")) {
+      const split = token.indexOf("](");
+      const linkText = token.slice(1, split);
+      const targetUrl = token.slice(split + 2, -1);
+      const link = document.createElement("a");
+      link.href = targetUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+
+      if (targetUrl.startsWith("file://")) {
+        link.className = "chat-file-link";
+        link.title = `Ruta local: ${targetUrl}. Haz clic para copiar la ruta.`;
+        link.textContent = `📄 ${linkText}`;
+        link.addEventListener("click", async (e) => {
+          e.preventDefault();
+          const cleanPath = decodeURIComponent(targetUrl.replace(/^file:\/\//, ""));
+          try {
+            await navigator.clipboard.writeText(cleanPath);
+            const prev = link.textContent;
+            link.textContent = `✓ Ruta copiada`;
+            link.classList.add("copied");
+            setTimeout(() => {
+              link.textContent = prev;
+              link.classList.remove("copied");
+            }, 1800);
+          } catch {}
+          if (elements.terminalInput) {
+            elements.terminalInput.value = `cat "${cleanPath}"`;
+          }
+        });
+      } else {
+        link.className = "chat-link";
+        link.textContent = linkText;
+      }
+      parent.appendChild(link);
+    } else if (token.startsWith("`")) {
+      const code = document.createElement("code");
+      code.className = "chat-inline-code";
+      code.textContent = token.slice(1, -1);
+      parent.appendChild(code);
+    } else if (token.startsWith("***")) {
+      const strong = document.createElement("strong");
+      const em = document.createElement("em");
+      renderInlineMarkdown(em, token.slice(3, -3), depth + 1);
+      strong.appendChild(em);
+      parent.appendChild(strong);
+    } else if (token.startsWith("**")) {
+      const strong = document.createElement("strong");
+      renderInlineMarkdown(strong, token.slice(2, -2), depth + 1);
+      parent.appendChild(strong);
+    } else if (token.startsWith("*")) {
+      const em = document.createElement("em");
+      renderInlineMarkdown(em, token.slice(1, -1), depth + 1);
+      parent.appendChild(em);
+    }
+    lastIndex = tokenRe.lastIndex;
+  }
+  if (lastIndex < inlineText.length) {
+    parent.appendChild(document.createTextNode(inlineText.slice(lastIndex)));
+  }
+}
+
+function renderChatMessageMarkdown(container, rawContent) {
+  if (!container) return;
+  container.replaceChildren();
+  const text = String(rawContent ?? "").trim();
+  if (!text) return;
+
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  let inCode = false;
+  let codeLang = "";
+  let codeLines = [];
+  let currentList = null;
+  let currentListType = null;
+  let currentQuote = null;
+
+  const flushList = () => {
+    if (currentList) {
+      container.appendChild(currentList);
+      currentList = null;
+      currentListType = null;
+    }
+  };
+
+  const flushQuote = () => {
+    if (currentQuote) {
+      container.appendChild(currentQuote);
+      currentQuote = null;
+    }
+  };
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      if (!inCode) {
+        flushList();
+        flushQuote();
+        inCode = true;
+        codeLang = trimmed.slice(3).trim();
+        codeLines = [];
+      } else {
+        inCode = false;
+        const codeWrapper = document.createElement("div");
+        codeWrapper.className = "chat-code-block";
+
+        const header = document.createElement("div");
+        header.className = "chat-code-header";
+
+        const langSpan = document.createElement("span");
+        langSpan.className = "chat-code-lang";
+        langSpan.textContent = codeLang || "código";
+        header.appendChild(langSpan);
+
+        const copyBtn = document.createElement("button");
+        copyBtn.type = "button";
+        copyBtn.className = "chat-code-copy-btn";
+        copyBtn.textContent = "Copiar";
+        const fullCode = codeLines.join("\n");
+        copyBtn.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(fullCode);
+            copyBtn.textContent = "✓ Copiado";
+            copyBtn.classList.add("copied");
+            setTimeout(() => {
+              copyBtn.textContent = "Copiar";
+              copyBtn.classList.remove("copied");
+            }, 1800);
+          } catch {}
+        });
+        header.appendChild(copyBtn);
+        codeWrapper.appendChild(header);
+
+        const pre = document.createElement("pre");
+        const code = document.createElement("code");
+        code.textContent = fullCode;
+        pre.appendChild(code);
+        codeWrapper.appendChild(pre);
+        container.appendChild(codeWrapper);
+        codeLines = [];
+        codeLang = "";
+      }
+      continue;
+    }
+
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+
+    // Horizontal rule: ---, ___, ***
+    if (/^(?:---|___|\*\*\*)\s*$/.test(trimmed)) {
+      flushList();
+      flushQuote();
+      const hr = document.createElement("hr");
+      hr.className = "chat-divider";
+      container.appendChild(hr);
+      continue;
+    }
+
+    // Headings: #, ##, ###, ####
+    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
+    if (headingMatch) {
+      flushList();
+      flushQuote();
+      const level = Math.min(headingMatch[1].length + 1, 4);
+      const h = document.createElement(`h${level}`);
+      h.className = "chat-heading";
+      renderInlineMarkdown(h, headingMatch[2]);
+      container.appendChild(h);
+      continue;
+    }
+
+    // Blockquote: > text
+    const quoteMatch = line.match(/^>\s?(.*)$/);
+    if (quoteMatch) {
+      flushList();
+      if (!currentQuote) {
+        currentQuote = document.createElement("blockquote");
+        currentQuote.className = "chat-blockquote";
+      } else {
+        currentQuote.appendChild(document.createElement("br"));
+      }
+      renderInlineMarkdown(currentQuote, quoteMatch[1]);
+      continue;
+    }
+    flushQuote();
+
+    // Unordered list: - item, * item, • item
+    const ulMatch = line.match(/^\s*[-*•]\s+(.+)$/);
+    if (ulMatch) {
+      if (!currentList || currentListType !== "ul") {
+        flushList();
+        currentList = document.createElement("ul");
+        currentList.className = "chat-list";
+        currentListType = "ul";
+      }
+      const li = document.createElement("li");
+      renderInlineMarkdown(li, ulMatch[1]);
+      currentList.appendChild(li);
+      continue;
+    }
+
+    // Ordered list: 1. item
+    const olMatch = line.match(/^\s*(\d+)\.\s+(.+)$/);
+    if (olMatch) {
+      if (!currentList || currentListType !== "ol") {
+        flushList();
+        currentList = document.createElement("ol");
+        currentList.className = "chat-list chat-ordered-list";
+        currentListType = "ol";
+      }
+      const li = document.createElement("li");
+      renderInlineMarkdown(li, olMatch[2]);
+      currentList.appendChild(li);
+      continue;
+    }
+
+    if (!trimmed) {
+      flushList();
+      continue;
+    }
+
+    flushList();
+    const p = document.createElement("p");
+    p.className = "chat-paragraph";
+    renderInlineMarkdown(p, line);
+    container.appendChild(p);
+  }
+
+  flushList();
+  flushQuote();
+  if (inCode && codeLines.length) {
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.textContent = codeLines.join("\n");
+    pre.appendChild(code);
+    container.appendChild(pre);
+  }
+}
+
 function addBubble(role, content, isError = false, sources = [], createdAt = "", messageId = "", model = "", meta = "", telemetry = null) {
   if (role === "assistant" && typeof content === "string" && (content.startsWith("{") || content.startsWith("```json") || content.includes('"kind":"answer"'))) {
     content = unwrapJsonAnswer(content);
@@ -2678,47 +2979,7 @@ function addBubble(role, content, isError = false, sources = [], createdAt = "",
   timestamp.textContent = formatMessageTimestamp(createdAt) + (role === "assistant" && model ? " • " + model : "") + (role === "assistant" && meta ? " • " + meta : "");
   const text = document.createElement("div");
   text.className = "message-text";
-  const mediaRegex = /!\[([^\]]*)\]\(((?:data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=]+)|(?:https?:\/\/[^\s)]+)|(?:\/[a-zA-Z0-9_./-]+\.(?:png|jpe?g|webp|gif|svg|mp4|webm)))\)/gi;
-  let lastIndex = 0;
-  let match;
-  while ((match = mediaRegex.exec(content)) !== null) {
-    if (match.index > lastIndex) {
-      text.appendChild(document.createTextNode(content.slice(lastIndex, match.index)));
-    }
-    const src = match[2];
-    const isRemote = /^https?:\/\//i.test(src);
-    if (isRemote) {
-      // H3 auditoría: no cargar automáticamente recursos remotos para evitar exfiltración por inyección indirecta
-      const link = document.createElement("a");
-      link.className = "chat-external-media-link";
-      link.href = src;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.textContent = `🔗 [Ver medio externo: ${match[1] || "enlace"}]`;
-      text.appendChild(link);
-    } else if (/\.(?:mp4|webm)$/i.test(src)) {
-      const vid = document.createElement("video");
-      vid.className = "chat-inline-video";
-      vid.src = src;
-      vid.controls = true;
-      vid.autoplay = true;
-      vid.loop = true;
-      vid.muted = true;
-      vid.playsInline = true;
-      text.appendChild(vid);
-    } else {
-      const img = document.createElement("img");
-      img.className = "chat-inline-image";
-      img.alt = match[1] || "Imagen generada";
-      img.src = src;
-      img.loading = "lazy";
-      text.appendChild(img);
-    }
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < content.length) {
-    text.appendChild(document.createTextNode(content.slice(lastIndex)));
-  }
+  renderChatMessageMarkdown(text, content);
   bubble.append(label, timestamp, text);
   if (role === "assistant") {
     if (telemetry && (telemetry.tokens_per_second > 0 || telemetry.tokens_out > 0)) {
@@ -5918,7 +6179,7 @@ async function sendLocalVoiceMessage(message, signal) {
         callTranscriptLine("assistant", cleanAnswer);
       } else {
         const textEl = assistantBubbleRow.querySelector(".message-text");
-        if (textEl) textEl.textContent = cleanAnswer;
+        if (textEl) renderChatMessageMarkdown(textEl, cleanAnswer);
       }
     }
     if (data.pending_action) await loadApprovals();

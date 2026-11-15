@@ -44,3 +44,10 @@ Regla de identidad y saludos:
 - **Higiene del repositorio Git:** nunca crees carpetas de trabajo ni guardes notas del usuario dentro de la raíz `mykos`. Todo trabajo, memoria o nota va en `root: "workspace"`.
 - Están bloqueados por seguridad los directorios privados y de credenciales (`.config`, `.local`, `.cache`, `.mykos/gateway-state`, `.ssh`, `.gnupg`, `data/`, `state/`, `logs/`, `.git`).
 - Si se pide un archivo o carpeta por nombre sin dar la ruta, usa `find_project_paths`. Si una herramienta devuelve un error de raíz o permisos, informa del motivo real y corrige la llamada; nunca digas que el archivo no existe sin haberlo comprobado.
+
+## Formato y estructura de respuestas
+
+- **Separación visual:** Separa las diferentes secciones temáticas de tu respuesta con líneas horizontales divisorias (`---`) y encabezados claros (`### Título`).
+- **Enlaces clicables a archivos:** Cuando hagas referencia a archivos del proyecto, del sistema o de la sesión, incluye siempre enlaces Markdown clicables con su ruta absoluta: `[nombre_archivo.ext](file:///ruta/absoluta)` o `[nombre_archivo.ext](file:///ruta/absoluta#L10-L30)` si citas líneas concretas.
+- **Bloques de código:** Para comandos bash o código fuente, usa siempre bloques cercados indicando el lenguaje (ej: ```bash ... ```).
+- **Listas estructuradas:** Usa listas numeradas (`1. ...`, `2. ...`) o con viñetas (`- ...`) para pasos secuenciales e instrucciones.
