@@ -17,7 +17,7 @@ AGY_PATH = os.environ.get(
     "MYKOS_AGY_PATH",
     shutil.which("agy") or str(Path.home() / ".local" / "bin" / "agy"),
 )
-MAX_PROMPT_CHARS = 12000
+MAX_PROMPT_CHARS = 500000
 SAFE_HOME = Path(
     os.environ.get(
         "MYKOS_AGY_HOME",
@@ -234,14 +234,14 @@ def antigravity_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]]
             "family": family,
             "quantization": "",
             "modified_at": "",
-            "capabilities": ["chat", "completion"],
+            "capabilities": ["chat", "completion", "thinking", "tools"],
             "chat_capable": True,
             "vision_capable": False,
             "thinking_capable": True,
-            "tools_capable": False,
-            "context_length": 0,
+            "tools_capable": True,
+            "context_length": 128000,
             "remote": True,
-            "remote_host": "agy en perfil aislado sin herramientas",
+            "remote_host": "agy mediante sesión Google con herramientas de MyKOS",
             "benchmark_capable": False,
             "auth_method": "sesión Google gestionada por agy",
             "auth_status": "autenticado",

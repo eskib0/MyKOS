@@ -777,6 +777,8 @@ def extract_qwen_response(payload: Any) -> tuple[str, dict[str, Any], float, lis
             if result_item.get("is_error"):
                 err = result_item.get("error", {})
                 msg = err.get("message") if isinstance(err, dict) else str(err)
+                if msg == "session_changed":
+                    raise RuntimeError("La sesión OAuth de Qwen Code ha caducado en Alibaba (session_changed). Abre una terminal y ejecuta 'qwen' para renovar el inicio de sesión con tu suscripción.")
                 raise RuntimeError(msg or "Qwen devolvió un error de ejecución.")
             text = str(result_item.get("result") or assistant_text).strip()
             usage = result_item.get("usage") or {}
@@ -945,6 +947,8 @@ def ask_qwen(
 
     if result.returncode != 0 and not result.stdout:
         err_msg = (result.stderr or "").strip()
+        if "session_changed" in err_msg:
+            raise RuntimeError("La sesión OAuth de Qwen Code ha caducado en Alibaba (session_changed). Abre una terminal y ejecuta 'qwen' para renovar el inicio de sesión con tu suscripción.")
         raise RuntimeError(f"qwen terminó con código {result.returncode}. {err_msg}".strip())
 
     payload = _parse_qwen_output(result.stdout)

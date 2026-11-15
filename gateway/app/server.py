@@ -2125,13 +2125,10 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
             "Las herramientas de MyKOS se solicitan mediante el protocolo JSON controlado por el servidor."
         )
     elif provider == "antigravity_cli":
-        processing_scope = "remoto a través de Antigravity CLI (agy) con la sesión Google aislada de MyKOS"
+        processing_scope = "remoto a través de Antigravity CLI (agy) con la sesión Google y herramientas de MyKOS"
         provider_note = (
-            "LÍMITE DEL PROVEEDOR: en esta petición Antigravity CLI solo admite conversación de texto y "
-            "no recibe herramientas de MyKOS. No declares que vas a ejecutar, abrir, guardar, buscar, ni solicitar "
-            "aprobación para una herramienta: no podrías invocarla. Si Usuario pide una acción sobre el equipo o archivos, "
-            "di con claridad y brevedad que este proveedor concreto no puede ejecutarla y que debe elegir un modelo de MyKOS "
-            "con herramientas. No le des comandos para que haga él una acción que te ha pedido ejecutar."
+            "La petición se procesa mediante Antigravity CLI. "
+            "Las herramientas de MyKOS se solicitan mediante el protocolo JSON controlado por el servidor."
         )
     elif provider == "qwen_cli":
         processing_scope = "remoto a través de Qwen Code CLI con herramientas autónomas activas y suscripción oficial Qwen Plus"
@@ -2171,6 +2168,7 @@ def system_prompt_for_model(selected_model: dict[str, Any]) -> str:
 
 
 JSON_TOOL_PROTOCOL_PROVIDERS = {
+    "antigravity_cli",
     "anthropic_oauth",
     "anthropic_api",
     "openai_codex_oauth",
@@ -2907,24 +2905,50 @@ def run_antigravity_until_result(
     supports_vision: bool = False,
     generation: dict[str, Any] | None = None,
     activity_id: str | None = None,
+    permission_mode: str = "supervisado",
 ) -> dict[str, Any]:
     if not model.startswith("antigravity/"):
         raise RuntimeError(f"Modelo Antigravity no reconocido: {model}")
     if supports_vision or has_message_images(messages):
         raise RuntimeError("Antigravity CLI en MyKOS solo admite texto por ahora.")
     from antigravity_cli import ask
-    update_activity(activity_id, status="working", phase="model", label="Trabajando…", detail=f"{model} · CLI aislado sin herramientas.")
-    prompt = openrouter_prompt_from_messages(messages[-12:])
-    if len(prompt) > 12000:
-        prompt = prompt[-12000:]
-    result = ask(prompt, timeout_seconds=90, model=model.removeprefix("antigravity/"))
-    content = str(result.get("response", "")).strip()
-    if not content:
-        raise RuntimeError("Antigravity no devolvió texto.")
-    assistant_message = {"role": "assistant", "model": model, "content": content, "created_at": utc_now()}
-    save_assistant_message(conversation_id, assistant_message)
-    return {"message": assistant_message, "tools_used": [], "sources": [], "done": True,
-            "usage": result.get("usage", {}), "duration_seconds": result.get("duration_seconds")}
+    model_id = model.removeprefix("antigravity/")
+
+    def _complete(req_messages: list[dict[str, Any]]) -> str:
+        prompt_parts: list[str] = []
+        system_msg = req_messages[0] if req_messages and req_messages[0].get("role") == "system" else None
+        other_msgs = req_messages[1:] if system_msg else req_messages
+        recent_msgs = other_msgs[-14:] if len(other_msgs) > 14 else other_msgs
+        final_msgs = ([system_msg] if system_msg else []) + recent_msgs
+        for msg in final_msgs:
+            role = str(msg.get("role", "")).strip().upper()
+            content = str(msg.get("content", "")).strip()
+            if not content:
+                continue
+            prompt_parts.append(f"<{role}>\n{content}\n</{role}>")
+        prompt_parts.append("ÚLTIMO TURNO: responde ahora cumpliendo el PROTOCOLO DE HERRAMIENTAS DE MYKOS en JSON.")
+        prompt = "\n\n".join(prompt_parts)
+        if len(prompt) > 400000:
+            prompt = prompt[:10000] + "\n...\n" + prompt[-390000:]
+        result = ask(prompt, timeout_seconds=120, model=model_id)
+        content = str(result.get("response", "")).strip()
+        if not content:
+            raise RuntimeError("Antigravity no devolvió texto.")
+        return content
+
+    return _run_openai_json_tool_loop(
+        model,
+        "antigravity_cli",
+        "Antigravity",
+        f"{model} · Antigravity CLI con herramientas de MyKOS.",
+        messages,
+        conversation_id,
+        _complete,
+        supports_vision=supports_vision,
+        generation=generation,
+        activity_id=activity_id,
+        permission_mode=permission_mode,
+    )
 
 
 def qwen_prompt_from_messages(
@@ -2976,11 +3000,11 @@ def qwen_prompt_from_messages(
     if not is_swarm_worker_turn:
         swarm_instructions = (
             "\n\nMOTOR MYKOS SWARM EN QWEN CLI: En esta sesión de Qwen Code CLI tienes acceso total al motor MyKOS Swarm en vivo ejecutando el CLI oficial con tu herramienta de terminal (`run_shell_command`):\n"
-            "- Crear trabajador y esperar su respuesta: `./bin/mykos swarm add <nombre> --role \"<rol>\" --model \"<modelo>\" --brief \"<misión>\" --wait 100`\n"
-            "- Publicar en el tablón y esperar: `./bin/mykos swarm post \"@<nombre> <mensaje>\" --wait 100`\n"
+            "- Crear trabajador y esperar su respuesta: `./bin/mykos swarm add <nombre> --role \"<rol>\" --model \"<modelo>\" --brief \"<misión>\" --wait 15`\n"
+            "- Publicar en el tablón y esperar: `./bin/mykos swarm post \"@<nombre> <mensaje>\" --wait 15`\n"
             "- Ver estado y tablón: `./bin/mykos swarm status` / `./bin/mykos swarm board --since 0`\n"
             "- Detener trabajador o reiniciar: `./bin/mykos swarm kill <nombre>` / `./bin/mykos swarm reset`\n"
-            "Cuando el usuario te pida usar el motor Swarm, crear trabajadores o publicar en el tablón, EJECUTA inmediatamente `./bin/mykos swarm ...` con tu herramienta de comando; NUNCA digas que las herramientas Swarm no están disponibles en Qwen CLI ni simules la respuesta del trabajador. Si un trabajador local (p.ej. `llama_cpp` / `mykos-cuda`) sigue en `working` al volver `--wait`, usa `sleep 20 && ./bin/mykos swarm board --since 0` hasta que publique su respuesta real en el tablón (sin errores)."
+            "REGLA ESTRICTA DEL SWARM: Consulta el estado o tablón del Swarm MÁXIMO UNA VEZ por turno (con `--wait 15`). PROHIBIDO ejecutar bucles de comprobación repetida (polling), reintentos continuos o consultar el tablón varias veces en el mismo turno. Si los trabajadores están en 'waiting', en 'standby' o no hay mensajes nuevos, NO vuelvas a ejecutar comandos de Swarm: ENTREGA DE INMEDIATO tu resumen al usuario y cierra el turno para no agotar el tiempo."
         )
     return (
         "Eres MyKOS operando con el motor Qwen Code CLI y la suscripción oficial Qwen Plus.\n"
@@ -3654,6 +3678,7 @@ def run_model_until_result(
         return run_antigravity_until_result(
             model, messages, conversation_id, supports_vision=supports_vision,
             generation=generation, activity_id=activity_id,
+            permission_mode=permission_mode,
         )
     if model.startswith("qwen-cli/"):
         return run_qwen_until_result(

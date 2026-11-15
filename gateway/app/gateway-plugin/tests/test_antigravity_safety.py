@@ -48,16 +48,16 @@ class SafetyTests(unittest.TestCase):
         self.assertIn('"qwen-cli/"', route[:route.index('result = await worker.remoteModel')])
 
     def test_validation(self):
-        for prompt, timeout in [('', 60), ('x' * 12001, 60), ('x', 0), ('x', 301)]:
+        for prompt, timeout in [('', 60), ('x' * 500001, 60), ('x', 0), ('x', 301)]:
             with self.assertRaises(ValueError):
                 antigravity_cli.ask(prompt, timeout)
 
-    def test_python_dispatch_is_remote_and_tool_free(self):
+    def test_python_dispatch_is_remote_and_tools_capable(self):
         source = (ROOT / 'server.py').read_text()
         cli_source = (ROOT / 'antigravity_cli.py').read_text()
         self.assertIn('model.startswith("antigravity/")', source)
         self.assertIn('return run_antigravity_until_result(', source)
-        self.assertIn('"tools_capable": False', cli_source)
+        self.assertIn('"tools_capable": True', cli_source)
 
     def test_gateway_dispatches_as_remote(self):
         source = (ROOT / 'gateway-plugin/mykos-ui/index.js').read_text()
