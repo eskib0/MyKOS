@@ -2982,21 +2982,22 @@ export default {
             // — Despacho: local (runChatLoop) o remoto (remoteModel) —
             const REMOTE_PREFIXES = ["antigravity/", "qwen-cli/", "meta-ai/", "nvidia/", "kimi/", "mistral/", "gemini/", "openrouter/", "openai-codex-oauth/", "openai/", "anthropic/", "grok/"];
             const isRemote = REMOTE_PREFIXES.some((p) => model.startsWith(p)) || model === "claude-sonnet-oauth" || model === "gpt-live-1-codex";
+            if (isRemote) {
+              generation.options.num_ctx = Math.max(generation.options.num_ctx, 128000);
+            }
 
             // — Contexto: mensajes de la conversación → array para el modelo —
             const rawMessages = Array.isArray(conversation.messages) ? conversation.messages : [];
             const validMessages = rawMessages.filter(
               (m) => m && (m.role === "user" || m.role === "assistant" || m.role === "system" || m.role === "tool"),
             );
-            // Para modelos locales (nativos con tool_calls), expandimos el tool_exchange de los últimos 2 turnos
-            // del asistente para que el modelo conserve el contenido real leído y el patrón nativo de tool_calls.
+            // Expandimos el tool_exchange de los últimos 2 turnos del asistente para que el modelo
+            // conserve el contenido real leído y los resultados previos entre turnos consecutivos.
             const expandExchangeIndices = new Set();
-            if (!isRemote) {
-              for (let idx = validMessages.length - 1; idx >= 0 && expandExchangeIndices.size < 2; idx -= 1) {
-                const candidate = validMessages[idx];
-                if (candidate.role === "assistant" && Array.isArray(candidate.tool_exchange) && candidate.tool_exchange.length) {
-                  expandExchangeIndices.add(idx);
-                }
+            for (let idx = validMessages.length - 1; idx >= 0 && expandExchangeIndices.size < 2; idx -= 1) {
+              const candidate = validMessages[idx];
+              if (candidate.role === "assistant" && Array.isArray(candidate.tool_exchange) && candidate.tool_exchange.length) {
+                expandExchangeIndices.add(idx);
               }
             }
             const context = [];

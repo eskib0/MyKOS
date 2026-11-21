@@ -831,8 +831,11 @@ def purge_approvals(store: dict[str, Any]) -> bool:
     return changed
 
 
-def tool_message_for_result(result: dict[str, Any], supports_vision: bool) -> dict[str, Any]:
+def tool_message_for_result(result: dict[str, Any], supports_vision: bool, tool_name: str = "") -> dict[str, Any]:
     public_result = dict(result)
+    clean_tool = str(tool_name or "").strip()
+    if clean_tool and not public_result.get("tool") and not public_result.get("action"):
+        public_result["tool"] = clean_tool
     image_base64 = public_result.pop("_image_base64", None)
     image_mime_type = public_result.pop("_image_mime_type", None)
     if image_base64:
@@ -845,6 +848,8 @@ def tool_message_for_result(result: dict[str, Any], supports_vision: bool) -> di
         "role": "tool",
         "content": encode_tool_result(public_result),
     }
+    if clean_tool:
+        message["tool_name"] = clean_tool
     if image_base64 and supports_vision:
         message["images"] = [image_base64]
         if image_mime_type:
@@ -2700,7 +2705,7 @@ def run_openai_until_result(
         update_activity(activity_id, status="working", phase="tool", label="Consultando una herramienta…", detail=f"OpenAI ha solicitado «{tool_name}»; MyKOS la está consultando.")
         tool_result = controller_execute_tool(tool_name, tool_arguments)
         merge_source_cards(source_cards, tool_result)
-        working_messages.append(tool_message_for_result(tool_result, supports_vision))
+        working_messages.append(tool_message_for_result(tool_result, supports_vision, tool_name))
     raise RuntimeError("OpenAI no terminó dentro del límite de rondas.")
 
 
@@ -2950,7 +2955,22 @@ def run_antigravity_until_result(
         prompt_parts: list[str] = []
         system_msg = req_messages[0] if req_messages and req_messages[0].get("role") == "system" else None
         other_msgs = req_messages[1:] if system_msg else req_messages
-        recent_msgs = other_msgs[-14:] if len(other_msgs) > 14 else other_msgs
+        if len(other_msgs) > 40:
+            last_real_user_idx = None
+            for idx in range(len(other_msgs) - 1, -1, -1):
+                m = other_msgs[idx]
+                if m.get("role") == "user":
+                    c = str(m.get("content", "")).lstrip()
+                    if not c.startswith("<RESULTADO-DE-HERRAMIENTA>") and not c.startswith("AVISO DEL SISTEMA:"):
+                        last_real_user_idx = idx
+                        break
+            tail = other_msgs[-40:]
+            if last_real_user_idx is not None and last_real_user_idx < len(other_msgs) - 40:
+                recent_msgs = [other_msgs[last_real_user_idx]] + other_msgs[-39:]
+            else:
+                recent_msgs = tail
+        else:
+            recent_msgs = other_msgs
         final_msgs = ([system_msg] if system_msg else []) + recent_msgs
         for msg in final_msgs:
             role = str(msg.get("role", "")).strip().upper()
@@ -2959,7 +2979,11 @@ def run_antigravity_until_result(
                 continue
             prompt_parts.append(f"<{role}>\n{content}\n</{role}>")
         prompt_parts.append(
-            "ÚLTIMO TURNO: responde ahora cumpliendo el PROTOCOLO DE HERRAMIENTAS DE MYKOS en JSON, sin usar herramientas internas del CLI."
+            "INSTRUCCIÓN DE FORMATO: responde ahora en JSON cumpliendo el PROTOCOLO DE HERRAMIENTAS DE MYKOS, "
+            "sin usar herramientas internas del CLI. Si necesitas ejecutar otra herramienta de MyKOS para continuar "
+            "o completar la tarea del usuario, devuelve {\"kind\":\"tool_call\",\"content\":\"\",\"tool_name\":\"<nombre>\",\"arguments\":{...}} "
+            "(puedes encadenar múltiples rondas de herramientas en este mismo turno). "
+            "Devuelve {\"kind\":\"answer\",\"content\":\"...\"} únicamente cuando hayas terminado la tarea o necesites preguntar al usuario."
         )
         prompt = "\n\n".join(prompt_parts)
         if len(prompt) > 400000:
@@ -5314,7 +5338,13 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                 label="Continuando después de la aprobación…",
                 detail="El Gateway ha ejecutado la acción y MyKOS está preparando la respuesta.",
             )
-            messages.append(tool_message_for_result(action_result, bool(record.get("supports_vision", False))))
+            messages.append(
+                tool_message_for_result(
+                    action_result,
+                    bool(record.get("supports_vision", False)),
+                    str(record.get("tool_name") or action.get("kind") or ""),
+                )
+            )
             if not model or not conversation_id:
                 raise RuntimeError("La aprobación no contiene modelo o conversación válidos.")
             continuation = run_model_until_result(

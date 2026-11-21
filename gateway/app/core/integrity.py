@@ -37,7 +37,7 @@ _CHECK_CLAIM_VERBS = (
     "consultado|consultada|analizado|analizada|inspeccionado|inspeccionada|listado|listada"
 )
 _ACTION_CLAIM_RE = re.compile(
-    r"(?<![\wáéíóúñ])(?P<neg>no\s+)?(?:ya\s+)?(?:(?:te|le|lo|la|los|las|me)\s+)?"
+    r"(?<![\wáéíóúñ])(?P<neg>(?:no|ni(?:\s+siquiera)?|tampoco|nunca|jam[aá]s|sin\s+haber)\s+)?(?:ya\s+)?(?:(?:te|le|lo|la|los|las|me)\s+)?"
     r"(?:he|hemos|acabo\s+de|se\s+ha|se\s+han|ya\s+est[aá]|queda|qued[oó])\s+"
     rf"(?:(?:ya|todo|correctamente)\s+)?(?P<verb>{_WRITE_CLAIM_VERBS}|{_CHECK_CLAIM_VERBS})\b",
     re.IGNORECASE,
@@ -80,7 +80,7 @@ def current_turn_tool_trace(
         if decoded is None:
             trace.append({"tool": "", "ok": False})
             continue
-        name = str(decoded.get("action") or decoded.get("tool") or "").strip()
+        name = str(decoded.get("action") or decoded.get("tool") or item.get("tool_name") or "").strip()
         entry: dict[str, Any] = {"tool": name, "ok": bool(decoded.get("ok"))}
         error = str(decoded.get("error", "")).strip()
         if error:

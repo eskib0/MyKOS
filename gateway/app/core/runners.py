@@ -25,7 +25,7 @@ from worker_helpers import ApiError
 from .activity import update_activity
 from .integrity import inline_verified_ledger, integrity_check_answer, INTEGRITY_UNVERIFIED_NOTE
 
-MAX_TOOL_ROUNDS = 12
+MAX_TOOL_ROUNDS = 24
 MAX_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("MYKOS_REQUEST_TIMEOUT_SECONDS", "300") or 300)
 OPENROUTER_REQUEST_TIMEOUT_SECONDS = 90
 
@@ -230,6 +230,67 @@ def build_turn_telemetry(
     }
 
 
+def _extract_turn_tool_exchange(
+    messages: list[dict[str, Any]],
+    max_chars_per_tool: int = 12000,
+    max_total_chars: int = 48000,
+) -> list[dict[str, Any]]:
+    """Extrae los pares tool_call/tool del turno actual para preservar contexto entre turnos."""
+    start = 0
+    for idx in range(len(messages) - 1, -1, -1):
+        item = messages[idx]
+        if isinstance(item, dict) and item.get("role") == "user" and not item.get("integrity_guard"):
+            start = idx + 1
+            break
+    raw_items: list[dict[str, Any]] = []
+    for item in messages[start:]:
+        if not isinstance(item, dict) or item.get("integrity_guard"):
+            continue
+        role = str(item.get("role", "")).strip()
+        if role == "assistant":
+            entry: dict[str, Any] = {"role": "assistant", "content": str(item.get("content", ""))}
+            if isinstance(item.get("tool_calls"), list) and item["tool_calls"]:
+                entry["tool_calls"] = item["tool_calls"]
+            raw_items.append(entry)
+        elif role == "tool":
+            content = str(item.get("content", ""))
+            if len(content) > max_chars_per_tool:
+                try:
+                    decoded = json.loads(content)
+                    if isinstance(decoded, dict):
+                        for key in ("content", "stdout", "stderr", "text", "output"):
+                            val = decoded.get(key)
+                            if isinstance(val, str) and len(val) > max_chars_per_tool - 1000:
+                                decoded[key] = (
+                                    val[: max_chars_per_tool - 1000]
+                                    + "\n[... contenido recortado en historial ...]"
+                                )
+                        content = json.dumps(decoded, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    pass
+                if len(content) > max_chars_per_tool:
+                    content = content[:max_chars_per_tool]
+            tool_entry: dict[str, Any] = {"role": "tool", "content": content}
+            if item.get("tool_call_id"):
+                tool_entry["tool_call_id"] = item["tool_call_id"]
+            if item.get("tool_name"):
+                tool_entry["tool_name"] = item["tool_name"]
+            raw_items.append(tool_entry)
+
+    kept: list[dict[str, Any]] = []
+    total_chars = 0
+    for item in reversed(raw_items):
+        item_len = len(str(item.get("content", "")))
+        if kept and total_chars + item_len > max_total_chars:
+            break
+        kept.append(item)
+        total_chars += item_len
+    kept.reverse()
+    while len(kept) > 1 and kept[0].get("role") == "tool":
+        kept.pop(0)
+    return kept
+
+
 def execute_openai_json_tool_loop(
     *,
     model: str,
@@ -319,6 +380,7 @@ def execute_openai_json_tool_loop(
                 content += INTEGRITY_UNVERIFIED_NOTE
             content = ensure_generated_media_markdown(content, working_messages)
             telemetry = build_turn_telemetry(content, total_model_seconds, accumulated_usage)
+            turn_exchange = _extract_turn_tool_exchange(working_messages)
             assistant_message: dict[str, Any] = {
                 "role": "assistant",
                 "model": model,
@@ -326,6 +388,8 @@ def execute_openai_json_tool_loop(
                 "created_at": utc_now_fn(),
                 "telemetry": telemetry,
             }
+            if turn_exchange:
+                assistant_message["tool_exchange"] = turn_exchange
             if integrity_trace:
                 assistant_message["verified_tool_trace"] = integrity_trace
             if source_cards:
@@ -385,6 +449,8 @@ def execute_openai_json_tool_loop(
             detail=f"{provider_label} ha solicitado «{tool_name}»; MyKOS la está consultando.",
         )
         tool_result = controller_execute_tool_fn(tool_name, tool_arguments)
+        if isinstance(tool_result, dict) and not tool_result.get("tool") and not tool_result.get("action"):
+            tool_result = {**tool_result, "tool": tool_name}
         merge_source_cards_fn(source_cards, tool_result)
         working_messages.append(tool_message_fn(tool_result, supports_vision))
 
