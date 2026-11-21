@@ -1450,6 +1450,15 @@ class ControlPlane {
         }
         return result.body;
       },
+      postSwarmBoard: async (agent, text, model = "", toolsUsed = []) => {
+        const result = await post("swarm/board", {
+          agent,
+          text,
+          model,
+          tools_used: Array.isArray(toolsUsed) ? toolsUsed : [],
+        }, 30_000);
+        return isObject(result.body) ? result.body : { ok: false };
+      },
       tts: async (text, voice = "em_alex", signal) => {
         const result = await post("tts", { text, voice }, 120_000, {}, signal);
         if (result.status >= 400 || !result.body?.ok) throw failure("No se pudo sintetizar la frase", result);
@@ -3589,6 +3598,15 @@ export default {
               return true;
             }
             if (result.rejected) {
+              const rejectedConvId = String(result.conversation_id || "");
+              if (rejectedConvId.startsWith("swarm:")) {
+                const swarmWorker = rejectedConvId.slice("swarm:".length).trim() || "coordinator";
+                const swarmWorkerClient = controlPlane.workerClient({ operation: "swarm-approval-reject", conversation_id: rejectedConvId });
+                await swarmWorkerClient.postSwarmBoard(
+                  "coordinator",
+                  `@${swarmWorker} Acción rechazada por el usuario (id: \`${approvalId}\`). Ajusta tu enfoque o continúa sin esa acción.`,
+                ).catch(() => {});
+              }
               sendJson(res, 200, {
                 ok: true,
                 approved: false,
@@ -3691,6 +3709,13 @@ export default {
                   content: String(continuation.proposal || "").trim() || "La siguiente acción también necesita tu aprobación.",
                 };
                 if (continuation.sources) publicResult.message.sources = continuation.sources;
+                if (conversationId.startsWith("swarm:")) {
+                  const swarmWorker = conversationId.slice("swarm:".length).trim() || "coordinator";
+                  const p = continuation.pending_action;
+                  const pTool = String(p.tool_name || p.kind || p.title || "acción").trim();
+                  const pText = `${String(continuation.proposal || "").trim() ? `${String(continuation.proposal).trim()}\n\n` : ""}@coordinator Acción sensible pendiente de aprobación: \`${pTool}\` (id: \`${p.id}\`).`;
+                  await worker.postSwarmBoard(swarmWorker, pText, model, continuation.tools_used || []).catch(() => {});
+                }
               } else {
                 const msg = isObject(continuation.message) ? { ...continuation.message } : { role: "assistant", model, content: "" };
                 const genUrl = typeof actionResult.url === "string" ? actionResult.url.trim() : "";
@@ -3709,6 +3734,11 @@ export default {
                   msg.telemetry = telemetry;
                 }
                 publicResult.message = msg;
+                if (conversationId.startsWith("swarm:")) {
+                  const swarmWorker = conversationId.slice("swarm:".length).trim() || "coordinator";
+                  const boardText = String(msg.content || "").trim() || `Acción «${record.tool_name || action.kind || "aprobada"}» ejecutada correctamente.`;
+                  await worker.postSwarmBoard(swarmWorker, boardText, model, continuation.tools_used || []).catch(() => {});
+                }
               }
               sendJson(res, 200, publicResult);
               recordApiResult(200, { owner: "mykos-gateway" });
@@ -3727,11 +3757,19 @@ export default {
                   tools_used: [String(record.tool_name || action.kind || "")],
                   message: isObject(saved) ? saved : assistantMessage,
                 });
+                if (conversationId.startsWith("swarm:")) {
+                  const swarmWorker = conversationId.slice("swarm:".length).trim() || "coordinator";
+                  await worker.postSwarmBoard(swarmWorker, fallbackText, model, [String(record.tool_name || action.kind || "")]).catch(() => {});
+                }
                 sendJson(res, 200, publicResult);
                 recordApiResult(200, { owner: "mykos-gateway" });
                 return true;
               }
               const continuationError = String(error?.message || error || "").trim() || "El modelo no pudo continuar después de la aprobación.";
+              if (conversationId.startsWith("swarm:")) {
+                const swarmWorker = conversationId.slice("swarm:".length).trim() || "coordinator";
+                await worker.postSwarmBoard(swarmWorker, `⚠️ Acción aprobada (${record.tool_name || action.kind || "acción"}), pero el turno no pudo continuar: ${continuationError}`, model, []).catch(() => {});
+              }
               Object.assign(publicResult, {
                 conversation_id: conversationId,
                 model,

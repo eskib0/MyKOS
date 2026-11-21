@@ -756,7 +756,7 @@ def _worker_turn(worker_name: str, target_seq: int, epoch: int, worker_gen: int)
                 response_text = str(msg_obj.get("content") or "").strip()
             elif isinstance(result.get("pending_action"), dict):
                 pending = result["pending_action"]
-                tool_name = str(pending.get("tool_name") or "")
+                tool_name = str(pending.get("tool_name") or pending.get("kind") or pending.get("title") or "acción").strip()
                 approval_id = str(pending.get("id") or "")
                 proposal = str(result.get("proposal") or "").strip()
                 response_text = (

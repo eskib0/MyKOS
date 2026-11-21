@@ -3476,6 +3476,26 @@ textarea::placeholder { color: #748293; }
   cursor: pointer;
 }
 
+.swarm-approvals-panel {
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.swarm-approval-agent {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.16);
+}
+
 @media (max-width: 1120px) {
   #swarm-page {
     padding: 44px 14px 14px;

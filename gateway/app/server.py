@@ -2958,11 +2958,13 @@ def run_antigravity_until_result(
             if not content:
                 continue
             prompt_parts.append(f"<{role}>\n{content}\n</{role}>")
-        prompt_parts.append("ÚLTIMO TURNO: responde ahora cumpliendo el PROTOCOLO DE HERRAMIENTAS DE MYKOS en JSON.")
+        prompt_parts.append(
+            "ÚLTIMO TURNO: responde ahora cumpliendo el PROTOCOLO DE HERRAMIENTAS DE MYKOS en JSON, sin usar herramientas internas del CLI."
+        )
         prompt = "\n\n".join(prompt_parts)
         if len(prompt) > 400000:
             prompt = prompt[:10000] + "\n...\n" + prompt[-390000:]
-        result = ask(prompt, timeout_seconds=120, model=model_id)
+        result = ask(prompt, timeout_seconds=240, model=model_id)
         content = str(result.get("response", "")).strip()
         if not content:
             raise RuntimeError("Antigravity no devolvió texto.")
@@ -4406,9 +4408,12 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                         result["counts"] = settled.get("counts", {})
                         result["head"] = settled.get("head", result.get("head"))
                 elif path == "/mykos-control/swarm/board":
+                    raw_tools = payload.get("tools_used")
                     result = swarm_engine.post_board_message(
                         agent=str(payload.get("agent", "coordinator") or "coordinator"),
                         text=str(payload.get("text", "") or ""),
+                        model=str(payload.get("model", "") or ""),
+                        tools_used=raw_tools if isinstance(raw_tools, list) else None,
                     )
                     wait_seconds = max(0.0, min(120.0, float(payload.get("wait_seconds") or 0.0)))
                     if wait_seconds > 0 and result.get("ok"):

@@ -133,6 +133,7 @@ const elements = {
   swarmRosterCount: document.querySelector("#swarm-roster-count"),
   swarmRosterList: document.querySelector("#swarm-roster-list"),
   swarmBoardHead: document.querySelector("#swarm-board-head"),
+  swarmApprovalsPanel: document.querySelector("#swarm-approvals-panel"),
   swarmBoardFeed: document.querySelector("#swarm-board-feed"),
   swarmMentionChips: document.querySelector("#swarm-mention-chips"),
   swarmBoardForm: document.querySelector("#swarm-board-form"),
@@ -4512,24 +4513,36 @@ async function revokePermission(permissionId) {
 }
 
 function renderApprovals() {
-  elements.approvalsPanel.replaceChildren();
-  if (!state.pendingApprovals.length) {
-    elements.approvalsPanel.hidden = true;
+  renderApprovalsInto(elements.approvalsPanel, state.pendingApprovals, decideApproval, "Acciones pendientes de aprobación");
+}
+
+function renderApprovalsInto(container, approvals, onDecide, headingText = "Acciones pendientes de aprobación") {
+  if (!container) return;
+  container.replaceChildren();
+  if (!Array.isArray(approvals) || !approvals.length) {
+    container.hidden = true;
     return;
   }
 
-  elements.approvalsPanel.hidden = false;
+  container.hidden = false;
   const heading = document.createElement("div");
   heading.className = "approvals-heading";
-  heading.textContent = "Acciones pendientes de aprobación";
-  elements.approvalsPanel.appendChild(heading);
+  heading.textContent = headingText;
+  container.appendChild(heading);
 
-  for (const approval of state.pendingApprovals) {
+  for (const approval of approvals) {
     const card = document.createElement("article");
     card.className = "approval-card";
 
     const title = document.createElement("strong");
-    title.textContent = approval.title || "Acción pendiente";
+    title.textContent = approval.title || approval.tool_name || "Acción pendiente";
+    const convId = String(approval.conversation_id || "");
+    if (convId.startsWith("swarm:")) {
+      const agentBadge = document.createElement("span");
+      agentBadge.className = "swarm-approval-agent";
+      agentBadge.textContent = `@${convId.slice("swarm:".length)}`;
+      title.appendChild(agentBadge);
+    }
     card.appendChild(title);
 
     if (approval.risk_level === "critical") {
@@ -4675,7 +4688,7 @@ function renderApprovals() {
       approve.disabled = approvalBusy;
       approve.title = mode.description || "";
       approve.textContent = approvalBusy ? "Procesando…" : `Aprobar · ${mode.label}`;
-      approve.addEventListener("click", () => decideApproval(approval.id, "approve", mode.id));
+      approve.addEventListener("click", () => onDecide(approval.id, "approve", mode.id));
       actions.appendChild(approve);
     }
     const reject = document.createElement("button");
@@ -4683,10 +4696,10 @@ function renderApprovals() {
     reject.className = "approval-reject";
     reject.disabled = approvalBusy;
     reject.textContent = approvalBusy ? "Espera…" : "Rechazar";
-    reject.addEventListener("click", () => decideApproval(approval.id, "reject", "once"));
+    reject.addEventListener("click", () => onDecide(approval.id, "reject", "once"));
     actions.appendChild(reject);
     card.appendChild(actions);
-    elements.approvalsPanel.appendChild(card);
+    container.appendChild(card);
   }
 }
 
@@ -7373,6 +7386,7 @@ const swarmState = {
   resizeObserver: null,
   lastRenderSig: "",
   canvasNodes: [],
+  pendingApprovals: [],
 };
 
 function renderSwarmModelOptions() {
@@ -7823,6 +7837,58 @@ function applySwarmData(data) {
   scheduleSwarmPollIfNeeded(data);
 }
 
+function renderSwarmApprovals() {
+  renderApprovalsInto(
+    elements.swarmApprovalsPanel,
+    swarmState.pendingApprovals,
+    decideSwarmApproval,
+    "Acciones pendientes de aprobación en el Swarm",
+  );
+}
+
+async function loadSwarmApprovals() {
+  try {
+    const data = await api("/api/approvals");
+    const approvals = Array.isArray(data?.approvals) ? data.approvals : [];
+    swarmState.pendingApprovals = approvals.filter((item) =>
+      String(item?.conversation_id || "").startsWith("swarm:"),
+    );
+    renderSwarmApprovals();
+  } catch {
+    // Non-fatal: keep existing approvals list until next poll.
+  }
+}
+
+async function decideSwarmApproval(approvalId, decision, permissionMode = "once") {
+  if (!approvalId) return;
+  state.approvalBusy.add(approvalId);
+  renderSwarmApprovals();
+  try {
+    const result = await api(`/api/approvals/${encodeURIComponent(approvalId)}/${decision}`, {
+      method: "POST",
+      body: JSON.stringify({
+        permission_mode: permissionMode,
+        conversation_permission_mode:
+          elements.swarmPermissionMode?.value || swarmState.data?.permission_mode || "supervisado",
+      }),
+    });
+    if (result?.error) {
+      setSwarmBanner(result.error, true);
+    } else if (decision === "reject") {
+      setSwarmBanner("Acción rechazada y notificada en el tablero del Swarm.");
+    } else {
+      setSwarmBanner("Acción aprobada y ejecutada; resultado publicado en el Swarm.");
+    }
+    await loadSwarmApprovals();
+    await loadSwarmStatus({ schedule: true });
+  } catch (error) {
+    setSwarmBanner(error.message || "No se pudo resolver la aprobación del Swarm.", true);
+  } finally {
+    state.approvalBusy.delete(approvalId);
+    renderSwarmApprovals();
+  }
+}
+
 async function loadSwarmStatus({ schedule = true } = {}) {
   if (swarmState.loading) return;
   swarmState.loading = true;
@@ -7830,6 +7896,7 @@ async function loadSwarmStatus({ schedule = true } = {}) {
     const data = await api("/api/swarm/status?limit=80");
     setSwarmBanner("");
     applySwarmData(data);
+    await loadSwarmApprovals();
   } catch (error) {
     if (elements.swarmPage && !elements.swarmPage.hidden) {
       setSwarmBanner(error.message || "No se pudo cargar el estado del Swarm.", true);
@@ -8089,6 +8156,8 @@ async function resetSwarmMission() {
     } else {
       setSwarmBanner("");
     }
+    swarmState.pendingApprovals = [];
+    renderSwarmApprovals();
     applySwarmData(data);
   } catch (error) {
     setSwarmBanner(error.message, true);

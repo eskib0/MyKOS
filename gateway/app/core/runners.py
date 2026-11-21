@@ -7,6 +7,7 @@ Mistral y Meta AI, resolviendo sus llamadas a herramientas de forma segura y sup
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from typing import Any, Callable
@@ -25,7 +26,7 @@ from .activity import update_activity
 from .integrity import inline_verified_ledger, integrity_check_answer, INTEGRITY_UNVERIFIED_NOTE
 
 MAX_TOOL_ROUNDS = 12
-MAX_REQUEST_TIMEOUT_SECONDS = 180
+MAX_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("MYKOS_REQUEST_TIMEOUT_SECONDS", "300") or 300)
 OPENROUTER_REQUEST_TIMEOUT_SECONDS = 90
 
 GEMINI_RESPONSE_SCHEMA = {

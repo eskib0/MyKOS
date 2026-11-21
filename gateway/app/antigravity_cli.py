@@ -266,6 +266,39 @@ def ensure_chat_safe() -> None:
         raise RuntimeError("El perfil aislado de Antigravity no deniega todas las herramientas; no se ha enviado el mensaje.")
 
 
+def _extract_agy_error(stdout: str, stderr: str) -> tuple[str, str]:
+    """Extrae (reason, detail) de la salida de error de agy."""
+    for text in (stdout or "", stderr or ""):
+        for line in reversed(text.splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("{"):
+                try:
+                    data = json.loads(line)
+                    if isinstance(data, dict):
+                        reason = str(data.get("finished_reason") or data.get("reason") or "").strip()
+                        detail = str(data.get("error") or data.get("short_error") or "").strip()
+                        if reason or detail:
+                            return reason, detail
+                except (ValueError, TypeError):
+                    pass
+            if line.startswith("AGY_ERROR:"):
+                try:
+                    data = json.loads(line.removeprefix("AGY_ERROR:").strip())
+                    if isinstance(data, dict):
+                        reason = str(data.get("reason") or data.get("status") or "").strip()
+                        detail = str(data.get("short_error") or data.get("error") or "").strip()
+                        if reason or detail:
+                            return reason, detail
+                except (ValueError, TypeError):
+                    pass
+    fallback = (stderr or "").strip() or (stdout or "").strip()
+    if fallback:
+        fallback = fallback.splitlines()[-1][:240]
+    return "", fallback
+
+
 def ask(prompt: str, timeout_seconds: int = 60, model: str = "") -> dict[str, Any]:
     """Ejecuta un turno sin streaming y devuelve texto, uso y duración.
 
@@ -288,7 +321,6 @@ def ask(prompt: str, timeout_seconds: int = 60, model: str = "") -> dict[str, An
         "--disable-slash-commands",
         "--output-format", "json",
         "--print-timeout", f"{timeout_seconds}s",
-        "-p", prompt,
     ]
     if model:
         command.extend(["--model", model])
@@ -301,6 +333,7 @@ def ask(prompt: str, timeout_seconds: int = 60, model: str = "") -> dict[str, An
     try:
         result = subprocess.run(
             command,
+            input=prompt,
             capture_output=True,
             text=True,
             timeout=timeout_seconds + 10,
@@ -315,13 +348,25 @@ def ask(prompt: str, timeout_seconds: int = 60, model: str = "") -> dict[str, An
         raise RuntimeError("Antigravity excedió el tiempo máximo.") from exc
 
     if result.returncode != 0:
-        raise RuntimeError(f"agy terminó con código {result.returncode}.")
+        reason, detail = _extract_agy_error(result.stdout, result.stderr)
+        if reason == "print_timeout":
+            raise RuntimeError(
+                f"Antigravity excedió el tiempo máximo ({timeout_seconds}s) antes de completar el turno."
+            )
+        suffix = f" {detail}" if detail else ""
+        raise RuntimeError(f"agy terminó con código {result.returncode}.{suffix}")
     try:
-        payload = json.loads(result.stdout)
+        raw_stdout = result.stdout.strip()
+        brace_idx = raw_stdout.find('{')
+        if brace_idx != -1:
+            raw_stdout = raw_stdout[brace_idx:]
+        payload = json.loads(raw_stdout)
     except (ValueError, TypeError) as exc:
-        raise RuntimeError("agy no devolvió un JSON válido.") from exc
+        raise RuntimeError(f"agy no devolvió un JSON válido: {result.stdout[:200]}") from exc
     if not isinstance(payload, dict) or payload.get("status") != "SUCCESS":
-        raise RuntimeError("agy no completó la petición correctamente.")
+        info = payload if isinstance(payload, dict) else {}
+        detail = str(info.get("error") or info.get("finished_reason") or info.get("status") or "").strip()
+        raise RuntimeError(f"agy no completó la petición correctamente. {detail[:240]}".strip())
     response = payload.get("response")
     if not isinstance(response, str):
         raise RuntimeError("agy no devolvió texto de respuesta.")

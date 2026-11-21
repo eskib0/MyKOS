@@ -410,6 +410,8 @@ function publicApproval(record) {
   const kind = String(action.kind || record.tool_name || "");
   const publicRecord = {
     id: record.id,
+    conversation_id: String(record.conversation_id || ""),
+    tool_name: String(record.tool_name || kind),
     kind,
     title: kind,
     created_at: record.created_at,
