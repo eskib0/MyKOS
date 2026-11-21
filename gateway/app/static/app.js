@@ -2982,7 +2982,7 @@ function addBubble(role, content, isError = false, sources = [], createdAt = "",
   renderChatMessageMarkdown(text, content);
   bubble.append(label, timestamp, text);
   if (role === "assistant") {
-    if (telemetry && (telemetry.tokens_per_second > 0 || telemetry.tokens_out > 0)) {
+    if (telemetry && (telemetry.tokens_per_second > 0 || telemetry.tokens_out > 0 || telemetry.duration_ms > 0)) {
       const telemEl = document.createElement("div");
       telemEl.className = "message-telemetry";
       const parts = [];

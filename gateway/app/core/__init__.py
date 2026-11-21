@@ -93,6 +93,7 @@ from core.ollama_catalog import (
 )
 from core.runners import (
     GEMINI_RESPONSE_SCHEMA,
+    build_turn_telemetry,
     execute_openai_json_tool_loop,
     has_message_images,
     parse_gemini_response,

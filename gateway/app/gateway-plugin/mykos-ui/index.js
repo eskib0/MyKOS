@@ -192,6 +192,45 @@ function saveConversations(store, data, source) {
   store.put("conversations", data, { source, allowShrink: true });
 }
 
+function resolveRemoteTelemetry(result, message, elapsedMs) {
+  const existing = result?.telemetry && (result.telemetry.tokens_out > 0 || result.telemetry.tokens_per_second > 0)
+    ? result.telemetry
+    : (message?.telemetry && (message.telemetry.tokens_out > 0 || message.telemetry.tokens_per_second > 0) ? message.telemetry : null);
+  if (existing) return existing;
+  const durSec = Number(result?.duration_seconds) > 0
+    ? Number(result.duration_seconds)
+    : Math.max(0.001, (Number(elapsedMs) || 0) / 1000);
+  const contentText = typeof message?.content === "string" ? message.content.trim() : "";
+  const rawComp = Number(result?.usage?.completion_tokens ?? result?.usage?.output_tokens ?? 0);
+  const compTokens = rawComp > 0 ? rawComp : (contentText ? Math.max(1, Math.round(contentText.length / 4)) : 0);
+  const promptToks = Number(result?.usage?.prompt_tokens ?? result?.usage?.input_tokens ?? 0) || 0;
+  const tps = (durSec > 0 && compTokens > 0) ? Math.round((compTokens / durSec) * 10) / 10 : 0;
+  return {
+    duration_ms: Math.max(1, Math.round(durSec * 1000)),
+    tokens_out: compTokens,
+    tokens_in: promptToks,
+    tokens_per_second: tps,
+  };
+}
+
+function persistTelemetryOnLastAssistant(storeRuntime, conversationId, telemetry, source = "gateway.chat.telemetry") {
+  if (!storeRuntime || !conversationId || !isObject(telemetry)) return;
+  const st = conversationStore(storeRuntime);
+  if (!st || !st.data) return;
+  const conv = conversationById(st.data, conversationId);
+  if (!conv || !Array.isArray(conv.messages) || !conv.messages.length) return;
+  for (let i = conv.messages.length - 1; i >= 0; i -= 1) {
+    const m = conv.messages[i];
+    if (isObject(m) && m.role === "assistant") {
+      if (!m.telemetry || (!(m.telemetry.tokens_out > 0) && !(m.telemetry.tokens_per_second > 0))) {
+        m.telemetry = telemetry;
+        saveConversations(st.store, st.data, source);
+      }
+      break;
+    }
+  }
+}
+
 const AUTOMATION_TIMER = Symbol.for("mykos.mykos-ui.automation-timer");
 function startGatewayAutomationScheduler(storeRuntime) {
   if (!storeRuntime?.store || globalThis[AUTOMATION_TIMER]) return;
@@ -2984,6 +3023,7 @@ export default {
             controlPlane.activity.update(activityId, { status: "working", phase: "model", label: "Trabajando.", detail: `${model} — esperando respuesta del modelo.` });
 
             let result;
+            const remoteStartedAt = Date.now();
             if (isRemote) {
               result = await worker.remoteModel(model, preparedMessages, requestedConvId, generation, null, String(chatPayload.permission_mode || "supervisado"));
             } else {
@@ -3014,25 +3054,6 @@ export default {
               tools_used: Array.isArray(result.tools_used) ? result.tools_used : [],
               context: contextInfo,
             };
-            if (isRemote && result.usage && typeof result.usage === "object") responsePayload.usage = result.usage;
-            if (isRemote && Number.isFinite(Number(result.duration_seconds))) responsePayload.duration_seconds = Number(result.duration_seconds);
-            if (isRemote) {
-              const durSec = Number(result.duration_seconds) || 0;
-              const compTokens = Number(result.usage?.completion_tokens) || 0;
-              const promptToks = Number(result.usage?.prompt_tokens) || 0;
-              const tps = (durSec > 0 && compTokens > 0) ? Math.round((compTokens / durSec) * 10) / 10 : 0;
-              const telemetry = {
-                duration_ms: Math.round(durSec * 1000),
-                tokens_out: compTokens,
-                tokens_in: promptToks,
-                tokens_per_second: tps,
-              };
-              responsePayload.telemetry = telemetry;
-              if (responsePayload.message) responsePayload.message.telemetry = telemetry;
-            } else if (result.telemetry) {
-              responsePayload.telemetry = result.telemetry;
-              if (responsePayload.message) responsePayload.message.telemetry = result.telemetry;
-            }
             if (result.pending_action) {
               const proposal = String(result.proposal ?? "").trim();
               responsePayload.needs_approval = true;
@@ -3041,6 +3062,21 @@ export default {
               if (result.sources?.length) responsePayload.message.sources = result.sources;
             } else {
               responsePayload.message = result.message;
+            }
+            if (isRemote && result.usage && typeof result.usage === "object") responsePayload.usage = result.usage;
+            if (isRemote && Number.isFinite(Number(result.duration_seconds))) responsePayload.duration_seconds = Number(result.duration_seconds);
+            if (isRemote) {
+              const telemetry = resolveRemoteTelemetry(result, responsePayload.message, Date.now() - remoteStartedAt);
+              responsePayload.telemetry = telemetry;
+              if (!result.pending_action && isObject(responsePayload.message)) {
+                responsePayload.message.telemetry = telemetry;
+                persistTelemetryOnLastAssistant(storeRuntime, requestedConvId, telemetry);
+              }
+            } else if (result.telemetry) {
+              responsePayload.telemetry = result.telemetry;
+              if (!result.pending_action && isObject(responsePayload.message)) {
+                responsePayload.message.telemetry = result.telemetry;
+              }
             }
             sendJson(res, 200, responsePayload);
             recordApiResult(200, { owner: "mykos-gateway", model });
@@ -3620,6 +3656,7 @@ export default {
                 toolMsg.tool_call_id = String(lastMsg.tool_calls[0].id);
               }
               messages.push(toolMsg);
+              const approvalContStartedAt = Date.now();
               const continuation = isRemoteModelName(model)
                 ? await worker.remoteModel(model, messages, conversationId, isObject(record.generation) ? record.generation : {}, null, effectiveConvMode)
                 : await runChatLoop(
@@ -3660,6 +3697,16 @@ export default {
                 const genMd = typeof actionResult.markdown === "string" ? actionResult.markdown.trim() : "";
                 if (actionResult.ok && genUrl.startsWith("/static/media/gen-") && genMd && !String(msg.content || "").includes(genUrl)) {
                   msg.content = String(msg.content || "").trim() ? `${String(msg.content).trim()}\n\n${genMd}` : genMd;
+                }
+                if (isRemoteModelName(model)) {
+                  const telemetry = resolveRemoteTelemetry(continuation, msg, Date.now() - approvalContStartedAt);
+                  publicResult.telemetry = telemetry;
+                  msg.telemetry = telemetry;
+                  persistTelemetryOnLastAssistant(storeRuntime, conversationId, telemetry, "gateway.approval.telemetry");
+                } else if (continuation.telemetry || msg.telemetry) {
+                  const telemetry = continuation.telemetry || msg.telemetry;
+                  publicResult.telemetry = telemetry;
+                  msg.telemetry = telemetry;
                 }
                 publicResult.message = msg;
               }

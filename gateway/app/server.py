@@ -203,6 +203,7 @@ from core.ollama_catalog import (
 )
 from core.runners import (
     GEMINI_RESPONSE_SCHEMA,
+    build_turn_telemetry,
     ensure_generated_media_markdown,
     execute_openai_json_tool_loop,
     has_message_images,
@@ -2358,6 +2359,8 @@ def run_claude_until_result(
     source_cards = source_cards_from_messages(working_messages, current_turn_only=True)
     generation = generation if isinstance(generation, dict) else {}
     request_deadline = time.monotonic() + MAX_REQUEST_TIMEOUT_SECONDS
+    total_model_seconds = 0.0
+    claude_usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
 
     for tool_round in range(MAX_TOOL_ROUNDS + 1):
         if time.monotonic() > request_deadline:
@@ -2375,6 +2378,7 @@ def run_claude_until_result(
         # WinError 206 before Claude Code even starts.  Use Claude's file
         # form instead and remove the short-lived file in every case.
         system_prompt_file: str | None = None
+        call_started = time.monotonic()
         try:
             descriptor, system_prompt_file = tempfile.mkstemp(prefix="mykos-sp-", suffix=".txt")
             with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
@@ -2410,7 +2414,13 @@ def run_claude_until_result(
                     Path(system_prompt_file).unlink()
                 except OSError:
                     pass
+        total_model_seconds += max(0.001, time.monotonic() - call_started)
         parsed = parse_claude_response(completed)
+        raw_json = parsed.get("raw_json") if isinstance(parsed.get("raw_json"), dict) else {}
+        raw_usage = raw_json.get("usage") if isinstance(raw_json.get("usage"), dict) else {}
+        if raw_usage:
+            claude_usage["prompt_tokens"] += int(raw_usage.get("input_tokens") or raw_usage.get("prompt_tokens") or 0)
+            claude_usage["completion_tokens"] += int(raw_usage.get("output_tokens") or raw_usage.get("completion_tokens") or 0)
         if parsed["kind"] == "answer":
             guard_reason = claude_unverified_tool_claim_reason(parsed["content"], verified_tool_trace)
             if guard_reason:
@@ -2440,11 +2450,13 @@ def run_claude_until_result(
             if integrity_action == "warn":
                 parsed["content"] = str(parsed["content"]) + INTEGRITY_UNVERIFIED_NOTE
             final_claude_content = ensure_generated_media_markdown(str(parsed.get("content") or ""), working_messages)
+            telemetry = build_turn_telemetry(final_claude_content, total_model_seconds, claude_usage)
             assistant_message = {
                 "role": "assistant",
                 "model": model,
                 "content": final_claude_content,
                 "created_at": utc_now(),
+                "telemetry": telemetry,
             }
             if verified_tool_trace:
                 assistant_message["verified_tool_trace"] = verified_tool_trace
@@ -2456,6 +2468,8 @@ def run_claude_until_result(
                 "tools_used": sorted(set(tool_names)),
                 "sources": source_cards,
                 "done": True,
+                "telemetry": telemetry,
+                "duration_seconds": round(total_model_seconds, 3),
             }
 
         if tool_round >= MAX_TOOL_ROUNDS:
@@ -2593,6 +2607,7 @@ def run_openai_until_result(
     integrity_fn = globals().get("integrity_check_answer")
     integrity_retries = 0
     request_deadline = time.monotonic() + MAX_REQUEST_TIMEOUT_SECONDS
+    total_model_seconds = 0.0
     for tool_round in range(MAX_TOOL_ROUNDS + 1):
         if time.monotonic() > request_deadline:
             raise ApiError(408, f"Se superó el tiempo límite de la petición ({MAX_REQUEST_TIMEOUT_SECONDS}s). Abortando.")
@@ -2603,7 +2618,9 @@ def run_openai_until_result(
             label="Trabajando…",
             detail="OpenAI · Codex OAuth propio de MyKOS está procesando la petición.",
         )
+        call_started = time.monotonic()
         parsed = run_openai_codex(working_messages, OPENAI_RESPONSE_SCHEMA, model.removeprefix("openai-codex-oauth/"))
+        total_model_seconds += max(0.001, time.monotonic() - call_started)
         kind = str(parsed.get("kind", "")).strip().casefold()
         if kind == "answer":
             content = str(parsed.get("content", "")).strip()
@@ -2616,18 +2633,27 @@ def run_openai_until_result(
                 if integrity_action == "warn":
                     content += INTEGRITY_UNVERIFIED_NOTE
             content = ensure_generated_media_markdown(content, working_messages)
+            telemetry = build_turn_telemetry(content, total_model_seconds)
             assistant_message: dict[str, Any] = {
                 "role": "assistant",
                 "model": model,
                 "content": content,
                 "created_at": utc_now(),
+                "telemetry": telemetry,
             }
             if integrity_trace:
                 assistant_message["verified_tool_trace"] = integrity_trace
             if source_cards:
                 assistant_message["sources"] = source_cards
             save_assistant_message(conversation_id, assistant_message)
-            return {"message": assistant_message, "tools_used": sorted(set(tool_names)), "sources": source_cards, "done": True}
+            return {
+                "message": assistant_message,
+                "tools_used": sorted(set(tool_names)),
+                "sources": source_cards,
+                "done": True,
+                "telemetry": telemetry,
+                "duration_seconds": round(total_model_seconds, 3),
+            }
         if tool_round >= MAX_TOOL_ROUNDS:
             raise RuntimeError("OpenAI solicitó demasiadas rondas de herramientas.")
         tool_name = str(parsed.get("tool_name", "")).strip()
@@ -2920,7 +2946,7 @@ def run_antigravity_until_result(
     from antigravity_cli import ask
     model_id = model.removeprefix("antigravity/")
 
-    def _complete(req_messages: list[dict[str, Any]]) -> str:
+    def _complete(req_messages: list[dict[str, Any]]) -> dict[str, Any]:
         prompt_parts: list[str] = []
         system_msg = req_messages[0] if req_messages and req_messages[0].get("role") == "system" else None
         other_msgs = req_messages[1:] if system_msg else req_messages
@@ -2940,7 +2966,11 @@ def run_antigravity_until_result(
         content = str(result.get("response", "")).strip()
         if not content:
             raise RuntimeError("Antigravity no devolvió texto.")
-        return content
+        return {
+            "content": content,
+            "usage": result.get("usage") if isinstance(result.get("usage"), dict) else {},
+            "duration_seconds": result.get("duration_seconds"),
+        }
 
     return _run_openai_json_tool_loop(
         model,
@@ -3047,6 +3077,7 @@ def run_qwen_until_result(
     workspace_dir = next((r['path'] for r in allowed_root_catalog() if r.get('name') == 'mykos'), str(Path(__file__).resolve().parent.parent.parent))
     prompt = qwen_prompt_from_messages(messages[-16:], workspace_dir=workspace_dir, cortex_dir=cortex_dir)
     add_dirs = [cortex_dir] if cortex_dir and Path(cortex_dir).is_dir() else None
+    t0 = time.monotonic()
     result = ask_qwen(
         prompt,
         timeout_seconds=240,
@@ -3058,12 +3089,28 @@ def run_qwen_until_result(
     if not content:
         raise RuntimeError("Qwen Code CLI no devolvió texto.")
     tools_used = result.get("tools_used", [])
-    assistant_message = {"role": "assistant", "model": model, "content": content, "created_at": utc_now()}
+    usage_dict = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+    dur_sec = float(result.get("duration_seconds") or 0.0) or max(0.001, time.monotonic() - t0)
+    telemetry = build_turn_telemetry(content, dur_sec, usage_dict)
+    assistant_message = {
+        "role": "assistant",
+        "model": model,
+        "content": content,
+        "created_at": utc_now(),
+        "telemetry": telemetry,
+    }
     if tools_used:
         assistant_message["tools_used"] = tools_used
     save_assistant_message(conversation_id, assistant_message)
-    return {"message": assistant_message, "tools_used": tools_used, "sources": [], "done": True,
-            "usage": result.get("usage", {}), "duration_seconds": result.get("duration_seconds", 0.0)}
+    return {
+        "message": assistant_message,
+        "tools_used": tools_used,
+        "sources": [],
+        "done": True,
+        "usage": usage_dict,
+        "duration_seconds": dur_sec,
+        "telemetry": telemetry,
+    }
 
 
 def run_nvidia_until_result(
@@ -3386,6 +3433,7 @@ def run_llamacpp_until_result(
     source_cards = source_cards_from_messages(working_messages, current_turn_only=True)
     tool_names: list[str] = []
     request_deadline = time.monotonic() + MAX_REQUEST_TIMEOUT_SECONDS
+    total_model_seconds = 0.0
 
     for _round in range(MAX_TOOL_ROUNDS + 1):
         if time.monotonic() > request_deadline:
@@ -3397,12 +3445,14 @@ def run_llamacpp_until_result(
             label="Trabajando…",
             detail=f"{model} · llama.cpp CUDA local está procesando la petición.",
         )
+        call_started = time.monotonic()
         response = llama_cpp_chat_request(
             working_messages,
             gen_settings,
             tool_schemas=TOOL_SCHEMAS,
             model_name=model,
         )
+        total_model_seconds += max(0.001, time.monotonic() - call_started)
         choices = response.get("choices") if isinstance(response.get("choices"), list) else []
         if not choices or not isinstance(choices[0], dict):
             raise RuntimeError("llama.cpp no devolvió opciones válidas.")
@@ -3413,6 +3463,25 @@ def run_llamacpp_until_result(
 
         if not tool_calls:
             final_text = ensure_generated_media_markdown(content or thinking, working_messages)
+            timings = response.get("timings") if isinstance(response.get("timings"), dict) else {}
+            usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+            merged_usage = {
+                "completion_tokens": int(usage.get("completion_tokens", 0) or timings.get("predicted_n", 0) or 0),
+                "prompt_tokens": int(usage.get("prompt_tokens", 0) or timings.get("prompt_n", 0) or 0),
+            }
+            telemetry = build_turn_telemetry(final_text, total_model_seconds, merged_usage)
+            for src_key, dst_key in (
+                ("predicted_per_second", "tokens_per_second"),
+                ("prompt_per_second", "prompt_tokens_per_second"),
+                ("time_to_first_token_ms", "ttft_ms"),
+            ):
+                if timings.get(src_key):
+                    try:
+                        val = round(float(timings[src_key]), 1)
+                        if val > 0:
+                            telemetry[dst_key] = val
+                    except (TypeError, ValueError):
+                        pass
             assistant_message: dict[str, Any] = {
                 "role": "assistant",
                 "content": final_text,
@@ -3423,6 +3492,7 @@ def run_llamacpp_until_result(
                 "created_at": utc_now(),
                 "sources": source_cards,
                 "tools_used": sorted(set(tool_names)),
+                "telemetry": telemetry,
             }
             save_assistant_message(conversation_id, assistant_message)
             return {
@@ -3432,6 +3502,8 @@ def run_llamacpp_until_result(
                 "message": assistant_message,
                 "tools_used": sorted(set(tool_names)),
                 "sources": source_cards,
+                "telemetry": telemetry,
+                "duration_seconds": round(total_model_seconds, 3),
             }
 
         working_messages.append({

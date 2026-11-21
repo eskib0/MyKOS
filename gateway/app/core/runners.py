@@ -177,6 +177,58 @@ def ensure_generated_media_markdown(content: str, messages: list[dict[str, Any]]
     return f"{text}\n\n{suffix}" if text else suffix
 
 
+def _usage_int(usage: dict[str, Any], keys: tuple[str, ...]) -> int:
+    for key in keys:
+        val = usage.get(key)
+        if val is not None:
+            try:
+                parsed = int(float(val))
+                if parsed > 0:
+                    return parsed
+            except (TypeError, ValueError):
+                pass
+    return 0
+
+
+def build_turn_telemetry(
+    content: str,
+    duration_seconds: float,
+    usage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Construye métricas homogéneas de telemetría (duración, tokens, t/s) para cualquier motor."""
+    usage_dict = usage if isinstance(usage, dict) else {}
+    try:
+        raw_dur = float(duration_seconds or 0.0)
+    except (TypeError, ValueError):
+        raw_dur = 0.0
+    dur_sec = max(0.001, raw_dur) if raw_dur > 0 else 0.0
+    duration_ms = max(1, int(round(dur_sec * 1000))) if dur_sec > 0 else 0
+
+    tokens_out = _usage_int(
+        usage_dict,
+        ("completion_tokens", "output_tokens", "candidatesTokenCount", "eval_count"),
+    )
+    stripped = str(content or "").strip()
+    if tokens_out <= 0 and stripped:
+        tokens_out = max(1, round(len(stripped) / 4))
+
+    tokens_in = _usage_int(
+        usage_dict,
+        ("prompt_tokens", "input_tokens", "promptTokenCount", "prompt_eval_count"),
+    )
+    tokens_per_second = (
+        round(tokens_out / (duration_ms / 1000.0), 1)
+        if duration_ms > 0 and tokens_out > 0
+        else 0.0
+    )
+    return {
+        "duration_ms": duration_ms,
+        "tokens_out": int(tokens_out),
+        "tokens_in": int(tokens_in),
+        "tokens_per_second": tokens_per_second,
+    }
+
+
 def execute_openai_json_tool_loop(
     *,
     model: str,
@@ -209,6 +261,8 @@ def execute_openai_json_tool_loop(
     integrity_retries = 0
     generation = generation if isinstance(generation, dict) else {}
     request_deadline = time.monotonic() + MAX_REQUEST_TIMEOUT_SECONDS
+    total_model_seconds = 0.0
+    accumulated_usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
 
     for tool_round in range(MAX_TOOL_ROUNDS + 1):
         if time.monotonic() > request_deadline:
@@ -220,15 +274,38 @@ def execute_openai_json_tool_loop(
             label="Trabajando…",
             detail=activity_detail,
         )
+        call_started = time.monotonic()
         if raw_completion_fn is not None:
-            content_raw = raw_completion_fn(working_messages, sys_prompt)
+            raw_res = raw_completion_fn(working_messages, sys_prompt)
         else:
             req_messages = openai_compatible_messages_fn(
                 working_messages,
                 system_prompt=sys_prompt,
                 supports_vision=supports_vision,
             )
-            content_raw = completion_fn(req_messages)
+            raw_res = completion_fn(req_messages)
+        elapsed_call = max(0.001, time.monotonic() - call_started)
+        if isinstance(raw_res, dict):
+            content_raw = str(raw_res.get("content") or raw_res.get("response") or "")
+            raw_dur = raw_res.get("duration_seconds")
+            try:
+                parsed_dur = float(raw_dur) if raw_dur is not None else 0.0
+            except (TypeError, ValueError):
+                parsed_dur = 0.0
+            total_model_seconds += parsed_dur if parsed_dur > 0 else elapsed_call
+            usage_part = raw_res.get("usage")
+            if isinstance(usage_part, dict):
+                accumulated_usage["prompt_tokens"] += _usage_int(
+                    usage_part,
+                    ("prompt_tokens", "input_tokens", "promptTokenCount", "prompt_eval_count"),
+                )
+                accumulated_usage["completion_tokens"] += _usage_int(
+                    usage_part,
+                    ("completion_tokens", "output_tokens", "candidatesTokenCount", "eval_count"),
+                )
+        else:
+            content_raw = str(raw_res or "")
+            total_model_seconds += elapsed_call
         parsed = parse_gemini_response(content_raw)
         kind = parsed.get("kind")
         if kind == "answer":
@@ -240,11 +317,13 @@ def execute_openai_json_tool_loop(
             if integrity_action == "warn":
                 content += INTEGRITY_UNVERIFIED_NOTE
             content = ensure_generated_media_markdown(content, working_messages)
+            telemetry = build_turn_telemetry(content, total_model_seconds, accumulated_usage)
             assistant_message: dict[str, Any] = {
                 "role": "assistant",
                 "model": model,
                 "content": content,
                 "created_at": utc_now_fn(),
+                "telemetry": telemetry,
             }
             if integrity_trace:
                 assistant_message["verified_tool_trace"] = integrity_trace
@@ -256,6 +335,13 @@ def execute_openai_json_tool_loop(
                 "tools_used": sorted(set(tool_names)),
                 "sources": source_cards,
                 "done": True,
+                "telemetry": telemetry,
+                "duration_seconds": round(total_model_seconds, 3),
+                "usage": {
+                    "prompt_tokens": telemetry["tokens_in"],
+                    "completion_tokens": telemetry["tokens_out"],
+                    "total_tokens": telemetry["tokens_in"] + telemetry["tokens_out"],
+                },
             }
 
         if tool_round >= MAX_TOOL_ROUNDS:
