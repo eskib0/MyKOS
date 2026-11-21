@@ -72,6 +72,9 @@ ensure_runtime_deps() {
       fi
     fi
   fi
+  if [[ -f "$GATEWAY_DIR/optional/codex/package.json" ]] && [[ ! -f "$GATEWAY_DIR/optional/codex/node_modules/@openai/codex/bin/codex.js" ]] && command -v npm >/dev/null 2>&1; then
+    (cd "$GATEWAY_DIR/optional/codex" && npm install --silent --no-audit --no-fund) >/dev/null 2>&1 || true
+  fi
 }
 
 # Colores ANSI (solo si stdout es terminal o se fuerza)

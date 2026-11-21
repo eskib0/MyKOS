@@ -79,9 +79,71 @@ def _decode_openrouter_key(data: dict[str, Any]) -> str:
     return _decode_key(data)
 
 
-def _paths() -> tuple[str, str]:
-    node = _CODEX_NODE if Path(_CODEX_NODE).is_file() else (shutil.which("node") or "")
-    cli = _CODEX_CLI
+def _find_node_binary() -> str:
+    for candidate in (
+        _CODEX_NODE,
+        shutil.which("node") or "",
+        str(Path.home() / ".mykos" / "runtime" / "node" / "bin" / "node"),
+        str(ROOT.parent.parent / "runtime" / "node" / "bin" / "node"),
+        "/usr/local/bin/node",
+        "/usr/bin/node",
+    ):
+        if candidate and Path(candidate).is_file():
+            return candidate
+    nvm_dir = Path.home() / ".nvm" / "versions" / "node"
+    if nvm_dir.is_dir():
+        versions = sorted(nvm_dir.glob("*/bin/node"), reverse=True)
+        if versions:
+            return str(versions[0])
+    return ""
+
+
+def _ensure_codex_cli(node_bin: str, cli_path: str) -> str:
+    if cli_path and Path(cli_path).is_file():
+        return cli_path
+    codex_dir = ROOT.parent / "optional" / "codex"
+    pkg_json = codex_dir / "package.json"
+    if pkg_json.is_file():
+        npm_candidates: list[str] = []
+        if node_bin:
+            sibling_npm = Path(node_bin).parent / "npm"
+            if sibling_npm.is_file():
+                npm_candidates.append(str(sibling_npm))
+        which_npm = shutil.which("npm")
+        if which_npm and which_npm not in npm_candidates:
+            npm_candidates.append(which_npm)
+        for npm_bin in npm_candidates:
+            try:
+                env = os.environ.copy()
+                if node_bin:
+                    node_dir = str(Path(node_bin).parent)
+                    env["PATH"] = f"{node_dir}:{env.get('PATH', '')}"
+                proc = subprocess.run(
+                    [npm_bin, "install", "--no-audit", "--no-fund"],
+                    cwd=str(codex_dir),
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                    check=False,
+                )
+                if proc.returncode == 0 and Path(cli_path).is_file():
+                    return cli_path
+            except Exception:
+                pass
+    system_codex = shutil.which("codex")
+    if system_codex and Path(system_codex).is_file():
+        return system_codex
+    return cli_path
+
+
+def _paths(ensure: bool = False) -> tuple[str, str]:
+    node = _find_node_binary()
+    cli = _ensure_codex_cli(node, _CODEX_CLI) if ensure else _CODEX_CLI
+    if not ensure and (not cli or not Path(cli).is_file()):
+        system_codex = shutil.which("codex")
+        if system_codex and Path(system_codex).is_file():
+            cli = system_codex
     return node, cli
 
 
@@ -92,6 +154,10 @@ def _chrome_path() -> str:
         shutil.which("google-chrome-stable") or "",
         shutil.which("chromium") or "",
         shutil.which("chromium-browser") or "",
+        shutil.which("brave-browser") or "",
+        shutil.which("microsoft-edge") or "",
+        shutil.which("firefox") or "",
+        shutil.which("firefox-esr") or "",
         shutil.which("xdg-open") or "",
     ]
     for candidate in candidates:
@@ -105,12 +171,21 @@ def _open_chrome(url: str) -> None:
     if not chrome:
         return
     try:
-        cmd = [chrome, url] if chrome.endswith("xdg-open") else [chrome, "--new-tab", url]
+        base = Path(chrome).name.lower()
+        is_chromium = any(tok in base for tok in ("chrome", "chromium", "brave", "edge"))
+        if is_chromium:
+            cmd = [chrome]
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                cmd.append("--no-sandbox")
+            cmd.extend(["--new-tab", url])
+        else:
+            cmd = [chrome, url]
         subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
     except OSError:
         return
@@ -155,7 +230,7 @@ def _extract_code(line: str) -> str:
 
 
 def _run_login() -> None:
-    node, cli = _paths()
+    node, cli = _paths(ensure=True)
     if not node or not Path(cli).is_file():
         with _LOCK:
             _LOGIN.update(status="error", error="No se encuentra el ejecutable aislado de Codex.")
@@ -230,6 +305,12 @@ def start_openai_login() -> dict[str, Any]:
         _LOGIN.update(status="running", started_at=time.time(), url="", code="", error="")
     thread = threading.Thread(target=_run_login, name="mykos-openai-oauth", daemon=True)
     thread.start()
+    deadline = time.monotonic() + 4.0
+    while time.monotonic() < deadline:
+        with _LOCK:
+            if (_LOGIN.get("url") and _LOGIN.get("code")) or _LOGIN.get("status") != "running":
+                break
+        time.sleep(0.1)
     return _public_login_state()
 
 
@@ -872,7 +953,7 @@ def run_openai_codex(
     auth = openai_auth_status(force=True)
     if not auth.get("has_oauth"):
         raise RuntimeError(str(auth.get("error") or "MyKOS no tiene una sesión OpenAI Codex OAuth activa."))
-    node, cli = _paths()
+    node, cli = _paths(ensure=True)
     if not node or not Path(cli).is_file():
         raise RuntimeError("No se encuentra el ejecutable aislado de Codex.")
     schema_path = OPENAI_HOME / "mykos-response-schema.json"

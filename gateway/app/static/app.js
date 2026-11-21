@@ -3662,6 +3662,11 @@ async function startOpenAIAuth() {
   elements.oauthOpenai.disabled = true;
   try {
     const data = await api("/api/oauth/openai/start", { method: "POST", body: JSON.stringify({ provider: "openai_codex_oauth" }) });
+    let browserOpened = false;
+    if (data?.login_url) {
+      const popup = window.open(data.login_url, "_blank", "noopener,noreferrer");
+      if (popup) browserOpened = true;
+    }
     const preserved = (state.oauthProviders || []).filter(
       (item) => item.id !== "openai_codex_oauth" && item.id !== "openai_codex_oauth_login"
     );
@@ -3679,6 +3684,10 @@ async function startOpenAIAuth() {
         await loadOAuthStatus();
         const login = state.oauth?.openai_codex_oauth_login || {};
         const openai = state.oauth?.openai_codex_oauth || {};
+        if (!browserOpened && login?.login_url) {
+          const popup = window.open(login.login_url, "_blank", "noopener,noreferrer");
+          if (popup) browserOpened = true;
+        }
         const hasOAuth = Boolean(openai?.has_oauth ?? (openai?.authenticated && openai?.auth_method !== "OpenAI API Key"));
         if (login?.status === "running" && !hasOAuth) return true;
         await loadModels();
@@ -3868,14 +3877,17 @@ async function startMetaAuth() {
     const connected = state.models.some((item) => (item.provider === "meta_ai_oauth" || item.provider === "meta_ai_api") && item.auth_status === "autenticado");
     if (connected) {
       await api("/api/oauth/meta/refresh", { method: "POST", body: JSON.stringify({ provider: "meta_ai_oauth" }) });
-      await loadModels();
+      await Promise.all([loadModels(), loadOAuthStatus()]);
       return;
     }
     elements.oauthMetaStatus.textContent = "Conectando OAuth con Meta AI (meta.ai)…";
-    await api("/api/oauth/meta/start", { method: "POST", body: JSON.stringify({ provider: "meta_ai_oauth" }) });
-    await loadModels();
+    const data = await api("/api/oauth/meta/start", { method: "POST", body: JSON.stringify({ provider: "meta_ai_oauth" }) });
+    const loginUrl = data?.login?.login_url || data?.oauth?.oidc_url || "https://www.meta.ai/api/oidc/start";
+    window.open(loginUrl, "_blank", "noopener,noreferrer");
+    await Promise.all([loadModels(), loadOAuthStatus()]);
   } catch (error) {
     elements.oauthMetaStatus.textContent = error.message;
+  } finally {
     elements.oauthMeta.disabled = false;
   }
 }

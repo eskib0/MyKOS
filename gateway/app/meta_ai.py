@@ -204,6 +204,8 @@ def _find_node_binary() -> str:
   for candidate in (
       os.environ.get("MYKOS_NODE_BIN", ""),
       shutil.which("node") or "",
+      str(Path.home() / ".mykos" / "runtime" / "node" / "bin" / "node"),
+      str(ROOT.parent.parent / "runtime" / "node" / "bin" / "node"),
       "/usr/bin/node",
       "/usr/local/bin/node",
   ):
@@ -250,13 +252,29 @@ def _save_meta_ai_session(session: dict[str, Any]) -> None:
 
 
 def _open_chrome(url: str) -> None:
-  for candidate in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "xdg-open"):
+  for candidate in (
+      "google-chrome",
+      "google-chrome-stable",
+      "chromium",
+      "chromium-browser",
+      "brave-browser",
+      "microsoft-edge",
+      "firefox",
+      "firefox-esr",
+      "xdg-open",
+  ):
     binary = shutil.which(candidate)
     if not binary:
       continue
     try:
+      is_chromium = any(tok in candidate for tok in ("chrome", "chromium", "brave", "edge"))
+      cmd = [binary]
+      if is_chromium and hasattr(os, "geteuid") and os.geteuid() == 0:
+        cmd.append("--no-sandbox")
+      cmd.append(url)
       subprocess.Popen(
-          [binary, url],
+          cmd,
+          stdin=subprocess.DEVNULL,
           stdout=subprocess.DEVNULL,
           stderr=subprocess.DEVNULL,
           start_new_session=True,
