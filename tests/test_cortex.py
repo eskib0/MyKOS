@@ -55,7 +55,7 @@ class TestCortexRealVault(unittest.TestCase):
         by_tag = c1.search_notes("#moc")
         self.assertTrue(any("#moc" in r["tags"] for r in by_tag))
 
-        by_content = c1.search_notes("RTX 5060")
+        by_content = c1.search_notes("MyKOS")
         self.assertGreater(len(by_content), 0)
         json.dumps(by_content, ensure_ascii=False)
 
