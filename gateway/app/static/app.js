@@ -2742,7 +2742,11 @@ function renderInlineMarkdown(parent, inlineText, depth = 0) {
         link.textContent = `📄 ${linkText}`;
         link.addEventListener("click", async (e) => {
           e.preventDefault();
-          const cleanPath = decodeURIComponent(targetUrl.replace(/^file:\/\//, ""));
+          e.stopPropagation();
+          let cleanPath = targetUrl.replace(/^file:\/\//, "").split("#")[0];
+          try {
+            cleanPath = decodeURIComponent(cleanPath);
+          } catch { /* % literal en la ruta: se usa tal cual */ }
           try {
             await navigator.clipboard.writeText(cleanPath);
             const prev = link.textContent;
