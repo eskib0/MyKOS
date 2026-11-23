@@ -119,10 +119,11 @@ if (Test-Path $ConfigJson) {
     try {
         $cfg = Get-Content $ConfigJson -Raw -Encoding UTF8 | ConvertFrom-Json
         $appDir = Join-Path $MykosRoot "gateway\app"
+        $pluginDir = Join-Path $appDir "gateway-plugin\mykos-ui"
         $staticDir = Join-Path $appDir "static"
         $serverPy = Join-Path $appDir "server.py"
         $pyBin = if (-not $NoVenv -and (Test-Path (Join-Path $VenvDir "Scripts\python.exe"))) { Join-Path $VenvDir "Scripts\python.exe" } elseif (Test-Path (Join-Path $RuntimeDir "python\python.exe")) { Join-Path $RuntimeDir "python\python.exe" } else { "python" }
-        if ($cfg.plugins -and $cfg.plugins.load) { $cfg.plugins.load.paths = @($appDir) }
+        if ($cfg.plugins -and $cfg.plugins.load) { $cfg.plugins.load.paths = @($pluginDir) }
         if ($cfg.plugins -and $cfg.plugins.entries -and $cfg.plugins.entries.'mykos-ui' -and $cfg.plugins.entries.'mykos-ui'.config) {
             $uCfg = $cfg.plugins.entries.'mykos-ui'.config
             $uCfg.projectDir = $appDir

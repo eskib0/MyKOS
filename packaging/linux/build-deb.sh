@@ -72,11 +72,14 @@ if [ "$NEED_NODE" -eq 1 ] && [ ! -x /opt/mykos/runtime/node/bin/node ]; then
     | tar -xJ --strip-components=1 -C /opt/mykos/runtime/node || true
 fi
 
-# Preparar entorno virtual Python compartido en /opt/mykos/runtime/venv
-if command -v python3 >/dev/null 2>&1 && [ ! -x /opt/mykos/runtime/venv/bin/python ]; then
-  echo "▶ Configurando entorno Python de MyKOS en /opt/mykos/runtime/venv..."
-  mkdir -p /opt/mykos/runtime
-  if python3 -m venv /opt/mykos/runtime/venv >/dev/null 2>&1; then
+# Preparar y actualizar entorno virtual Python compartido en /opt/mykos/runtime/venv
+if command -v python3 >/dev/null 2>&1; then
+  if [ ! -x /opt/mykos/runtime/venv/bin/python ]; then
+    echo "▶ Configurando entorno Python de MyKOS en /opt/mykos/runtime/venv..."
+    mkdir -p /opt/mykos/runtime
+    python3 -m venv /opt/mykos/runtime/venv >/dev/null 2>&1 || true
+  fi
+  if [ -x /opt/mykos/runtime/venv/bin/pip ]; then
     /opt/mykos/runtime/venv/bin/pip install --quiet --upgrade pip >/dev/null 2>&1 || true
     /opt/mykos/runtime/venv/bin/pip install --quiet -r /opt/mykos/gateway/app/requirements.txt >/dev/null 2>&1 || true
   fi
@@ -149,6 +152,7 @@ rsync -a --exclude='.git' \
          --exclude='gateway/app/data/oauth' \
          --exclude='gateway/app/data/media' \
          --exclude='gateway/app/data/uploads' \
+         --exclude='gateway/app/static/media/*' \
          --exclude='gateway/runtime/state' \
          --exclude='gateway/runtime/antigravity-home' \
          --exclude='gateway/runtime/qwen-home' \

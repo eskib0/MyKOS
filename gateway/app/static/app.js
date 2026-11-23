@@ -2730,7 +2730,13 @@ function renderInlineMarkdown(parent, inlineText, depth = 0) {
     } else if (token.startsWith("[")) {
       const split = token.indexOf("](");
       const linkText = token.slice(1, split);
-      const targetUrl = token.slice(split + 2, -1);
+      const targetUrl = token.slice(split + 2, -1).trim();
+      const isSafeLink = /^(?:https?:\/\/|file:\/\/|mailto:|#|\/(?!\/))/i.test(targetUrl);
+      if (!isSafeLink) {
+        parent.appendChild(document.createTextNode(token));
+        lastIndex = tokenRe.lastIndex;
+        continue;
+      }
       const link = document.createElement("a");
       link.href = targetUrl;
       link.target = "_blank";
