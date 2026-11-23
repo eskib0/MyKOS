@@ -2683,12 +2683,17 @@ function renderInlineMarkdown(parent, inlineText, depth = 0) {
       const split = token.indexOf("](");
       const alt = token.slice(2, split) || "Imagen";
       const src = token.slice(split + 2, -1);
-      const isRemote = /^https?:\/\//i.test(src);
-      if (isRemote) {
+      const isRemote = /^(?:https?:)?\/\//i.test(src);
+      const isLocalMedia = /^(?:data:image\/|file:\/\/\/|\/(?!\/))/.test(src);
+      if (!isRemote && !isLocalMedia) {
+        // H3 auditoría: solo se autocargan data:image y rutas locales absolutas; cualquier otro
+        // esquema (javascript:, blob:, relativas…) se muestra como texto plano, sin petición.
+        parent.appendChild(document.createTextNode(token));
+      } else if (isRemote) {
         // H3 auditoría: no cargar automáticamente recursos remotos para evitar exfiltración por inyección indirecta
         const link = document.createElement("a");
         link.className = "chat-external-media-link";
-        link.href = src;
+        link.href = /^https?:\/\//i.test(src) ? src : "#";
         link.target = "_blank";
         link.rel = "noopener noreferrer";
         link.textContent = `🔗 [Ver medio externo: ${alt}]`;
