@@ -23,10 +23,10 @@ MyKOS/
 │   │   └── qwen-home/        # Perfil aislado de configuración para Qwen Code CLI
 │   ├── app/                  # Trabajador Python y conectores de modelos/herramientas
 │   │   ├── server.py         # Enrutador interno (/mykos-control/*) y orquestación del backend
-│   │   ├── swarm_engine.py   # Motor nativo MyKOS Swarm: enjambre multi-agente híbrido nube + GPU local (v2.1.0)
+│   │   ├── swarm_engine.py   # Motor nativo MyKOS Swarm: enjambre multi-agente híbrido nube + GPU local (v2.1.1)
 │   │   ├── swarm_cli.py      # Subcomandos CLI de Swarm (status, board, add, post, kill, reset)
-│   │   ├── cortex.py         # Motor MyKOS Cortex: grafo de conocimiento y bóveda Markdown soberana (v2.1.0)
-│   │   ├── core/             # Paquete modular de servicios del servidor backend (v2.1.0)
+│   │   ├── cortex.py         # Motor MyKOS Cortex: grafo de conocimiento y bóveda Markdown soberana (v2.1.1)
+│   │   ├── core/             # Paquete modular de servicios del servidor backend (v2.1.1)
 │   │   │   ├── activity.py   # Registro efímero de actividad y supervisión de servidores locales
 │   │   │   ├── benchmark.py  # Suite de benchmarks y telemetría de rendimiento
 │   │   │   ├── claude.py     # Integración con Claude CLI y suscripción OAuth
@@ -35,7 +35,7 @@ MyKOS/
 │   │   │   ├── providers.py  # Gestión de catálogos y autenticación dual (OAuth + API Key) de proveedores
 │   │   │   ├── runners.py    # Bucle universal de herramientas y runners de inferencia
 │   │   │   └── uploads.py    # Gestión y purga de archivos temporales multipart
-│   │   ├── tools/            # Paquete modular de herramientas del sistema (v2.1.0 · 13 submódulos)
+│   │   ├── tools/            # Paquete modular de herramientas del sistema (v2.1.1 · 13 submódulos)
 │   │   │   ├── schemas.py    # Esquemas JSON formales de herramientas y lista de sensibles
 │   │   │   ├── swarm_tools.py # Herramientas de chat para orquestar el Swarm (swarm_status, swarm_add_worker, swarm_post, swarm_read_board, swarm_kill)
 │   │   │   ├── cortex_tools.py # Camino único de memoria en Cortex (search_cortex, read_cortex_note, save_cortex_note)
@@ -49,7 +49,7 @@ MyKOS/
 │   │   ├── rea.py            # Motor integrado REA (Reverse Engineer Anything · 207 herramientas MCP)
 │   │   ├── strata.py         # Conector para el motor local CUDA Strata (Qwen3.8 125B / Qwen3.6 35B)
 │   │   ├── qwen_cli.py       # Conector para Qwen Code CLI / Suscripción Qwen Plus y enrutamiento local
-│   │   ├── static/           # Interfaz web reactiva v2.1.0 (index.html, app.js, styles.css)
+│   │   ├── static/           # Interfaz web reactiva v2.1.1 (index.html, app.js, styles.css)
 │   │   └── gateway-plugin/
 │   │       ├── mykos-ui/     # Núcleo del Gateway (index.js, routes.js, policy.js, chat-loop.js, store.js)
 │   │       ├── store-cli.mjs # Utilidad CLI de verificación, exportación y auditoría del almacén
@@ -72,7 +72,7 @@ MyKOS separa estrictamente **quién decide y guarda los datos** (el **Gateway en
 
 ```mermaid
 flowchart LR
-    Browser["Navegador Web / UI (v2.1.0)\nhttp://127.0.0.1:3210"] <--> Gateway["MyKOS Gateway (Node.js)\n• Tabla de 118 rutas (routes.js)\n• 63 políticas HMAC (policy.js)\n• Bucle de chat local (chat-loop.js)\n• Autoridad de permisos y aprobaciones"]
+    Browser["Navegador Web / UI (v2.1.1)\nhttp://127.0.0.1:3210"] <--> Gateway["MyKOS Gateway (Node.js)\n• Tabla de 118 rutas (routes.js)\n• 63 políticas HMAC (policy.js)\n• Bucle de chat local (chat-loop.js)\n• Autoridad de permisos y aprobaciones"]
     Gateway <--> Store["Almacén ACID (store.js)\n~/.mykos/gateway-state/mykos\n• Revisiones + Copias + Diario SHA-256"]
     Gateway -- "HTTP interno autenticado\n/mykos-control/* + Firma HMAC" --> Worker["Trabajador Python (server.py)\n127.0.0.1:3211 (solo local)"]
     Gateway <--> LocalEngines["Motores Locales GPU/CPU\n• Strata (:18080)\n• llama.cpp CUDA (:9931 · 32K)\n• Ollama (:11434)"]
@@ -93,7 +93,7 @@ flowchart LR
    - **Solo lectura (`solo_lectura`):** Bloquea cualquier herramienta sensible sin preguntar.
    - **Supervisado (`supervisado`, por defecto):** Las herramientas de lectura se ejecutan al instante y las sensibles generan una solicitud de aprobación en la interfaz (con opción a conceder permiso una vez, por sesión o permanente).
    - **Acceso total (`acceso_total`):** Concede y audita automáticamente permisos permanentes para herramientas elegibles; las acciones críticas de un solo uso (`once`) siguen requiriendo confirmación humana.
-6. **Almacén Transaccional (`store.js`) y Actualizador Integrado:** Las conversaciones, configuraciones, permisos, aprobaciones, recordatorios, subagentes, sesiones Swarm y nodos se guardan mediante escrituras atómicas con control de revisión y diario `journal.jsonl`. La cabecera incluye la píldora de versión **`v2.1.0`** con comprobación automática de nuevos commits/releases en GitHub y actualización en un clic.
+6. **Almacén Transaccional (`store.js`) y Actualizador Integrado:** Las conversaciones, configuraciones, permisos, aprobaciones, recordatorios, subagentes, sesiones Swarm y nodos se guardan mediante escrituras atómicas con control de revisión y diario `journal.jsonl`. La cabecera incluye la píldora de versión **`v2.1.1`** con comprobación automática de nuevos commits/releases en GitHub y actualización en un clic.
 
 ---
 
@@ -155,7 +155,7 @@ cd ~/MyKOS
 5. *(Opcional)* Con `./install.sh --systemd`, crea y habilita el servicio de usuario `mykos-gateway.service` para que arranque automáticamente con tu sesión.
 
 ### En Windows (Instalador `.exe` o PowerShell):
-Puedes instalar MyKOS con el instalador gráfico **`MyKOS-Setup-2.1.0.exe`** disponible en GitHub Releases (incluye Node.js 20 y Python 3.12 portables sin requerir permisos de administrador), o desde PowerShell clonando el repositorio:
+Puedes instalar MyKOS con el instalador gráfico **`MyKOS-Setup-2.1.1.exe`** disponible en GitHub Releases (incluye Node.js 20 y Python 3.12 portables sin requerir permisos de administrador), o desde PowerShell clonando el repositorio:
 
 ```powershell
 git clone https://github.com/eskib0/MyKOS.git "$HOME\MyKOS"

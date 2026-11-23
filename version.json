@@ -1,8 +1,8 @@
 {
   "name": "MyKOS",
-  "version": "2.1.0",
-  "codename": "Swarm & Media Studio",
-  "released": "2026-11-14",
+  "version": "2.1.1",
+  "codename": "Chat-UI & OAuth Hardening",
+  "released": "2026-11-23",
   "channel": "stable",
   "repository": "eskib0/MyKOS"
 }
