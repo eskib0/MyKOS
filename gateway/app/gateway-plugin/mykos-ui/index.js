@@ -3452,6 +3452,8 @@ export default {
           if (typeof payload?.api_key === "string" && payload.api_key.trim()) {
             reqBody.api_key = payload.api_key.trim();
           }
+          // La UI abre ella misma la pestaña de login; evita la doble apertura del backend.
+          if (payload?.open_browser === false) reqBody.open_browser = false;
           const started = await jsonRequest(`${backend.config.url}/mykos-control/oauth/${name}/start`, reqBody, 60_000, { "X-MyKOS-Control-Token": cfg.control.token });
           const status = started.status >= 400 ? started.status : 503;
           if (started.status >= 400 || !isObject(started.body)) {

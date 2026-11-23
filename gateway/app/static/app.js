@@ -3670,7 +3670,7 @@ async function logoutOAuth(provider, statusElement, logoutButton) {
 async function startOpenAIAuth() {
   elements.oauthOpenai.disabled = true;
   try {
-    const data = await api("/api/oauth/openai/start", { method: "POST", body: JSON.stringify({ provider: "openai_codex_oauth" }) });
+    const data = await api("/api/oauth/openai/start", { method: "POST", body: JSON.stringify({ provider: "openai_codex_oauth", open_browser: false }) });
     let browserOpened = false;
     if (data?.login_url) {
       const popup = window.open(data.login_url, "_blank", "noopener,noreferrer");
@@ -3890,7 +3890,7 @@ async function startMetaAuth() {
       return;
     }
     elements.oauthMetaStatus.textContent = "Conectando OAuth con Meta AI (meta.ai)…";
-    const data = await api("/api/oauth/meta/start", { method: "POST", body: JSON.stringify({ provider: "meta_ai_oauth" }) });
+    const data = await api("/api/oauth/meta/start", { method: "POST", body: JSON.stringify({ provider: "meta_ai_oauth", open_browser: false }) });
     const loginUrl = data?.login?.login_url || data?.oauth?.oidc_url || "https://www.meta.ai/api/oidc/start";
     window.open(loginUrl, "_blank", "noopener,noreferrer");
     await Promise.all([loadModels(), loadOAuthStatus()]);

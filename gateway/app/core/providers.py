@@ -516,8 +516,8 @@ def meta_ai_model_catalog(force: bool = False) -> tuple[list[dict[str, Any]], bo
         return models, any_authed, ""
 
 
-def start_meta_ai_login() -> dict[str, Any]:
-    return start_meta_ai_oauth(open_browser=True)
+def start_meta_ai_login(*, open_browser: bool = True) -> dict[str, Any]:
+    return start_meta_ai_oauth(open_browser=open_browser)
 
 
 def refresh_meta_ai_models() -> dict[str, Any]:

@@ -229,7 +229,7 @@ def _extract_code(line: str) -> str:
     return ""
 
 
-def _run_login() -> None:
+def _run_login(open_browser: bool = True) -> None:
     node, cli = _paths(ensure=True)
     if not node or not Path(cli).is_file():
         with _LOCK:
@@ -268,7 +268,7 @@ def _run_login() -> None:
                     if not _LOGIN.get("url"):
                         _LOGIN["url"] = login_url
                         should_open = True
-                if should_open:
+                if should_open and open_browser:
                     _open_chrome(login_url)
             code = _extract_code(line)
             if not code and re.search(r"\b(?:code|código|verification|verificación|device)\b", line, re.IGNORECASE):
@@ -297,13 +297,13 @@ def _run_login() -> None:
             _LOGIN.update(status="error", error=f"No se pudo iniciar OAuth: {error}")
 
 
-def start_openai_login() -> dict[str, Any]:
+def start_openai_login(*, open_browser: bool = True) -> dict[str, Any]:
     with _LOCK:
         if _LOGIN.get("status") == "running":
             return _public_login_state()
         _LOGIN.clear()
         _LOGIN.update(status="running", started_at=time.time(), url="", code="", error="")
-    thread = threading.Thread(target=_run_login, name="mykos-openai-oauth", daemon=True)
+    thread = threading.Thread(target=_run_login, args=(open_browser,), name="mykos-openai-oauth", daemon=True)
     thread.start()
     deadline = time.monotonic() + 4.0
     while time.monotonic() < deadline:

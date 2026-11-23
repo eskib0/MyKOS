@@ -4982,7 +4982,14 @@ class MyKOSHandler(BaseHTTPRequestHandler):
                         self.send_json({"ok": False, "error": str(exc)}, status=400)
                         return
                 try:
-                    self.send_json(action())
+                    # La UI abre la pestaña de login ella misma (window.open); el backend
+                    # solo abre navegador para clientes sin UI que no pidan lo contrario.
+                    open_browser = payload.get("open_browser", True) is not False
+                    if action in (start_openai_login, start_meta_ai_login):
+                        res = action(open_browser=open_browser)
+                    else:
+                        res = action()
+                    self.send_json(res)
                 except RuntimeError as error:
                     self.send_json({"ok": False, "error": str(error)}, status=502)
                 return
